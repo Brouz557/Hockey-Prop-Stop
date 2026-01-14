@@ -58,5 +58,6 @@ st.markdown(
 )
 
 # ---- Sidebar for uploads ----
-st.sidebar.header("📂 Upload Daily Data Files"
+st.sidebar.header("📂 Upload Daily Data Files")
+
 
