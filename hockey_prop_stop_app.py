@@ -1,7 +1,6 @@
 # ---------------------------------------------------------------
 # hockey_prop_stop_app.py
 # Streamlit UI for Hockey Prop Stop
-# Team-vs-Team matchup model using exponentially weighted regression
 # ---------------------------------------------------------------
 
 import importlib.util
@@ -13,24 +12,21 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from io import BytesIO
 
-# --- Load hockey_model dynamically ---
+# --- Load model dynamically ---
 module_path = os.path.join(os.path.dirname(__file__), "hockey_model.py")
 spec = importlib.util.spec_from_file_location("hockey_model", module_path)
 hockey_model = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(hockey_model)
-
 from hockey_model import parse_raw_files, project_matchup
 
 # ---------------------------------------------------------------
-# Streamlit UI setup
+# Streamlit setup
 # ---------------------------------------------------------------
 st.set_page_config(page_title="Hockey Prop Stop", layout="wide", page_icon="🏒")
 
 st.markdown(
     """
-    <h1 style='text-align:center; color:#BFC0C0;'>
-        <span style='color:#00B140;'>🏒 Hockey Prop Stop</span>
-    </h1>
+    <h1 style='text-align:center; color:#00B140;'>🏒 Hockey Prop Stop</h1>
     <p style='text-align:center; color:#BFC0C0;'>
         Team-vs-Team matchup analytics with exponential regression weighting
     </p>
@@ -39,7 +35,7 @@ st.markdown(
 )
 
 # ---------------------------------------------------------------
-# Sidebar uploads
+# Upload section
 # ---------------------------------------------------------------
 st.sidebar.header("📂 Upload Raw NHL Data Files")
 uploaded_files = st.sidebar.file_uploader(
@@ -50,28 +46,31 @@ uploaded_files = st.sidebar.file_uploader(
 
 data = pd.DataFrame()
 if uploaded_files:
-    st.success(f"✅ {len(uploaded_files)} file(s) uploaded. Parsing...")
+    st.success(f"✅ {len(uploaded_files)} file(s) uploaded. Parsing raw data...")
+
     raw_files = {}
     for f in uploaded_files:
         try:
-            df = pd.read_csv(f)
+            df = pd.read_csv(f, nrows=200000)
             raw_files[f.name] = df
         except Exception as e:
             st.warning(f"⚠️ Could not read {f.name}: {e}")
 
     skaters_df, teams_df, shots_df, goalies_df, lines_df = parse_raw_files(raw_files)
+    st.write("✅ Parser completed. Detected teams:",
+             sorted(shots_df["team"].dropna().unique().tolist()))
 
-    # Determine available teams
     all_teams = sorted(shots_df["team"].dropna().unique())
+    if len(all_teams) < 2:
+        st.warning("⚠️ Could not detect enough teams in your data.")
+    else:
+        st.sidebar.markdown("### 🏒 Select Matchup")
+        team_a = st.sidebar.selectbox("Team A", all_teams)
+        team_b = st.sidebar.selectbox("Team B", [t for t in all_teams if t != team_a])
 
-    # Team selection
-    st.sidebar.markdown("### 🏒 Select Matchup")
-    team_a = st.sidebar.selectbox("Team A", all_teams)
-    team_b = st.sidebar.selectbox("Team B", [t for t in all_teams if t != team_a])
-
-    if st.sidebar.button("Run Model"):
-        with st.spinner("Building matchup model..."):
-            data = project_matchup(skaters_df, teams_df, shots_df, goalies_df, lines_df, team_a, team_b)
+        if st.sidebar.button("Run Model"):
+            with st.spinner("Building matchup model..."):
+                data = project_matchup(skaters_df, teams_df, shots_df, goalies_df, lines_df, team_a, team_b)
             if not data.empty:
                 st.success("✅ Model built and projections generated.")
             else:
@@ -80,52 +79,22 @@ else:
     st.info("Upload your CSVs to begin.")
 
 # ---------------------------------------------------------------
-# Display results
+# Display Results
 # ---------------------------------------------------------------
 if not data.empty:
     st.markdown("### 📊 Ranked Player Projections")
-
-    display_cols = ["player", "team", "opponent", "predictedSOG",
-                    "probOver2.5", "Matchup Rating", "Signal Strength"]
-    rename_map = {
+    ranked = data.rename(columns={
         "player": "Player", "team": "Team", "opponent": "Opponent",
         "predictedSOG": "Projected SOG", "probOver2.5": "Probability (Over 2.5)"
-    }
+    })
 
-    ranked = data[display_cols].rename(columns=rename_map)
-    st.dataframe(ranked, use_container_width=True)
+    st.dataframe(ranked[["Player", "Team", "Opponent",
+                         "Projected SOG", "Probability (Over 2.5)",
+                         "Matchup Rating", "Signal Strength"]],
+                 use_container_width=True)
 
-    # ---------------------------------------------------------------
     # Visuals
-    # ---------------------------------------------------------------
     st.markdown("### 📈 Visuals")
     col1, col2 = st.columns(2)
-
     with col1:
-        fig, ax = plt.subplots(figsize=(6, 4))
-        sns.barplot(data=ranked.head(10),
-                    x="Projected SOG", y="Player",
-                    hue="Signal Strength", dodge=False)
-        ax.set_title("Top Projected SOG by Player")
-        st.pyplot(fig)
-
-    with col2:
-        fig2, ax2 = plt.subplots(figsize=(6, 4))
-        sns.boxplot(data=ranked, x="Team", y="Projected SOG", palette="Greens")
-        ax2.set_title("Projected SOG by Team")
-        st.pyplot(fig2)
-
-    # ---------------------------------------------------------------
-    # Download
-    # ---------------------------------------------------------------
-    st.markdown("### 💾 Export Results")
-    out = BytesIO()
-    ranked.to_excel(out, index=False)
-    st.download_button(
-        label="Download Excel",
-        data=out.getvalue(),
-        file_name="HockeyPropStop_matchup_results.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
-
-st.caption("© Hockey Prop Stop — exponentially weighted matchup model")
+        fig, ax = plt.subplots(figsize=(6
