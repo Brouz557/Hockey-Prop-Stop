@@ -1,21 +1,28 @@
-# ---------------------------------------------------------------
+ # ---------------------------------------------------------------
 # hockey_prop_stop_app.py
 # Hockey Prop Stop - Streamlit app
 # Dark green / silver theme with sample data
 # ---------------------------------------------------------------
 
-import sys, os
-# --- make sure local modules are visible before importing anything ---
-sys.path.append(os.path.dirname(__file__))
+import importlib.util
+import sys, os, types
 
+# --- robust import of hockey_model no matter where we are ---
+module_path = os.path.join(os.path.dirname(__file__), "hockey_model.py")
+spec = importlib.util.spec_from_file_location("hockey_model", module_path)
+hockey_model = importlib.util.module_from_spec(spec)
+sys.modules["hockey_model"] = hockey_model
+spec.loader.exec_module(hockey_model)
+
+from hockey_model import build_model, project_matchup
+
+# --- standard libraries ---
 import streamlit as st
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 from io import BytesIO
-
-from hockey_model import build_model, project_matchup
 
 
 # ---- Sample data function (for when no files uploaded) ----
@@ -117,15 +124,4 @@ with col2:
     st.pyplot(fig2)
 
 # ---- Download Excel ----
-st.markdown("### 💾 Export Results")
-out = BytesIO()
-ranked.to_excel(out, index=False)
-st.download_button(
-    label="Download Excel",
-    data=out.getvalue(),
-    file_name="HockeyPropStop_results.xlsx",
-    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-)
-
-st.caption("© Hockey Prop Stop — data refreshed daily.")
-
+s
