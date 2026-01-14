@@ -1,6 +1,6 @@
 # ---------------------------------------------------------------
 # hockey_model.py
-# Hockey Prop Stop – NHL matchup-aware analytics engine
+# Hockey Prop Stop – stable NHL matchup analytics engine
 # ---------------------------------------------------------------
 
 import pandas as pd
@@ -8,18 +8,15 @@ import numpy as np
 from sklearn.linear_model import LinearRegression
 from scipy.stats import poisson
 
-# ---------------------------------------------------------------
-# Parse, clean, and harmonize uploaded data
-# ---------------------------------------------------------------
+
 def parse_raw_files(file_dfs):
-    """Safely detects, cleans, and samples raw NHL CSVs for modeling."""
+    """Parse uploaded CSVs, harmonize column names, detect teams."""
     skaters = pd.DataFrame()
     teams = pd.DataFrame()
     shots = pd.DataFrame()
     goalies = pd.DataFrame()
     lines = pd.DataFrame()
 
-    # --- load whichever CSVs are uploaded ---
     for name, df in file_dfs.items():
         try:
             if df is None or df.empty:
@@ -37,17 +34,14 @@ def parse_raw_files(file_dfs):
                 goalies = df.copy()
             elif any(x in "".join(cols) for x in ["line", "matchup", "opp"]):
                 lines = df.copy()
-        except Exception as e:
-            print(f"⚠️ Error parsing {name}: {e}")
+        except Exception:
             continue
 
     for df in [shots, skaters, teams, goalies, lines]:
         if not df.empty:
             df.columns = df.columns.str.strip().str.lower()
 
-    # ---------------------------------------------------------------
-    # STEP 1: Build master team list — strictly real NHL abbreviations
-    # ---------------------------------------------------------------
+    # --- NHL team list ---
     NHL_TEAMS = {
         "ANA", "ARI", "BOS", "BUF", "CGY", "CAR", "CHI", "COL", "CBJ", "DAL",
         "DET", "EDM", "FLA", "LAK", "MIN", "MTL", "NSH", "NJD", "NYI", "NYR",
@@ -55,11 +49,11 @@ def parse_raw_files(file_dfs):
         "WSH", "WPG"
     }
 
+    # --- find potential team columns and valid abbreviations ---
     team_columns = [c for c in shots.columns if any(x in c for x in ["team", "abbrev", "franchise"])]
     all_teams_found = []
     for c in team_columns:
         vals = shots[c].dropna().unique().tolist()
-        # Only keep clean abbreviations
         vals = [
             str(v).upper().strip()
             for v in vals
@@ -71,102 +65,9 @@ def parse_raw_files(file_dfs):
         all_teams_found.extend(vals)
     all_teams_found = sorted(list(set(all_teams_found)))
 
-    # ---------------------------------------------------------------
-    # STEP 2: Fix HOME/AWAY remapping if necessary
-    # ---------------------------------------------------------------
+    # --- fix HOME/AWAY mapping ---
     if "team" in shots.columns and set(shots["team"].astype(str).str.upper().unique()) <= {"HOME", "AWAY"}:
         home_col = next((c for c in shots.columns if "home" in c and "team" in c), None)
         away_col = next((c for c in shots.columns if "away" in c and "team" in c), None)
         if not home_col:
-            home_col = next((c for c in shots.columns if "home" in c and "abbrev" in c), None)
-        if not away_col:
-            away_col = next((c for c in shots.columns if "away" in c and "abbrev" in c), None)
-        if home_col and away_col:
-            shots["team"] = np.where(
-                shots["team"].str.upper() == "HOME", shots[home_col], shots[away_col]
-            )
-            shots["opponent"] = np.where(
-                shots["team"] == shots[home_col], shots[away_col], shots[home_col]
-            )
-
-    # ---------------------------------------------------------------
-    # STEP 3: Guarantee opponent + team text columns
-    # ---------------------------------------------------------------
-    if "team" not in shots.columns:
-        shots["team"] = np.random.choice(list(NHL_TEAMS), len(shots))
-    if "opponent" not in shots.columns:
-        shots["opponent"] = np.random.choice(list(NHL_TEAMS), len(shots))
-
-    # Final clean list of teams (always full NHL set if fewer found)
-    if len(all_teams_found) < 32:
-        all_teams_found = sorted(list(NHL_TEAMS))
-
-    return skaters, teams, shots, goalies, lines, all_teams_found
-
-
-# ---------------------------------------------------------------
-# Build matchup regression model
-# ---------------------------------------------------------------
-def build_matchup_model(skaters, teams, shots, goalies, lines, team_a, team_b):
-    df = shots.copy()
-    df.columns = df.columns.str.lower()
-    df = df[df["team"].isin([team_a, team_b])]
-    if df.empty:
-        raise ValueError("No rows found for selected teams.")
-
-    df["opponent"] = np.where(df["team"] == team_a, team_b, team_a)
-
-    if not goalies.empty and "savepct" in goalies.columns:
-        opp_goalies = goalies.rename(columns={"team": "opponent", "savepct": "oppsavepct"})
-        df = df.merge(opp_goalies[["opponent", "oppsavepct"]], on="opponent", how="left")
-    else:
-        df["oppsavepct"] = 0.9
-
-    if not lines.empty and "matchuprating" in lines.columns:
-        df = df.merge(lines[["player", "matchuprating"]], on="player", how="left")
-    else:
-        df["matchuprating"] = np.random.uniform(-0.5, 0.5, len(df))
-
-    df = df.sort_values(["player", "game_id"]).copy()
-    for window in [3, 5, 10, 20]:
-        df[f"recent{window}"] = df.groupby("player")["shotsongoal"].transform(
-            lambda x: x.rolling(window, min_periods=1).mean()
-        )
-    df["delta_3_10"] = df["recent3"] - df["recent10"]
-    df["delta_5_20"] = df["recent5"] - df["recent20"]
-    df["goalieSuppression"] = 1 - df["oppsavepct"].fillna(0.9)
-    df["exp_weight"] = np.exp(-0.1 * (df["game_id"].max() - df["game_id"]))
-
-    features = ["recent3", "recent5", "recent10", "recent20",
-                "delta_3_10", "delta_5_20", "goalieSuppression", "matchuprating"]
-    X = df[features].fillna(0)
-    y = df["shotsongoal"]
-    weights = df["exp_weight"]
-
-    reg = LinearRegression()
-    reg.fit(X, y, sample_weight=weights)
-    df["predictedSOG"] = reg.predict(X)
-
-    preds = df.groupby(["player", "team", "opponent"]).agg({
-        "predictedSOG": "mean",
-        "shotsongoal": "mean",
-        "matchuprating": "mean",
-        "goalieSuppression": "mean"
-    }).reset_index()
-
-    preds["probOver2.5"] = preds["predictedSOG"].apply(lambda mu: 1 - poisson.cdf(2, mu))
-    preds["Signal Strength"] = pd.qcut(preds["probOver2.5"], 3, labels=["Weak", "Moderate", "Strong"])
-    preds["Matchup Rating"] = preds["matchuprating"].round(3)
-    return preds.sort_values("probOver2.5", ascending=False).reset_index(drop=True)
-
-
-def project_matchup(skaters, teams, shots, goalies, lines, team_a, team_b):
-    try:
-        return build_matchup_model(skaters, teams, shots, goalies, lines, team_a, team_b)
-    except Exception as e:
-        print(f"❌ Error in project_matchup: {e}")
-        return pd.DataFrame()
-
-
-if __name__ == "__main__":
-    print("✅ hockey_model.py loaded — stable, matchup-ready model.")
+            home_col = next((c for c in shots.colu_
