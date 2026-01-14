@@ -26,7 +26,7 @@ try:
     project_matchup = getattr(hockey_model, "project_matchup", None)
 
     # Diagnostic printout to verify functions are loaded
-    st.write("✅ hockey_model loaded:", 
+    st.write("✅ hockey_model loaded:",
              [x for x in dir(hockey_model) if not x.startswith("__")])
 
     if parse_raw_files is None or project_matchup is None:
@@ -104,9 +104,59 @@ else:
 # ---------------------------------------------------------------
 if not data.empty:
     st.markdown("### 📊 Ranked Player Projections")
+
     ranked = data.rename(columns={
         "player": "Player",
         "team": "Team",
         "opponent": "Opponent",
         "predictedSOG": "Projected SOG",
-        "probOver2.5": "Probabi
+        "probOver2.5": "Probability (Over 2.5)"
+    })
+
+    st.dataframe(
+        ranked[[
+            "Player", "Team", "Opponent",
+            "Projected SOG", "Probability (Over 2.5)",
+            "Matchup Rating", "Signal Strength"
+        ]],
+        use_container_width=True
+    )
+
+    # -----------------------------------------------------------
+    # Visuals
+    # -----------------------------------------------------------
+    st.markdown("### 📈 Visuals")
+    col1, col2 = st.columns(2)
+
+    with col1:
+        fig, ax = plt.subplots(figsize=(6, 4))
+        sns.barplot(
+            data=ranked.head(10),
+            x="Projected SOG",
+            y="Player",
+            hue="Signal Strength",
+            dodge=False
+        )
+        ax.set_title("Top Projected SOG")
+        st.pyplot(fig)
+
+    with col2:
+        fig2, ax2 = plt.subplots(figsize=(6, 4))
+        sns.boxplot(data=ranked, x="Team", y="Projected SOG", palette="Greens")
+        ax2.set_title("Projected SOG by Team")
+        st.pyplot(fig2)
+
+    # -----------------------------------------------------------
+    # Download
+    # -----------------------------------------------------------
+    st.markdown("### 💾 Export Results")
+    out = BytesIO()
+    ranked.to_excel(out, index=False)
+    st.download_button(
+        label="Download Excel",
+        data=out.getvalue(),
+        file_name="HockeyPropStop_results.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+
+st.caption("© Hockey Prop Stop — robust, exponentially weighted matchup model")
