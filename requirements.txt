@@ -6,3 +6,4 @@ seaborn
 openpyxl
 scikit-learn
 scipy
+chardet
