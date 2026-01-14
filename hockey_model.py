@@ -1,6 +1,6 @@
 # ---------------------------------------------------------------
 # hockey_model.py
-# Hockey Prop Stop — Learning Regression Version (Final)
+# Hockey Prop Stop — Learning Regression Version (FINAL BUILD)
 # ---------------------------------------------------------------
 
 import pandas as pd
@@ -119,9 +119,10 @@ def build_player_form(shots_df):
 
 
 # ---------------------------------------------------------------
-# 3️⃣ Team & Goalie Context
+# 3️⃣ Team & Goalie Context (fixed parentheses)
 # ---------------------------------------------------------------
 def build_team_goalie_context(teams_df, goalies_df):
+    """Prepares team and goalie suppression metrics."""
     if teams_df.empty:
         team_context = pd.DataFrame(columns=["team", "shotSuppression", "xGoalsFor"])
     else:
@@ -137,3 +138,111 @@ def build_team_goalie_context(teams_df, goalies_df):
         g = goalies_df.copy()
         g["savePct"] = 1 - (g["goals"] / g["ongoal"].replace(0, np.nan))
         g["dangerSavePct"] = 1 - (
+            (g["lowDangerGoals"] + g["mediumDangerGoals"] + g["highDangerGoals"])
+            / (
+                g["lowDangerShots"] + g["mediumDangerShots"] + g["highDangerShots"]
+            ).replace(0, np.nan)
+        )
+        g["goalieSuppression"] = g[["savePct", "dangerSavePct"]].mean(axis=1)
+        goalie_context = g[["name", "team", "goalieSuppression"]]
+    else:
+        goalie_context = pd.DataFrame(columns=["name", "team", "goalieSuppression"])
+
+    return team_context, goalie_context
+
+
+# ---------------------------------------------------------------
+# 4️⃣ Line Strength
+# ---------------------------------------------------------------
+def build_team_line_strength(lines_df):
+    if lines_df.empty:
+        print("⚠️ No line data provided — skipping line strength.")
+        return pd.DataFrame(columns=["team", "lineStrength"])
+
+    df = lines_df.copy()
+    if "xGoalsFor" not in df.columns or "xGoalsAgainst" not in df.columns:
+        print("⚠️ Missing xGoalsFor/xGoalsAgainst in lines.csv.")
+        return pd.DataFrame(columns=["team", "lineStrength"])
+
+    df["raw_strength"] = (df["xGoalsFor"] - df["xGoalsAgainst"]) / (df["xGoalsFor"] + df["xGoalsAgainst"] + 1e-6)
+    team_strength = df.groupby("team")["raw_strength"].mean().reset_index()
+    team_strength["lineStrength"] = (
+        (team_strength["raw_strength"] - team_strength["raw_strength"].mean())
+        / team_strength["raw_strength"].std()
+    ).clip(-2, 2)
+
+    print(f"🏒 Computed lineStrength for {len(team_strength)} teams.")
+    return team_strength[["team", "lineStrength"]]
+
+
+# ---------------------------------------------------------------
+# 5️⃣ Learning Matchup Model
+# ---------------------------------------------------------------
+def build_matchup_model(skaters, teams, shots, goalies, lines, team_a, team_b, report_metrics=True):
+    print(f"🔍 Building learning model for {team_a} vs {team_b}")
+
+    player_form = build_player_form(shots)
+    if player_form.empty:
+        print("❌ No player form data.")
+        return pd.DataFrame()
+
+    team_ctx, goalie_ctx = build_team_goalie_context(teams, goalies)
+    line_strength = build_team_line_strength(lines)
+
+    merged = (
+        player_form.merge(team_ctx, on="team", how="left")
+        .merge(line_strength, on="team", how="left")
+    )
+
+    merged["opponent"] = np.where(merged["team"] == team_a, team_b, team_a)
+    opp_strength = line_strength.rename(columns={"team": "opponent", "lineStrength": "oppLineStrength"})
+    merged = merged.merge(opp_strength, on="opponent", how="left")
+
+    merged["matchupAdj"] = merged["lineStrength"] - merged["oppLineStrength"]
+
+    opp_goalie = goalie_ctx.rename(columns={"team": "opponent", "goalieSuppression": "oppGoalieSuppression"})
+    merged = merged.merge(opp_goalie, on="opponent", how="left")
+
+    merged["xGoalsFor"] = merged["xGoalsFor"].fillna(merged["avg_5"])
+    merged["oppGoalieSuppression"] = merged["oppGoalieSuppression"].fillna(0.9)
+    merged["matchupAdj"] = merged["matchupAdj"].fillna(0)
+
+    # Proxy target
+    merged["actual_SOG"] = merged["avg_3"]
+
+    X = merged[["avg_5", "xGoalsFor", "oppGoalieSuppression", "matchupAdj"]]
+    y = merged["actual_SOG"]
+
+    model = LinearRegression().fit(X, y)
+    merged["Projected_SOG"] = model.predict(X).clip(lower=0).round(2)
+
+    if report_metrics:
+        mae = mean_absolute_error(y, merged["Projected_SOG"])
+        rmse = np.sqrt(mean_squared_error(y, merged["Projected_SOG"]))
+        r2 = r2_score(y, merged["Projected_SOG"])
+        print(f"📈 MAE={mae:.3f}, RMSE={rmse:.3f}, R²={r2:.3f}")
+
+    merged["SignalStrength"] = pd.cut(
+        merged["z_score"], bins=[-np.inf, 0, 1, np.inf], labels=["Weak", "Moderate", "Strong"]
+    )
+
+    result = merged[merged["team"].isin([team_a, team_b])].copy()
+    print(f"✅ Generated {len(result)} player projections.")
+    return result.sort_values("Projected_SOG", ascending=False).reset_index(drop=True)
+
+
+# ---------------------------------------------------------------
+# 6️⃣ Wrapper
+# ---------------------------------------------------------------
+def project_matchup(skaters, teams, shots, goalies, lines, team_a, team_b):
+    try:
+        return build_matchup_model(skaters, teams, shots, goalies, lines, team_a, team_b, report_metrics=True)
+    except Exception as e:
+        import traceback
+        print("❌ project_matchup failed:", e)
+        traceback.print_exc()
+        return pd.DataFrame()
+
+
+if __name__ == "__main__":
+    print("✅ hockey_model.py loaded successfully (Final Build).")
