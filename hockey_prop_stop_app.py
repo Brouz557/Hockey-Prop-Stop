@@ -10,6 +10,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 from io import BytesIO
+from hockey_model import build_model, project_matchup
+
 
 st.set_page_config(
     page_title="Hockey Prop Stop",
@@ -37,6 +39,26 @@ uploaded_teams   = st.sidebar.file_uploader("NHL TEAMs.csv", type=["csv"])
 uploaded_shots   = st.sidebar.file_uploader("shots.csv", type=["csv"])
 uploaded_goalies = st.sidebar.file_uploader("goalies.csv", type=["csv"])
 uploaded_lines   = st.sidebar.file_uploader("lines.csv", type=["csv"])
+# --------------------------------------------------
+# Build model and generate projections when files uploaded
+# --------------------------------------------------
+if uploaded_skaters and uploaded_teams and uploaded_shots and uploaded_goalies and uploaded_lines:
+    st.success("✅ Data uploaded successfully. Building model...")
+
+    skaters_df = pd.read_csv(uploaded_skaters)
+    teams_df   = pd.read_csv(uploaded_teams)
+    shots_df   = pd.read_csv(uploaded_shots)
+    goalies_df = pd.read_csv(uploaded_goalies)
+    lines_df   = pd.read_csv(uploaded_lines)
+
+    model, df = build_model(skaters_df, teams_df, shots_df, goalies_df, lines_df)
+    data = project_matchup(model, df, "CAR", "DET")
+
+    st.success("✅ Model built and projections generated.")
+else:
+    st.info("Showing sample data until files are uploaded.")
+    data = load_sample()
+
 
 # ---- Load sample data if nothing uploaded ----
 def load_sample():
@@ -101,3 +123,4 @@ st.download_button(
 )
 
 st.caption("© Hockey Prop Stop — data refreshed daily.")
+
