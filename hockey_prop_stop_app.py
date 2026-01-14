@@ -11,6 +11,27 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from io import BytesIO
 from hockey_model import build_model, project_matchup
+# ---- Sample data function (for when no files uploaded) ----
+def load_sample():
+    import numpy as np
+    import pandas as pd
+    np.random.seed(42)
+    players = ["Aho", "Larkin", "Necas", "Burns", "Raymond", "Walman"]
+    pos = ["F", "F", "F", "D", "F", "D"]
+    team = ["CAR", "DET", "CAR", "CAR", "DET", "DET"]
+    sog = np.random.uniform(1.0, 4.0, 6).round(2)
+    prob = np.random.uniform(0.45, 0.8, 6).round(2)
+    strength = ["Strong" if p > 0.7 else "Moderate" if p > 0.55 else "Weak" for p in prob]
+    match = ["Favorable", "Neutral", "Favorable", "Favorable", "Unfavorable", "Unfavorable"]
+    odds = (1 / prob - 1) * 100
+    df = pd.DataFrame({
+        "Player": players, "Team": team, "Pos": pos,
+        "Projected SOG": sog, "Probability (Over)": prob,
+        "Signal Strength": strength, "Matchup Favorability": match,
+        "Lowest Playable Odds": odds.round(0)
+    })
+    return df
+
 
 
 st.set_page_config(
@@ -123,4 +144,5 @@ st.download_button(
 )
 
 st.caption("© Hockey Prop Stop — data refreshed daily.")
+
 
