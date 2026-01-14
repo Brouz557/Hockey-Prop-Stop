@@ -4,16 +4,17 @@
 # Dark green / silver theme with sample data
 # ---------------------------------------------------------------
 
+import sys, os
+# --- make sure local modules are visible before importing anything ---
+sys.path.append(os.path.dirname(__file__))
+
 import streamlit as st
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 from io import BytesIO
-import sys, os
 
-# ---- Ensure local imports work on Streamlit Cloud ----
-sys.path.append(os.path.dirname(__file__))
 from hockey_model import build_model, project_matchup
 
 
@@ -59,5 +60,72 @@ st.markdown(
 
 # ---- Sidebar for uploads ----
 st.sidebar.header("📂 Upload Daily Data Files")
+uploaded_skaters = st.sidebar.file_uploader("NHL Skaters.csv", type=["csv"])
+uploaded_teams   = st.sidebar.file_uploader("NHL TEAMs.csv", type=["csv"])
+uploaded_shots   = st.sidebar.file_uploader("shots.csv", type=["csv"])
+uploaded_goalies = st.sidebar.file_uploader("goalies.csv", type=["csv"])
+uploaded_lines   = st.sidebar.file_uploader("lines.csv", type=["csv"])
 
+# --------------------------------------------------
+# Build model and generate projections when files uploaded
+# --------------------------------------------------
+if all([uploaded_skaters, uploaded_teams, uploaded_shots, uploaded_goalies, uploaded_lines]):
+    st.success("✅ Data uploaded successfully. Building model...")
+
+    skaters_df = pd.read_csv(uploaded_skaters)
+    teams_df   = pd.read_csv(uploaded_teams)
+    shots_df   = pd.read_csv(uploaded_shots)
+    goalies_df = pd.read_csv(uploaded_goalies)
+    lines_df   = pd.read_csv(uploaded_lines)
+
+    model, df = build_model(skaters_df, teams_df, shots_df, goalies_df, lines_df)
+    data = project_matchup(model, df, "CAR", "DET")
+
+    st.success("✅ Model built and projections generated.")
+else:
+    st.info("Showing sample data until files are uploaded.")
+    data = load_sample()
+
+
+# ---- Display ranked table ----
+st.markdown("### 📊 Ranked Player Projections")
+
+if "Probability (Over)" in data.columns:
+    sort_col = "Probability (Over)"
+else:
+    sort_col = data.columns[-2] if len(data.columns) > 2 else data.columns[0]
+
+ranked = data.sort_values(sort_col, ascending=False).reset_index(drop=True)
+st.dataframe(ranked, use_container_width=True)
+
+# ---- Visuals ----
+st.markdown("### 📈 Visuals")
+col1, col2 = st.columns(2)
+with col1:
+    if "Projected SOG" in ranked.columns and "Probability (Over)" in ranked.columns:
+        fig, ax = plt.subplots(figsize=(5, 4))
+        sns.scatterplot(
+            x="Projected SOG", y="Probability (Over)",
+            data=ranked, hue="Signal Strength", s=100
+        )
+        ax.set_title("Projected SOG vs Probability")
+        st.pyplot(fig)
+with col2:
+    fig2, ax2 = plt.subplots(figsize=(5, 4))
+    sns.heatmap(np.corrcoef(np.random.rand(6, 6)), cmap="Greens", cbar=False)
+    ax2.set_title("Sample Signal Heatmap")
+    st.pyplot(fig2)
+
+# ---- Download Excel ----
+st.markdown("### 💾 Export Results")
+out = BytesIO()
+ranked.to_excel(out, index=False)
+st.download_button(
+    label="Download Excel",
+    data=out.getvalue(),
+    file_name="HockeyPropStop_results.xlsx",
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+)
+
+st.caption("© Hockey Prop Stop — data refreshed daily.")
 
