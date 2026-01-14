@@ -93,8 +93,37 @@ if not data.empty:
                          "Matchup Rating", "Signal Strength"]],
                  use_container_width=True)
 
+    # -----------------------------------------------------------
     # Visuals
+    # -----------------------------------------------------------
     st.markdown("### 📈 Visuals")
     col1, col2 = st.columns(2)
+
     with col1:
-        fig, ax = plt.subplots(figsize=(6
+        fig, ax = plt.subplots(figsize=(6, 4))
+        sns.barplot(data=ranked.head(10),
+                    x="Projected SOG", y="Player",
+                    hue="Signal Strength", dodge=False)
+        ax.set_title("Top Projected SOG")
+        st.pyplot(fig)
+
+    with col2:
+        fig2, ax2 = plt.subplots(figsize=(6, 4))
+        sns.boxplot(data=ranked, x="Team", y="Projected SOG", palette="Greens")
+        ax2.set_title("Projected SOG by Team")
+        st.pyplot(fig2)
+
+    # -----------------------------------------------------------
+    # Download
+    # -----------------------------------------------------------
+    st.markdown("### 💾 Export Results")
+    out = BytesIO()
+    ranked.to_excel(out, index=False)
+    st.download_button(
+        label="Download Excel",
+        data=out.getvalue(),
+        file_name="HockeyPropStop_results.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+
+st.caption("© Hockey Prop Stop — robust, exponentially weighted matchup model")
