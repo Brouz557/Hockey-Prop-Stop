@@ -58,13 +58,14 @@ def build_model(skaters, teams, shots, goalies, lines):
             goalie_key = c
             break
     if goalie_key:
-        df = df.merge(
-            goalies[[goalie_key, "teamAgainst", "savePct", "shotsFaced"]].rename(
-                columns={goalie_key: "goalie"}
-            ),
-            on="teamAgainst",
-            how="left"
-        )
+        if set(["teamAgainst", "savePct"]).issubset(goalies.columns):
+            df = df.merge(
+                goalies[[goalie_key, "teamAgainst", "savePct", "shotsFaced"]].rename(
+                    columns={goalie_key: "goalie"}
+                ),
+                on="teamAgainst",
+                how="left"
+            )
 
     # --- Merge line matchup data ---
     if set(["player", "opponent", "line"]).issubset(lines.columns):
@@ -93,6 +94,9 @@ def build_model(skaters, teams, shots, goalies, lines):
     model_features = ["recentShots", "teamShotsFor", "goalieSuppression", "matchupAdj"]
     model_df = df.dropna(subset=model_features + ["shotsOnGoal"]).copy()
 
+    if len(model_df) == 0:
+        raise ValueError("No valid data rows to train regression model.")
+
     X = model_df[model_features]
     y = model_df["shotsOnGoal"]
 
@@ -115,7 +119,7 @@ def build_model(skaters, teams, shots, goalies, lines):
         .reset_index()
     )
 
-    # --- Calculate Poisson-based probabilities ---
+    # --- Poisson-based probabilities ---
     player_preds["probOver2.5"] = player_preds["predictedSOG"].apply(
         lambda mu: 1 - poisson.cdf(2, mu)
     )
@@ -135,7 +139,7 @@ def build_model(skaters, teams, shots, goalies, lines):
         labels=["Unfavorable", "Neutral", "Favorable"]
     )
 
-    # --- Lowest playable odds (fair odds approximation) ---
+    # --- Fair odds approximations ---
     player_preds["fairOddsOver2.5"] = 1 / player_preds["probOver2.5"]
     player_preds["fairOddsOver3.5"] = 1 / player_preds["probOver3.5"]
 
@@ -144,6 +148,22 @@ def build_model(skaters, teams, shots, goalies, lines):
     # ---------------------------------------------------------------
     output = player_preds.sort_values("probOver2.5", ascending=False).reset_index(drop=True)
     return output, reg
+
+
+# ---------------------------------------------------------------
+# Project matchup wrapper — used by Streamlit app
+# ---------------------------------------------------------------
+def project_matchup(skaters, teams, shots, goalies, lines):
+    """
+    Wrapper for build_model used by the Streamlit app.
+    Returns the processed player-level projections DataFrame.
+    """
+    try:
+        output, _ = build_model(skaters, teams, shots, goalies, lines)
+        return output
+    except Exception as e:
+        print(f"Error in project_matchup: {e}")
+        return pd.DataFrame()
 
 
 # ---------------------------------------------------------------
