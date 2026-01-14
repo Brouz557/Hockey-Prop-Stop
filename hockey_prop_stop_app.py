@@ -24,19 +24,48 @@ try:
     spec.loader.exec_module(hockey_model)
     parse_raw_files = getattr(hockey_model, "parse_raw_files", None)
     project_matchup = getattr(hockey_model, "project_matchup", None)
-
-    # Diagnostic printout to verify functions are loaded
-    st.write("✅ hockey_model loaded:",
-             [x for x in dir(hockey_model) if not x.startswith("__")])
-
-    if parse_raw_files is None or project_matchup is None:
-        st.error("❌ hockey_model.py loaded but expected functions not found.")
-        st.stop()
-
 except Exception as e:
     st.error("❌ Failed to load hockey_model.py.")
     st.code(traceback.format_exc())
     st.stop()
+
+# ---------------------------------------------------------------
+# NHL team logos
+# ---------------------------------------------------------------
+NHL_LOGO_MAP = {
+    "ANA": "https://assets.nhle.com/logos/nhl/svg/ANA.svg",
+    "ARI": "https://assets.nhle.com/logos/nhl/svg/ARI.svg",
+    "BOS": "https://assets.nhle.com/logos/nhl/svg/BOS.svg",
+    "BUF": "https://assets.nhle.com/logos/nhl/svg/BUF.svg",
+    "CGY": "https://assets.nhle.com/logos/nhl/svg/CGY.svg",
+    "CAR": "https://assets.nhle.com/logos/nhl/svg/CAR.svg",
+    "CHI": "https://assets.nhle.com/logos/nhl/svg/CHI.svg",
+    "COL": "https://assets.nhle.com/logos/nhl/svg/COL.svg",
+    "CBJ": "https://assets.nhle.com/logos/nhl/svg/CBJ.svg",
+    "DAL": "https://assets.nhle.com/logos/nhl/svg/DAL.svg",
+    "DET": "https://assets.nhle.com/logos/nhl/svg/DET.svg",
+    "EDM": "https://assets.nhle.com/logos/nhl/svg/EDM.svg",
+    "FLA": "https://assets.nhle.com/logos/nhl/svg/FLA.svg",
+    "LAK": "https://assets.nhle.com/logos/nhl/svg/LAK.svg",
+    "MIN": "https://assets.nhle.com/logos/nhl/svg/MIN.svg",
+    "MTL": "https://assets.nhle.com/logos/nhl/svg/MTL.svg",
+    "NSH": "https://assets.nhle.com/logos/nhl/svg/NSH.svg",
+    "NJD": "https://assets.nhle.com/logos/nhl/svg/NJD.svg",
+    "NYI": "https://assets.nhle.com/logos/nhl/svg/NYI.svg",
+    "NYR": "https://assets.nhle.com/logos/nhl/svg/NYR.svg",
+    "OTT": "https://assets.nhle.com/logos/nhl/svg/OTT.svg",
+    "PHI": "https://assets.nhle.com/logos/nhl/svg/PHI.svg",
+    "PIT": "https://assets.nhle.com/logos/nhl/svg/PIT.svg",
+    "SEA": "https://assets.nhle.com/logos/nhl/svg/SEA.svg",
+    "SJS": "https://assets.nhle.com/logos/nhl/svg/SJS.svg",
+    "STL": "https://assets.nhle.com/logos/nhl/svg/STL.svg",
+    "TBL": "https://assets.nhle.com/logos/nhl/svg/TBL.svg",
+    "TOR": "https://assets.nhle.com/logos/nhl/svg/TOR.svg",
+    "VAN": "https://assets.nhle.com/logos/nhl/svg/VAN.svg",
+    "VGK": "https://assets.nhle.com/logos/nhl/svg/VGK.svg",
+    "WSH": "https://assets.nhle.com/logos/nhl/svg/WSH.svg",
+    "WPG": "https://assets.nhle.com/logos/nhl/svg/WPG.svg",
+}
 
 # ---------------------------------------------------------------
 # Streamlit setup
@@ -54,7 +83,7 @@ st.markdown(
 )
 
 # ---------------------------------------------------------------
-# Upload section
+# Upload Section
 # ---------------------------------------------------------------
 st.sidebar.header("📂 Upload Raw NHL Data Files")
 uploaded_files = st.sidebar.file_uploader(
@@ -75,15 +104,19 @@ if uploaded_files:
         except Exception as e:
             st.warning(f"⚠️ Could not read {f.name}: {e}")
 
-    skaters_df, teams_df, shots_df, goalies_df, lines_df = parse_raw_files(raw_files)
-    st.write("✅ Parser completed. Detected teams:",
-             sorted(shots_df["team"].dropna().unique().tolist()))
+    skaters_df, teams_df, shots_df, goalies_df, lines_df, all_teams = parse_raw_files(raw_files)
 
-    all_teams = sorted(shots_df["team"].dropna().unique())
+    st.write("✅ Parser completed. Detected teams:", all_teams)
+
     if len(all_teams) < 2:
         st.warning("⚠️ Could not detect enough teams in your data.")
     else:
         st.sidebar.markdown("### 🏒 Select Matchup")
+
+        def team_option(team):
+            logo = NHL_LOGO_MAP.get(team, "")
+            return f"<img src='{logo}' width='20'> {team}" if logo else team
+
         team_a = st.sidebar.selectbox("Team A", all_teams)
         team_b = st.sidebar.selectbox("Team B", [t for t in all_teams if t != team_a])
 
@@ -93,7 +126,7 @@ if uploaded_files:
                     skaters_df, teams_df, shots_df, goalies_df, lines_df, team_a, team_b
                 )
             if not data.empty:
-                st.success("✅ Model built and projections generated.")
+                st.success(f"✅ Model built: {team_a} vs {team_b}")
             else:
                 st.warning("⚠️ Model returned no results.")
 else:
@@ -104,7 +137,6 @@ else:
 # ---------------------------------------------------------------
 if not data.empty:
     st.markdown("### 📊 Ranked Player Projections")
-
     ranked = data.rename(columns={
         "player": "Player",
         "team": "Team",
@@ -122,18 +154,14 @@ if not data.empty:
         use_container_width=True
     )
 
-    # -----------------------------------------------------------
     # Visuals
-    # -----------------------------------------------------------
     st.markdown("### 📈 Visuals")
     col1, col2 = st.columns(2)
-
     with col1:
         fig, ax = plt.subplots(figsize=(6, 4))
         sns.barplot(
             data=ranked.head(10),
-            x="Projected SOG",
-            y="Player",
+            x="Projected SOG", y="Player",
             hue="Signal Strength",
             dodge=False
         )
@@ -146,9 +174,7 @@ if not data.empty:
         ax2.set_title("Projected SOG by Team")
         st.pyplot(fig2)
 
-    # -----------------------------------------------------------
     # Download
-    # -----------------------------------------------------------
     st.markdown("### 💾 Export Results")
     out = BytesIO()
     ranked.to_excel(out, index=False)
