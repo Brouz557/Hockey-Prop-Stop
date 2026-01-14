@@ -1,6 +1,6 @@
 # ---------------------------------------------------------------
 # hockey_model.py
-# Hockey Prop Stop — resilient production build with normalization
+# Hockey Prop Stop — resilient, debug-enabled production build
 # ---------------------------------------------------------------
 
 import pandas as pd
@@ -108,7 +108,6 @@ def build_team_goalie_context(teams_df, goalies_df):
         team_context = pd.DataFrame(columns=["team", "shotSuppression", "xGoalsFor"])
     else:
         team_context = teams_df.copy()
-        # Try to detect suppression metric
         found = [c for c in team_context.columns if "goal" in c.lower() and "against" in c.lower()]
         shot_col = found[0] if found else None
         if shot_col:
@@ -156,35 +155,41 @@ def build_line_matchups(lines_df):
 
 
 # ---------------------------------------------------------------
-# 5️⃣ Build final projections table
+# 5️⃣ Build final projections table (debug-enabled)
 # ---------------------------------------------------------------
 def build_matchup_model(skaters, teams, shots, goalies, lines, team_a, team_b):
     """
-    Main function that ties all context together.
+    Main function that ties all context together, with full debug tracing.
     """
     print(f"🔍 Building matchup model for {team_a} vs {team_b}")
 
     # --- Player form ---
     player_form = build_player_form(shots)
+    print(f"🧮 player_form shape: {player_form.shape}")
+
     if player_form.empty:
         print("❌ No player form data, aborting model build.")
         return pd.DataFrame()
 
     # --- Team & goalie context ---
     team_ctx, goalie_ctx = build_team_goalie_context(teams, goalies)
+    print(f"🏒 team_ctx: {team_ctx.shape}, 🥅 goalie_ctx: {goalie_ctx.shape}")
 
     # --- Line context ---
     line_ctx = build_line_matchups(lines)
+    print(f"🔢 line_ctx: {line_ctx.shape}")
 
     # --- Filter selected teams ---
     form = player_form[player_form["team"].isin([team_a, team_b])].copy()
+    print(f"🎯 Filtered form players: {len(form)} for teams {team_a}/{team_b}")
+
     if form.empty:
-        print("⚠️ No players found for selected teams.")
-        return player_form.head(10)
+        print("⚠️ No players found for selected teams — returning raw player_form.")
+        return player_form.head(25)
 
     # --- Clean join keys ---
-    form["player_clean"] = form["player"].str.lower().str.strip()
-    skaters["name_clean"] = skaters["name"].str.lower().str.strip()
+    form["player_clean"] = form["player"].astype(str).str.lower().str.strip()
+    skaters["name_clean"] = skaters["name"].astype(str).str.lower().str.strip()
 
     # --- Merge everything ---
     merged = (
@@ -197,28 +202,46 @@ def build_matchup_model(skaters, teams, shots, goalies, lines, team_a, team_b):
         .merge(team_ctx, on="team", how="left")
         .merge(line_ctx, left_on=["player", "team"], right_on=["name", "team"], how="left")
     )
+    print(f"🧩 After merges — merged shape: {merged.shape}")
 
     # --- Derive opponent suppression ---
-    opp_supp = team_ctx.rename(
-        columns={"team": "opponent", "shotSuppression": "oppSuppression"}
-    )
-    merged["opponent"] = np.where(merged["team"] == team_a, team_b, team_a)
-    merged = merged.merge(opp_supp[["opponent", "oppSuppression"]], on="opponent", how="left")
+    if not team_ctx.empty:
+        opp_supp = team_ctx.rename(
+            columns={"team": "opponent", "shotSuppression": "oppSuppression"}
+        )
+        merged["opponent"] = np.where(merged["team"] == team_a, team_b, team_a)
+        merged = merged.merge(
+            opp_supp[["opponent", "oppSuppression"]], on="opponent", how="left"
+        )
+    else:
+        merged["opponent"] = np.where(merged["team"] == team_a, team_b, team_a)
+        merged["oppSuppression"] = np.nan
 
     # --- Goalie suppression from opponent team ---
-    opp_goalie = goalie_ctx.rename(
-        columns={"team": "opponent", "goalieSuppression": "oppGoalieSuppression"}
-    )
-    merged = merged.merge(opp_goalie[["opponent", "oppGoalieSuppression"]], on="opponent", how="left")
+    if not goalie_ctx.empty:
+        opp_goalie = goalie_ctx.rename(
+            columns={"team": "opponent", "goalieSuppression": "oppGoalieSuppression"}
+        )
+        merged = merged.merge(
+            opp_goalie[["opponent", "oppGoalieSuppression"]], on="opponent", how="left"
+        )
+    else:
+        merged["oppGoalieSuppression"] = np.nan
+
+    print("🔗 Context merges complete.")
 
     # ---------------------------------------------------------------
     # Weighted Projection Formula
     # ---------------------------------------------------------------
+    merged["xGoalsFor"] = merged["xGoalsFor"].fillna(merged["avg_5"])
+    merged["oppGoalieSuppression"] = merged["oppGoalieSuppression"].fillna(0.9)
+    merged["matchupRating"] = merged["matchupRating"].fillna(0)
+
     merged["Projected_SOG"] = (
         0.4 * merged["avg_5"]
-        + 0.25 * merged["xGoalsFor"].fillna(merged["avg_5"])
-        + 0.2 * (1 - merged["oppGoalieSuppression"].fillna(0.9))
-        + 0.15 * merged["matchupRating"].fillna(0)
+        + 0.25 * merged["xGoalsFor"]
+        + 0.2 * (1 - merged["oppGoalieSuppression"])
+        + 0.15 * merged["matchupRating"]
     )
 
     merged["Projected_SOG"] = merged["Projected_SOG"].clip(lower=0).round(2)
@@ -230,7 +253,6 @@ def build_matchup_model(skaters, teams, shots, goalies, lines, team_a, team_b):
         labels=["Weak", "Moderate", "Strong"],
     )
 
-    # --- Final Output ---
     result = merged[
         [
             "player",
@@ -251,6 +273,9 @@ def build_matchup_model(skaters, teams, shots, goalies, lines, team_a, team_b):
     ].drop_duplicates(subset=["player"]).sort_values("Projected_SOG", ascending=False)
 
     print(f"✅ Generated {len(result)} player projections.")
+    if result.empty:
+        print("⚠️ Returning raw player form table for visibility.")
+        return player_form.head(25)
     return result.reset_index(drop=True)
 
 
@@ -270,4 +295,4 @@ def project_matchup(skaters, teams, shots, goalies, lines, team_a, team_b):
 # Example standalone run
 # ---------------------------------------------------------------
 if __name__ == "__main__":
-    print("✅ hockey_model.py loaded — syntax-verified build.")
+    print("✅ hockey_model.py loaded — debug-enabled build.")
