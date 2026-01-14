@@ -4,3 +4,5 @@ numpy
 matplotlib
 seaborn
 openpyxl
+scikit-learn
+scipy
