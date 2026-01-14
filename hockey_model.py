@@ -1,6 +1,6 @@
 # ---------------------------------------------------------------
 # hockey_model.py
-# Hockey Prop Stop — resilient, debug-enabled production build
+# Hockey Prop Stop — Team-based matchup model with line strength
 # ---------------------------------------------------------------
 
 import pandas as pd
@@ -13,8 +13,7 @@ from scipy.stats import zscore
 # ---------------------------------------------------------------
 def parse_raw_files(file_dfs):
     """
-    Accepts a dict of uploaded CSV dataframes.
-    Returns (skaters, teams, shots, goalies, lines, team_list)
+    Reads uploaded dataframes, cleans, and returns standardized versions.
     """
     skaters = file_dfs.get("skaters", pd.DataFrame())
     teams = file_dfs.get("teams", pd.DataFrame())
@@ -22,23 +21,19 @@ def parse_raw_files(file_dfs):
     goalies = file_dfs.get("goalies", pd.DataFrame())
     lines = file_dfs.get("lines", pd.DataFrame())
 
-    # Standardize columns
+    # Clean and normalize
     for df in [skaters, teams, shots, goalies, lines]:
         if not df.empty:
             df.columns = df.columns.str.strip()
+            for col in ["team", "teamCode"]:
+                if col in df.columns:
+                    df[col] = df[col].astype(str).str.strip().str.upper()
+            for col in ["name", "shooterName"]:
+                if col in df.columns:
+                    df[col] = df[col].astype(str).str.strip()
 
-            # Normalize team and player name formats
-            if "team" in df.columns:
-                df["team"] = df["team"].astype(str).str.strip().str.upper()
-            if "teamCode" in df.columns:
-                df["teamCode"] = df["teamCode"].astype(str).str.strip().str.upper()
-            if "name" in df.columns:
-                df["name"] = df["name"].astype(str).str.strip()
-            if "shooterName" in df.columns:
-                df["shooterName"] = df["shooterName"].astype(str).str.strip()
-
-    # Unique teams from skaters sheet
-    team_list = sorted(skaters["team"].dropna().unique().tolist())
+    # Build team list for dropdowns
+    team_list = sorted(skaters["team"].dropna().unique().tolist()) if "team" in skaters else []
 
     return skaters, teams, shots, goalies, lines, team_list
 
@@ -58,18 +53,17 @@ def build_player_form(shots_df):
     df = shots_df.copy()
     df = df.rename(columns={"shooterName": "player", "teamCode": "team"})
 
-    # Normalize shotWasOnGoal values
     if "shotWasOnGoal" not in df.columns:
-        print("⚠️ Missing shotWasOnGoal column — cannot compute rolling form.")
+        print("⚠️ Missing shotWasOnGoal column.")
         return pd.DataFrame()
 
+    # Normalize shotWasOnGoal values
     df["shotWasOnGoal"] = (
         df["shotWasOnGoal"].astype(str).str.lower().isin(["1", "true", "yes"]).astype(int)
     )
 
-    # Group and sort by player/game_id
     if "game_id" not in df.columns:
-        print("⚠️ No game_id found, cannot compute rolling windows.")
+        print("⚠️ No game_id found.")
         return pd.DataFrame()
 
     df = df.sort_values(["player", "game_id"])
@@ -79,7 +73,7 @@ def build_player_form(shots_df):
         .reset_index()
     )
 
-    # Rolling averages
+    # Rolling windows
     for w in [3, 5, 10, 20]:
         grouped[f"avg_{w}"] = (
             grouped.groupby("player")["shotWasOnGoal"]
@@ -102,7 +96,7 @@ def build_player_form(shots_df):
 # ---------------------------------------------------------------
 def build_team_goalie_context(teams_df, goalies_df):
     """
-    Builds team- and goalie-level suppression metrics.
+    Prepares team and goalie suppression metrics.
     """
     if teams_df.empty:
         team_context = pd.DataFrame(columns=["team", "shotSuppression", "xGoalsFor"])
@@ -110,10 +104,7 @@ def build_team_goalie_context(teams_df, goalies_df):
         team_context = teams_df.copy()
         found = [c for c in team_context.columns if "goal" in c.lower() and "against" in c.lower()]
         shot_col = found[0] if found else None
-        if shot_col:
-            team_context["shotSuppression"] = team_context[shot_col]
-        else:
-            team_context["shotSuppression"] = np.nan
+        team_context["shotSuppression"] = team_context[shot_col] if shot_col else np.nan
         if "xGoalsFor" not in team_context.columns:
             team_context["xGoalsFor"] = np.nan
         team_context = team_context[["team", "shotSuppression", "xGoalsFor"]]
@@ -135,122 +126,91 @@ def build_team_goalie_context(teams_df, goalies_df):
 
 
 # ---------------------------------------------------------------
-# 4️⃣ Line-level matchup context
+# 4️⃣ Compute team-based line strength
 # ---------------------------------------------------------------
-def build_line_matchups(lines_df):
+def build_team_line_strength(lines_df):
     """
-    Builds line-level matchup ratings from xGoalsFor vs xGoalsAgainst.
+    Computes per-team average line strength normalized from xGoalsFor/xGoalsAgainst.
     """
     if lines_df.empty:
-        return pd.DataFrame(columns=["name", "team", "matchupRating"])
-    lines = lines_df.copy()
-    if "xGoalsFor" in lines.columns and "xGoalsAgainst" in lines.columns:
-        lines["matchupRating"] = (
-            (lines["xGoalsFor"] - lines["xGoalsAgainst"])
-            / (lines["xGoalsFor"] + lines["xGoalsAgainst"] + 1e-6)
-        )
-    else:
-        lines["matchupRating"] = 0
-    return lines[["name", "team", "matchupRating"]]
+        print("⚠️ No line data provided — skipping line strength.")
+        return pd.DataFrame(columns=["team", "lineStrength"])
+
+    df = lines_df.copy()
+    if "xGoalsFor" not in df.columns or "xGoalsAgainst" not in df.columns:
+        print("⚠️ Missing xGoalsFor/xGoalsAgainst in lines.csv.")
+        return pd.DataFrame(columns=["team", "lineStrength"])
+
+    df["raw_strength"] = (
+        (df["xGoalsFor"] - df["xGoalsAgainst"])
+        / (df["xGoalsFor"] + df["xGoalsAgainst"] + 1e-6)
+    )
+    team_strength = df.groupby("team")["raw_strength"].mean().reset_index()
+    team_strength["lineStrength"] = (
+        (team_strength["raw_strength"] - team_strength["raw_strength"].mean())
+        / team_strength["raw_strength"].std()
+    ).clip(-2, 2)
+
+    print(f"🏒 Computed lineStrength for {len(team_strength)} teams.")
+    return team_strength[["team", "lineStrength"]]
 
 
 # ---------------------------------------------------------------
-# 5️⃣ Build final projections table (debug-enabled)
+# 5️⃣ Build final projections table
 # ---------------------------------------------------------------
 def build_matchup_model(skaters, teams, shots, goalies, lines, team_a, team_b):
-    """
-    Main function that ties all context together, with full debug tracing.
-    """
     print(f"🔍 Building matchup model for {team_a} vs {team_b}")
 
-    # --- Player form ---
     player_form = build_player_form(shots)
-    print(f"🧮 player_form shape: {player_form.shape}")
+    team_ctx, goalie_ctx = build_team_goalie_context(teams, goalies)
+    line_strength = build_team_line_strength(lines)
 
     if player_form.empty:
-        print("❌ No player form data, aborting model build.")
+        print("❌ No player form data — aborting.")
         return pd.DataFrame()
 
-    # --- Team & goalie context ---
-    team_ctx, goalie_ctx = build_team_goalie_context(teams, goalies)
-    print(f"🏒 team_ctx: {team_ctx.shape}, 🥅 goalie_ctx: {goalie_ctx.shape}")
-
-    # --- Line context ---
-    line_ctx = build_line_matchups(lines)
-    print(f"🔢 line_ctx: {line_ctx.shape}")
-
-    # --- Filter selected teams ---
+    # Filter only selected teams
     form = player_form[player_form["team"].isin([team_a, team_b])].copy()
-    print(f"🎯 Filtered form players: {len(form)} for teams {team_a}/{team_b}")
-
     if form.empty:
-        print("⚠️ No players found for selected teams — returning raw player_form.")
+        print("⚠️ No players found for selected teams.")
         return player_form.head(25)
 
-    # --- Clean join keys ---
-    form["player_clean"] = form["player"].astype(str).str.lower().str.strip()
-    skaters["name_clean"] = skaters["name"].astype(str).str.lower().str.strip()
-
-    # --- Merge everything ---
+    # Merge with team, goalie, and line context
     merged = (
-        form.merge(
-            skaters[["name_clean", "team", "position"]],
-            left_on="player_clean",
-            right_on="name_clean",
-            how="left",
-        )
-        .merge(team_ctx, on="team", how="left")
-        .merge(line_ctx, left_on=["player", "team"], right_on=["name", "team"], how="left")
+        form.merge(team_ctx, on="team", how="left")
+        .merge(line_strength, on="team", how="left")
     )
-    print(f"🧩 After merges — merged shape: {merged.shape}")
 
-    # --- Derive opponent suppression ---
-    if not team_ctx.empty:
-        opp_supp = team_ctx.rename(
-            columns={"team": "opponent", "shotSuppression": "oppSuppression"}
-        )
-        merged["opponent"] = np.where(merged["team"] == team_a, team_b, team_a)
-        merged = merged.merge(
-            opp_supp[["opponent", "oppSuppression"]], on="opponent", how="left"
-        )
-    else:
-        merged["opponent"] = np.where(merged["team"] == team_a, team_b, team_a)
-        merged["oppSuppression"] = np.nan
+    # Add opponent context
+    merged["opponent"] = np.where(merged["team"] == team_a, team_b, team_a)
+    opp_strength = line_strength.rename(columns={"team": "opponent", "lineStrength": "oppLineStrength"})
+    merged = merged.merge(opp_strength, on="opponent", how="left")
 
-    # --- Goalie suppression from opponent team ---
-    if not goalie_ctx.empty:
-        opp_goalie = goalie_ctx.rename(
-            columns={"team": "opponent", "goalieSuppression": "oppGoalieSuppression"}
-        )
-        merged = merged.merge(
-            opp_goalie[["opponent", "oppGoalieSuppression"]], on="opponent", how="left"
-        )
-    else:
-        merged["oppGoalieSuppression"] = np.nan
+    # Matchup adjustment — relative line strength difference
+    merged["matchupAdj"] = merged["lineStrength"] - merged["oppLineStrength"]
 
-    print("🔗 Context merges complete.")
+    # Get goalie suppression for opponent
+    opp_goalie = goalie_ctx.rename(columns={"team": "opponent", "goalieSuppression": "oppGoalieSuppression"})
+    merged = merged.merge(opp_goalie, on="opponent", how="left")
 
     # ---------------------------------------------------------------
     # Weighted Projection Formula
     # ---------------------------------------------------------------
     merged["xGoalsFor"] = merged["xGoalsFor"].fillna(merged["avg_5"])
     merged["oppGoalieSuppression"] = merged["oppGoalieSuppression"].fillna(0.9)
-    merged["matchupRating"] = merged["matchupRating"].fillna(0)
+    merged["matchupAdj"] = merged["matchupAdj"].fillna(0)
 
     merged["Projected_SOG"] = (
         0.4 * merged["avg_5"]
         + 0.25 * merged["xGoalsFor"]
         + 0.2 * (1 - merged["oppGoalieSuppression"])
-        + 0.15 * merged["matchupRating"]
+        + 0.15 * (1 + merged["matchupAdj"])
     )
 
     merged["Projected_SOG"] = merged["Projected_SOG"].clip(lower=0).round(2)
 
-    # --- Signal Strength ---
     merged["SignalStrength"] = pd.cut(
-        merged["z_score"],
-        bins=[-np.inf, 0, 1, np.inf],
-        labels=["Weak", "Moderate", "Strong"],
+        merged["z_score"], bins=[-np.inf, 0, 1, np.inf], labels=["Weak", "Moderate", "Strong"]
     )
 
     result = merged[
@@ -258,23 +218,23 @@ def build_matchup_model(skaters, teams, shots, goalies, lines, team_a, team_b):
             "player",
             "team",
             "opponent",
-            "position",
             "avg_3",
             "avg_5",
             "avg_10",
             "avg_20",
             "z_score",
-            "matchupRating",
-            "oppSuppression",
+            "lineStrength",
+            "oppLineStrength",
+            "matchupAdj",
             "oppGoalieSuppression",
             "Projected_SOG",
             "SignalStrength",
         ]
-    ].drop_duplicates(subset=["player"]).sort_values("Projected_SOG", ascending=False)
+    ].sort_values("Projected_SOG", ascending=False)
 
     print(f"✅ Generated {len(result)} player projections.")
     if result.empty:
-        print("⚠️ Returning raw player form table for visibility.")
+        print("⚠️ Returning fallback form table.")
         return player_form.head(25)
     return result.reset_index(drop=True)
 
@@ -284,8 +244,7 @@ def build_matchup_model(skaters, teams, shots, goalies, lines, team_a, team_b):
 # ---------------------------------------------------------------
 def project_matchup(skaters, teams, shots, goalies, lines, team_a, team_b):
     try:
-        output = build_matchup_model(skaters, teams, shots, goalies, lines, team_a, team_b)
-        return output
+        return build_matchup_model(skaters, teams, shots, goalies, lines, team_a, team_b)
     except Exception as e:
         print(f"❌ Error in project_matchup: {e}")
         return pd.DataFrame()
@@ -295,4 +254,4 @@ def project_matchup(skaters, teams, shots, goalies, lines, team_a, team_b):
 # Example standalone run
 # ---------------------------------------------------------------
 if __name__ == "__main__":
-    print("✅ hockey_model.py loaded — debug-enabled build.")
+    print("✅ hockey_model.py loaded — line-strength matchup mode.")
