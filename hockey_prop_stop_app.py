@@ -27,7 +27,7 @@ try:
     spec.loader.exec_module(hockey_model)
     st.sidebar.success("✅ hockey_model loaded successfully.")
 except Exception as e:
-    st.sidebar.error(f"❌ Failed to load hockey_model.py.")
+    st.sidebar.error("❌ Failed to load hockey_model.py.")
     st.exception(e)
     st.stop()
 
@@ -80,3 +80,88 @@ if all([uploaded_skaters, uploaded_teams, uploaded_shots, uploaded_goalies, uplo
         st.success("✅ Files parsed successfully.")
         st.write("**Teams detected:**", all_teams)
         st.write("**Shots columns (first 25):**", list(shots_df.columns)[:25])
+    except Exception as e:
+        st.error("❌ Error during parse_raw_files.")
+        st.exception(e)
+        st.stop()
+
+    colA, colB = st.columns(2)
+    with colA:
+        team_a = st.selectbox("Select Team A", options=all_teams, index=0)
+    with colB:
+        team_b = st.selectbox("Select Team B", options=[t for t in all_teams if t != team_a], index=1)
+
+    # -----------------------------------------------------------
+    # Run the model
+    # -----------------------------------------------------------
+    if st.button("🚀 Run Model"):
+        st.info(f"Building model for matchup: **{team_a} vs {team_b}** ...")
+
+        try:
+            data = project_matchup(skaters_df, teams_df, shots_df, goalies_df, lines_df, team_a, team_b)
+        except Exception as e:
+            st.error("❌ Error while running project_matchup.")
+            st.exception(e)
+            st.stop()
+
+        # -------------------------------------------------------
+        # Handle missing projections
+        # -------------------------------------------------------
+        if data is None or data.empty:
+            st.error("⚠️ No valid projections generated. Check console for debug logs.")
+            # Extra in-app debugging
+            try:
+                st.write("**Unique teams in shots:**", 
+                         sorted(shots_df.get("teamCode", pd.Series(dtype=object)).dropna().unique().tolist()))
+                st.write("**Unique teams in skaters:**", 
+                         sorted(skaters_df.get("team", pd.Series(dtype=object)).dropna().unique().tolist()))
+                if hasattr(hockey_model, "build_player_form"):
+                    pf = hockey_model.build_player_form(shots_df)
+                    st.write("**Player form preview:**")
+                    st.dataframe(pf.head(10))
+            except Exception as e:
+                st.warning("Unable to render extra debug info.")
+                st.exception(e)
+        else:
+            st.success(f"✅ Model built successfully for {team_a} vs {team_b}.")
+            data.columns = [c.strip().title() for c in data.columns]
+            st.markdown("### 📊 Ranked Player Projections")
+            st.dataframe(data, use_container_width=True)
+
+            # ---------------------------------------------------
+            # Visualization
+            # ---------------------------------------------------
+            st.markdown("### 📈 Visualizations")
+            col1, col2 = st.columns(2)
+            with col1:
+                if "Projected_Sog" in data.columns and "Z_Score" in data.columns:
+                    fig, ax = plt.subplots(figsize=(5, 4))
+                    sns.scatterplot(
+                        x="Projected_Sog", y="Z_Score",
+                        data=data, hue="Signalstrength", s=100
+                    )
+                    ax.set_title("Projected SOG vs Z-Score")
+                    st.pyplot(fig)
+            with col2:
+                if "Signalstrength" in data.columns:
+                    fig2, ax2 = plt.subplots(figsize=(5, 4))
+                    sns.countplot(data=data, x="Signalstrength", palette="viridis")
+                    ax2.set_title("Signal Strength Distribution")
+                    st.pyplot(fig2)
+
+            # ---------------------------------------------------
+            # Download results
+            # ---------------------------------------------------
+            st.markdown("### 💾 Export Results")
+            out = BytesIO()
+            data.to_excel(out, index=False)
+            st.download_button(
+                label="Download Excel",
+                data=out.getvalue(),
+                file_name=f"HockeyPropStop_{team_a}_vs_{team_b}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+else:
+    st.info("📥 Upload all five CSV files to begin model building.")
+
+st.caption("© Hockey Prop Stop — debug-ready build")
