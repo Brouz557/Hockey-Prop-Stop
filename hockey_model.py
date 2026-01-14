@@ -57,15 +57,14 @@ def build_model(skaters, teams, shots, goalies, lines):
         if "goalie" in c.lower() or "name" in c.lower():
             goalie_key = c
             break
-    if goalie_key:
-        if set(["teamAgainst", "savePct"]).issubset(goalies.columns):
-            df = df.merge(
-                goalies[[goalie_key, "teamAgainst", "savePct", "shotsFaced"]].rename(
-                    columns={goalie_key: "goalie"}
-                ),
-                on="teamAgainst",
-                how="left"
-            )
+    if goalie_key and set(["teamAgainst", "savePct"]).issubset(goalies.columns):
+        df = df.merge(
+            goalies[[goalie_key, "teamAgainst", "savePct", "shotsFaced"]].rename(
+                columns={goalie_key: "goalie"}
+            ),
+            on="teamAgainst",
+            how="left"
+        )
 
     # --- Merge line matchup data ---
     if set(["player", "opponent", "line"]).issubset(lines.columns):
@@ -89,11 +88,10 @@ def build_model(skaters, teams, shots, goalies, lines):
     )
 
     # ---------------------------------------------------------------
-    # Regression Model: Predict SOG from matchup-driven features
+    # Regression Model
     # ---------------------------------------------------------------
     model_features = ["recentShots", "teamShotsFor", "goalieSuppression", "matchupAdj"]
     model_df = df.dropna(subset=model_features + ["shotsOnGoal"]).copy()
-
     if len(model_df) == 0:
         raise ValueError("No valid data rows to train regression model.")
 
@@ -119,20 +117,12 @@ def build_model(skaters, teams, shots, goalies, lines):
         .reset_index()
     )
 
-    # --- Poisson-based probabilities ---
-    player_preds["probOver2.5"] = player_preds["predictedSOG"].apply(
-        lambda mu: 1 - poisson.cdf(2, mu)
-    )
-    player_preds["probOver3.5"] = player_preds["predictedSOG"].apply(
-        lambda mu: 1 - poisson.cdf(3, mu)
-    )
+    # --- Poisson probabilities ---
+    player_preds["probOver2.5"] = player_preds["predictedSOG"].apply(lambda mu: 1 - poisson.cdf(2, mu))
+    player_preds["probOver3.5"] = player_preds["predictedSOG"].apply(lambda mu: 1 - poisson.cdf(3, mu))
 
-    # --- Signal strength ---
-    player_preds["signalStrength"] = pd.qcut(
-        player_preds["probOver2.5"], 3, labels=["Weak", "Moderate", "Strong"]
-    )
-
-    # --- Matchup favorability ---
+    # --- Signal strength & favorability ---
+    player_preds["signalStrength"] = pd.qcut(player_preds["probOver2.5"], 3, labels=["Weak", "Moderate", "Strong"])
     player_preds["matchupFavorability"] = pd.cut(
         player_preds["matchupAdj"],
         bins=[-np.inf, -0.25, 0.25, np.inf],
@@ -143,21 +133,15 @@ def build_model(skaters, teams, shots, goalies, lines):
     player_preds["fairOddsOver2.5"] = 1 / player_preds["probOver2.5"]
     player_preds["fairOddsOver3.5"] = 1 / player_preds["probOver3.5"]
 
-    # ---------------------------------------------------------------
-    # Final Output
-    # ---------------------------------------------------------------
     output = player_preds.sort_values("probOver2.5", ascending=False).reset_index(drop=True)
     return output, reg
 
 
 # ---------------------------------------------------------------
-# Project matchup wrapper — used by Streamlit app
+# Streamlit wrapper
 # ---------------------------------------------------------------
 def project_matchup(skaters, teams, shots, goalies, lines):
-    """
-    Wrapper for build_model used by the Streamlit app.
-    Returns the processed player-level projections DataFrame.
-    """
+    """Wrapper for build_model for Streamlit integration."""
     try:
         output, _ = build_model(skaters, teams, shots, goalies, lines)
         return output
@@ -166,8 +150,5 @@ def project_matchup(skaters, teams, shots, goalies, lines):
         return pd.DataFrame()
 
 
-# ---------------------------------------------------------------
-# Example usage
-# ---------------------------------------------------------------
 if __name__ == "__main__":
     print("hockey_model.py loaded — ready for analysis pipeline.")
