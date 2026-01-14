@@ -1,6 +1,6 @@
 # ---------------------------------------------------------------
 # hockey_prop_stop_app.py
-# Hockey Prop Stop - Streamlit app
+# Hockey Prop Stop - Streamlit app (smart raw-data ingestion)
 # ---------------------------------------------------------------
 
 import importlib.util
@@ -18,9 +18,7 @@ spec = importlib.util.spec_from_file_location("hockey_model", module_path)
 hockey_model = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(hockey_model)
 
-# Expose functions
-build_model = hockey_model.build_model
-project_matchup = hockey_model.project_matchup
+from hockey_model import parse_raw_files, project_matchup
 
 # ---------------------------------------------------------------
 # Sample data fallback
@@ -63,73 +61,85 @@ st.markdown(
 # ---------------------------------------------------------------
 # Sidebar Uploads
 # ---------------------------------------------------------------
-st.sidebar.header("📂 Upload Daily Data Files")
-uploaded_skaters = st.sidebar.file_uploader("NHL Skaters.csv", type=["csv"])
-uploaded_teams   = st.sidebar.file_uploader("NHL TEAMs.csv", type=["csv"])
-uploaded_shots   = st.sidebar.file_uploader("shots.csv", type=["csv"])
-uploaded_goalies = st.sidebar.file_uploader("goalies.csv", type=["csv"])
-uploaded_lines   = st.sidebar.file_uploader("lines.csv", type=["csv"])
+st.sidebar.header("📂 Upload Your Raw Data Files")
+uploaded_files = st.sidebar.file_uploader(
+    "Upload one or more CSVs (any mix of skaters, teams, shots, goalies, lines)",
+    type=["csv"],
+    accept_multiple_files=True
+)
 
 # ---------------------------------------------------------------
 # Model execution
 # ---------------------------------------------------------------
-if all([uploaded_skaters, uploaded_teams, uploaded_shots, uploaded_goalies, uploaded_lines]):
-    st.success("✅ Data uploaded successfully. Building model...")
+if uploaded_files:
+    st.success(f"✅ {len(uploaded_files)} file(s) uploaded. Parsing raw data...")
 
-    skaters_df = pd.read_csv(uploaded_skaters)
-    teams_df   = pd.read_csv(uploaded_teams)
-    shots_df   = pd.read_csv(uploaded_shots)
-    goalies_df = pd.read_csv(uploaded_goalies)
-    lines_df   = pd.read_csv(uploaded_lines)
+    raw_files = {}
+    for f in uploaded_files:
+        try:
+            df = pd.read_csv(f)
+            raw_files[f.name] = df
+        except Exception as e:
+            st.warning(f"⚠️ Could not read {f.name}: {e}")
+
+    skaters_df, teams_df, shots_df, goalies_df, lines_df = hockey_model.parse_raw_files(raw_files)
+    st.info("🔍 Files parsed. Building model...")
 
     data = project_matchup(skaters_df, teams_df, shots_df, goalies_df, lines_df)
-    st.success("✅ Model built and projections generated.")
+
+    if data.empty:
+        st.warning("⚠️ No valid projections generated — your files may be too raw or missing required data.")
+    else:
+        st.success("✅ Model built and projections generated.")
 else:
     st.info("Showing sample data until files are uploaded.")
     data = load_sample()
 
 # ---------------------------------------------------------------
-# Display Table
+# Display Results
 # ---------------------------------------------------------------
 st.markdown("### 📊 Ranked Player Projections")
 
-sort_col = "Probability (Over)" if "Probability (Over)" in data.columns else data.columns[0]
-ranked = data.sort_values(sort_col, ascending=False).reset_index(drop=True)
-st.dataframe(ranked, use_container_width=True)
+if data.empty:
+    st.warning("⚠️ No projection data to display.")
+else:
+    sort_col = "Probability (Over)" if "Probability (Over)" in data.columns else data.columns[0]
+    ranked = data.sort_values(sort_col, ascending=False).reset_index(drop=True)
+    st.dataframe(ranked, use_container_width=True)
 
-# ---------------------------------------------------------------
-# Visuals
-# ---------------------------------------------------------------
-st.markdown("### 📈 Visuals")
-col1, col2 = st.columns(2)
+    # ---------------------------------------------------------------
+    # Visuals
+    # ---------------------------------------------------------------
+    st.markdown("### 📈 Visuals")
+    col1, col2 = st.columns(2)
 
-with col1:
-    if "Projected SOG" in ranked.columns and "Probability (Over)" in ranked.columns:
-        fig, ax = plt.subplots(figsize=(5, 4))
-        sns.scatterplot(
-            x="Projected SOG", y="Probability (Over)",
-            data=ranked, hue="Signal Strength", s=100
-        )
-        ax.set_title("Projected SOG vs Probability")
-        st.pyplot(fig)
+    with col1:
+        if "Projected SOG" in ranked.columns and "Probability (Over)" in ranked.columns:
+            fig, ax = plt.subplots(figsize=(5, 4))
+            sns.scatterplot(
+                x="Projected SOG", y="Probability (Over)",
+                data=ranked, hue="Signal Strength", s=100
+            )
+            ax.set_title("Projected SOG vs Probability")
+            st.pyplot(fig)
 
-with col2:
-    fig2, ax2 = plt.subplots(figsize=(5, 4))
-    sns.heatmap(np.corrcoef(np.random.rand(6, 6)), cmap="Greens", cbar=False)
-    ax2.set_title("Sample Signal Heatmap")
-    st.pyplot(fig2)
+    with col2:
+        fig2, ax2 = plt.subplots(figsize=(5, 4))
+        sns.heatmap(np.corrcoef(np.random.rand(6, 6)), cmap="Greens", cbar=False)
+        ax2.set_title("Sample Signal Heatmap")
+        st.pyplot(fig2)
 
-# ---------------------------------------------------------------
-# Download Excel
-# ---------------------------------------------------------------
-st.markdown("### 💾 Export Results")
-out = BytesIO()
-ranked.to_excel(out, index=False)
-st.download_button(
-    label="Download Excel",
-    data=out.getvalue(),
-    file_name="HockeyPropStop_results.xlsx",
-    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-)
+    # ---------------------------------------------------------------
+    # Download
+    # ---------------------------------------------------------------
+    st.markdown("### 💾 Export Results")
+    out = BytesIO()
+    ranked.to_excel(out, index=False)
+    st.download_button(
+        label="Download Excel",
+        data=out.getvalue(),
+        file_name="HockeyPropStop_results.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
 
-st.caption("© Hockey Prop Stop — data refreshed daily.")
+st.caption("© Hockey Prop Stop — auto-parsing model builder")
