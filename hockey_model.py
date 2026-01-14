@@ -1,7 +1,7 @@
 # ---------------------------------------------------------------
 # hockey_model.py
 # Core analytics engine for Hockey Prop Stop / Hockey Bot
-# Fully raw-data tolerant version
+# Now includes matchup-aware modeling
 # ---------------------------------------------------------------
 
 import pandas as pd
@@ -14,11 +14,7 @@ import re
 # Smart parser for raw NHL data
 # ---------------------------------------------------------------
 def parse_raw_files(file_dfs):
-    """
-    Accepts a dict of uploaded CSV DataFrames (raw or formatted).
-    Detects which is skaters, teams, shots, goalies, or lines.
-    Returns standardized versions ready for build_model().
-    """
+    """Automatically detect, clean, and prepare raw NHL CSVs for modeling."""
     skaters = pd.DataFrame()
     teams = pd.DataFrame()
     shots = pd.DataFrame()
@@ -58,13 +54,11 @@ def parse_raw_files(file_dfs):
     if "shotsOnGoal" not in shots.columns:
         shots["shotsOnGoal"] = np.random.uniform(1, 3, len(shots))
     if "player" not in shots.columns:
-        if "shooterName" in shots.columns:
-            shots.rename(columns={"shooterName": "player"}, inplace=True)
-        else:
-            shots["player"] = [f"Player_{i}" for i in range(len(shots))]
-
+        shots["player"] = [f"Player_{i}" for i in range(len(shots))]
     if "team" not in shots.columns:
         shots["team"] = np.random.choice(["CAR", "DET", "NYR", "BOS"], len(shots))
+    if "opponent" not in shots.columns:
+        shots["opponent"] = np.random.choice(["CAR", "DET", "NYR", "BOS"], len(shots))
 
     for df in [skaters, teams, goalies, lines]:
         if "team" not in df.columns:
@@ -74,69 +68,81 @@ def parse_raw_files(file_dfs):
 
 
 # ---------------------------------------------------------------
-# Robust regression model builder
+# Robust, matchup-aware regression model builder
 # ---------------------------------------------------------------
 def build_model(skaters, teams, shots, goalies, lines):
-    """Builds a regression-based model that tolerates missing data."""
-    # --- Clean names ---
+    """Build a regression model using matchup context."""
+    # --- Clean column names ---
     for df in [skaters, teams, shots, goalies, lines]:
         df.columns = df.columns.str.strip().str.lower()
 
     df = shots.copy()
 
-    # --- Ensure key columns exist ---
-    if "player" not in df.columns:
-        if "shootername" in df.columns:
-            df.rename(columns={"shootername": "player"}, inplace=True)
-        else:
-            df["player"] = [f"Player_{i}" for i in range(len(df))]
+    # --- Ensure key columns ---
+    for key in ["player", "team", "shotsongoal"]:
+        if key not in df.columns:
+            df[key] = np.random.choice(["CAR", "DET", "NYR", "BOS"], len(df)) if key == "team" else np.random.uniform(1, 3, len(df))
 
-    if "team" not in df.columns:
-        df["team"] = np.random.choice(["CAR", "DET", "NYR", "BOS"], len(df))
+    if "opponent" not in df.columns:
+        df["opponent"] = np.random.choice(["CAR", "DET", "NYR", "BOS"], len(df))
 
-    if "shotsongoal" not in df.columns:
-        num_cols = df.select_dtypes(include=[np.number]).columns
-        if len(num_cols) > 0:
-            df["shotsongoal"] = df[num_cols[0]]
-        else:
-            df["shotsongoal"] = np.random.uniform(1.0, 3.5, len(df))
+    # --- Merge goalie data for opponent context ---
+    if not goalies.empty and "savepct" in goalies.columns:
+        opp_goalies = goalies.rename(columns={"team": "opponent", "savepct": "oppSavePct"})
+        df = df.merge(opp_goalies[["opponent", "oppsavepct"]], on="opponent", how="left")
+    else:
+        df["oppSavePct"] = 0.9
 
-    # --- Feature engineering ---
-    df["recentShots"] = df["shotsongoal"].rolling(5, 1).mean().fillna(df["shotsongoal"].mean())
+    # --- Merge line matchups if available ---
+    if not lines.empty and "matchuprating" in lines.columns:
+        df = df.merge(lines[["player", "matchuprating"]], on="player", how="left")
+    else:
+        df["matchuprating"] = np.random.uniform(-0.5, 0.5, len(df))
+
+    # ---------------------------------------------------------------
+    # Feature Engineering
+    # ---------------------------------------------------------------
+    df["recentShots"] = df.groupby("player")["shotsongoal"].transform(lambda x: x.rolling(5, 1).mean()).fillna(df["shotsongoal"].mean())
     df["teamShotsFor"] = df.groupby("team")["shotsongoal"].transform("mean")
-    df["goalieSuppression"] = (
-        1 - goalies.get("savepct", pd.Series(0.9, index=df.index)).mean()
-        if not goalies.empty else 0.1
-    )
-    df["matchupAdj"] = (
-        lines.get("matchuprating", pd.Series(0, index=df.index)).mean()
-        if not lines.empty else 0
-    )
+    df["goalieSuppression"] = 1 - df["oppsavepct"].fillna(0.9)
+    df["matchupAdj"] = df["matchuprating"].fillna(0)
 
-    model_features = ["recentShots", "teamShotsFor", "goalieSuppression", "matchupAdj"]
+    # --- Create target-aware matchup variable ---
+    df["matchupImpact"] = df["matchupAdj"] * (1 + df["goalieSuppression"])
+
+    # ---------------------------------------------------------------
+    # Regression Model
+    # ---------------------------------------------------------------
+    model_features = ["recentShots", "teamShotsFor", "goalieSuppression", "matchupImpact"]
     X = df[model_features].fillna(0)
     y = df["shotsongoal"]
 
-    # --- Train model ---
     reg = LinearRegression()
     reg.fit(X, y)
     df["predictedSOG"] = reg.predict(X)
 
-    # --- Aggregate by player ---
+    # ---------------------------------------------------------------
+    # Player-Level Aggregation
+    # ---------------------------------------------------------------
     player_preds = (
-        df.groupby("player")
-        .agg({"predictedSOG": "mean", "shotsongoal": "mean"})
+        df.groupby(["player", "team", "opponent"])
+        .agg({
+            "predictedSOG": "mean",
+            "shotsongoal": "mean",
+            "matchupImpact": "mean",
+            "goalieSuppression": "mean"
+        })
         .reset_index()
     )
 
-    # --- Probabilities & signal strength ---
+    # --- Probabilities ---
     player_preds["probOver2.5"] = player_preds["predictedSOG"].apply(lambda mu: 1 - poisson.cdf(2, mu))
-    player_preds["signalStrength"] = pd.qcut(
-        player_preds["probOver2.5"], 3, labels=["Weak", "Moderate", "Strong"]
-    )
+    player_preds["signalStrength"] = pd.qcut(player_preds["probOver2.5"], 3, labels=["Weak", "Moderate", "Strong"])
 
     player_preds.rename(columns={
         "player": "Player",
+        "team": "Team",
+        "opponent": "Opponent",
         "predictedSOG": "Projected SOG",
         "shotsongoal": "Actual SOG"
     }, inplace=True)
@@ -148,7 +154,7 @@ def build_model(skaters, teams, shots, goalies, lines):
 # Streamlit wrapper
 # ---------------------------------------------------------------
 def project_matchup(skaters, teams, shots, goalies, lines):
-    """Wrapper for build_model for Streamlit integration."""
+    """Wrapper for Streamlit app."""
     try:
         output, _ = build_model(skaters, teams, shots, goalies, lines)
         return output
@@ -158,4 +164,4 @@ def project_matchup(skaters, teams, shots, goalies, lines):
 
 
 if __name__ == "__main__":
-    print("✅ hockey_model.py loaded — raw-data model builder ready.")
+    print("✅ hockey_model.py loaded — matchup-aware model ready.")
