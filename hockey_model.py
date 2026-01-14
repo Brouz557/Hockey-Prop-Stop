@@ -181,3 +181,11 @@ def build_matchup_model(skaters, teams, shots, goalies, lines, team_a, team_b):
 def project_matchup(skaters, teams, shots, goalies, lines, team_a, team_b):
     try:
         results = build_matchup_model(skaters, teams, shots, goalies, lines, team_a, team_b)
+        return results
+    except Exception as e:
+        print(f"❌ Error in project_matchup: {e}")
+        return pd.DataFrame()
+
+
+if __name__ == "__main__":
+    print("✅ hockey_model.py loaded — functioning model with auto-detection.")
