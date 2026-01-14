@@ -26,7 +26,7 @@ def build_model(skaters, teams, shots, goalies, lines):
         )
     if "team" in teams.columns:
         df = df.merge(
-            teams[["team", "shots_allowed_per_game"]],
+            teams[["team", "shotsOnGoalAgainst"]],
             on="team",
             how="left"
         )
