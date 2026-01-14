@@ -68,4 +68,23 @@ def parse_raw_files(file_dfs):
         if opp_col and "opponent" not in shots.columns:
             shots.rename(columns={opp_col: "opponent"}, inplace=True)
 
-        sog_col = next((c for c in shots.columns if "sog" in c or "_
+        sog_col = next((c for c in shots.columns if "sog" in c or "shot" in c), None)
+        if sog_col and "shotsongoal" not in shots.columns:
+            shots.rename(columns={sog_col: "shotsOnGoal"}, inplace=True)
+
+        shots["shotsOnGoal"] = pd.to_numeric(shots.get("shotsOnGoal", 0), errors="coerce").fillna(0)
+        if "game_id" not in shots.columns:
+            shots["game_id"] = np.arange(len(shots))
+
+        if len(shots) > 3000:
+            shots = shots.sort_values("game_id").tail(3000)
+
+    # -----------------------------------------------------------
+    # Fix HOME/AWAY teams if necessary
+    # -----------------------------------------------------------
+    if "team" in shots.columns:
+        unique_teams = shots["team"].dropna().unique().tolist()
+        if set([t.upper() for t in unique_teams]) <= {"HOME", "AWAY"}:
+            if "home_team" in shots.columns and "away_team" in shots.columns:
+                home_map = shots[["game_id", "home_team"]].drop_duplicates().rename(columns={"home_team": "home_abbrev"})
+                away_map = shots_
