@@ -1,6 +1,6 @@
 # ---------------------------------------------------------------
 # hockey_model.py
-# Hockey Prop Stop – robust, matchup-aware analytics engine
+# Hockey Prop Stop – NHL matchup-aware analytics engine
 # ---------------------------------------------------------------
 
 import pandas as pd
@@ -9,7 +9,7 @@ from sklearn.linear_model import LinearRegression
 from scipy.stats import poisson
 
 # ---------------------------------------------------------------
-# Parse and harmonize uploaded data
+# Parse, clean, and harmonize uploaded data
 # ---------------------------------------------------------------
 def parse_raw_files(file_dfs):
     """Safely detects, cleans, and samples raw NHL CSVs for modeling."""
@@ -19,6 +19,7 @@ def parse_raw_files(file_dfs):
     goalies = pd.DataFrame()
     lines = pd.DataFrame()
 
+    # --- load whichever CSVs are uploaded ---
     for name, df in file_dfs.items():
         try:
             if df is None or df.empty:
@@ -44,16 +45,36 @@ def parse_raw_files(file_dfs):
         if not df.empty:
             df.columns = df.columns.str.strip().str.lower()
 
-    # --- Build a master list of team abbreviations ---
+    # ---------------------------------------------------------------
+    # STEP 1: Build master team list — strictly real NHL abbreviations
+    # ---------------------------------------------------------------
+    NHL_TEAMS = {
+        "ANA", "ARI", "BOS", "BUF", "CGY", "CAR", "CHI", "COL", "CBJ", "DAL",
+        "DET", "EDM", "FLA", "LAK", "MIN", "MTL", "NSH", "NJD", "NYI", "NYR",
+        "OTT", "PHI", "PIT", "SEA", "SJS", "STL", "TBL", "TOR", "VAN", "VGK",
+        "WSH", "WPG"
+    }
+
     team_columns = [c for c in shots.columns if any(x in c for x in ["team", "abbrev", "franchise"])]
     all_teams_found = []
     for c in team_columns:
-        all_teams_found.extend(shots[c].dropna().unique().tolist())
-    all_teams_found = [str(t).upper().strip() for t in all_teams_found if str(t).strip()]
+        vals = shots[c].dropna().unique().tolist()
+        # Only keep clean abbreviations
+        vals = [
+            str(v).upper().strip()
+            for v in vals
+            if isinstance(v, (str, np.str_))
+            and v.isalpha()
+            and 2 <= len(v.strip()) <= 4
+            and str(v).upper().strip() in NHL_TEAMS
+        ]
+        all_teams_found.extend(vals)
     all_teams_found = sorted(list(set(all_teams_found)))
 
-    # --- Fix HOME/AWAY cases ---
-    if "team" in shots.columns and set(shots["team"].str.upper().unique()) <= {"HOME", "AWAY"}:
+    # ---------------------------------------------------------------
+    # STEP 2: Fix HOME/AWAY remapping if necessary
+    # ---------------------------------------------------------------
+    if "team" in shots.columns and set(shots["team"].astype(str).str.upper().unique()) <= {"HOME", "AWAY"}:
         home_col = next((c for c in shots.columns if "home" in c and "team" in c), None)
         away_col = next((c for c in shots.columns if "away" in c and "team" in c), None)
         if not home_col:
@@ -68,8 +89,17 @@ def parse_raw_files(file_dfs):
                 shots["team"] == shots[home_col], shots[away_col], shots[home_col]
             )
 
+    # ---------------------------------------------------------------
+    # STEP 3: Guarantee opponent + team text columns
+    # ---------------------------------------------------------------
+    if "team" not in shots.columns:
+        shots["team"] = np.random.choice(list(NHL_TEAMS), len(shots))
     if "opponent" not in shots.columns:
-        shots["opponent"] = np.random.choice(all_teams_found or ["CAR", "DET", "BOS", "NYR"], len(shots))
+        shots["opponent"] = np.random.choice(list(NHL_TEAMS), len(shots))
+
+    # Final clean list of teams (always full NHL set if fewer found)
+    if len(all_teams_found) < 32:
+        all_teams_found = sorted(list(NHL_TEAMS))
 
     return skaters, teams, shots, goalies, lines, all_teams_found
 
