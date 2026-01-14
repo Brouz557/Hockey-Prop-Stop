@@ -105,4 +105,57 @@ def build_player_form(shots_df):
 # Simplified context builders
 # ---------------------------------------------------------------
 def build_team_goalie_context(teams_df, goalies_df):
-    return pd.Da
+    return pd.DataFrame(), pd.DataFrame()
+
+def build_team_line_strength(lines_df):
+    return pd.DataFrame(columns=["team", "lineStrength"])
+
+# ---------------------------------------------------------------
+# Build matchup model (debug prints)
+# ---------------------------------------------------------------
+def build_matchup_model(skaters, teams, shots, goalies, lines, team_a, team_b):
+    print(f"🔍 Building matchup model for {team_a} vs {team_b}")
+    print("DEBUG: Shots shape:", shots.shape)
+    print("DEBUG: Shots columns:", shots.columns.tolist()[:10])
+
+    if "shotWasOnGoal" in shots.columns:
+        print("DEBUG: shotWasOnGoal unique values:", shots["shotWasOnGoal"].unique()[:10])
+    else:
+        print("DEBUG: shotWasOnGoal column missing in shots")
+
+    player_form = build_player_form(shots)
+    print("DEBUG: player_form shape:", player_form.shape)
+
+    if player_form.empty:
+        print("❌ No player form data — aborting.")
+        return pd.DataFrame()
+
+    print("DEBUG: Unique teams in player_form:", player_form["team"].unique())
+    print("DEBUG: Filtering for teams:", team_a, team_b)
+
+    form = player_form[player_form["team"].isin([team_a, team_b])].copy()
+    print("DEBUG: Filtered form shape:", form.shape)
+
+    if form.empty:
+        print("⚠️ No players found for selected teams — returning partial fallback.")
+        return player_form.head(10)
+
+    form["Projected_SOG"] = form["avg_5"].fillna(0)
+    form["SignalStrength"] = pd.cut(
+        form["z_score"], bins=[-np.inf, 0, 1, np.inf],
+        labels=["Weak", "Moderate", "Strong"]
+    )
+
+    print(f"✅ Generated {len(form)} player projections.")
+    return form
+
+# ---------------------------------------------------------------
+def project_matchup(skaters, teams, shots, goalies, lines, team_a, team_b):
+    try:
+        return build_matchup_model(skaters, teams, shots, goalies, lines, team_a, team_b)
+    except Exception as e:
+        print(f"❌ Error in project_matchup: {e}")
+        return pd.DataFrame()
+
+if __name__ == "__main__":
+    print("✅ hockey_model.py (debug edition) loaded.")
