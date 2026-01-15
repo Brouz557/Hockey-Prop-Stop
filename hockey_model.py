@@ -1,8 +1,9 @@
 # ---------------------------------------------------------------
-# hockey_model.py — Trend-Weighted Version (L3/L5/L10/L20)
+# hockey_model.py — Trend + L3/L5/L10/L20 + TeamCode Fix
 # ---------------------------------------------------------------
 import pandas as pd
 import numpy as np
+
 
 # ---------------------------------------------------------------
 # 1️⃣ Basic Rolling Form
@@ -18,10 +19,13 @@ def build_basic_form(shots_df):
     df.columns = df.columns.str.strip()
     df = df.loc[:, ~df.columns.duplicated(keep="first")]
 
+    # Always use teamCode for consistency
+    if "teamCode" in df.columns:
+        df = df.drop(columns=["team"], errors="ignore")
+        df = df.rename(columns={"teamCode": "team"})
+
     if "shooterName" in df.columns:
         df = df.rename(columns={"shooterName": "player"})
-    if "teamCode" in df.columns and "team" not in df.columns:
-        df = df.rename(columns={"teamCode": "team"})
 
     if "shotWasOnGoal" not in df.columns or "game_id" not in df.columns:
         print("⚠️ Missing required columns in build_basic_form.")
@@ -58,10 +62,13 @@ def build_trend_form(shots_df):
     df.columns = df.columns.str.strip()
     df = df.loc[:, ~df.columns.duplicated(keep="first")]
 
+    # Always use teamCode for consistency
+    if "teamCode" in df.columns:
+        df = df.drop(columns=["team"], errors="ignore")
+        df = df.rename(columns={"teamCode": "team"})
+
     if "shooterName" in df.columns:
         df = df.rename(columns={"shooterName": "player"})
-    if "teamCode" in df.columns and "team" not in df.columns:
-        df = df.rename(columns={"teamCode": "team"})
 
     if "shotWasOnGoal" not in df.columns or "game_id" not in df.columns:
         print("⚠️ Missing required columns in build_trend_form.")
@@ -124,10 +131,13 @@ def simple_project_matchup(shots, teams, goalies, team_a, team_b):
         print("⚠️ No player form data found.")
         return pd.DataFrame()
 
-    # Normalize teams before filtering
+    # Normalize team codes
     pf["team"] = pf["team"].astype(str).str.strip().str.upper()
-    team_a = str(team_a).strip().upper()
-    team_b = str(team_b).strip().upper()
+    team_a = str(team_a).strip().upper()[:3]
+    team_b = str(team_b).strip().upper()[:3]
+
+    print("Unique team values in form:", pf["team"].unique()[:10])
+    print("Filtering by:", team_a, team_b)
 
     pf = pf[pf["team"].isin([team_a, team_b])]
     if pf.empty:
@@ -157,10 +167,13 @@ def project_trend_matchup(shots, teams, goalies, team_a, team_b):
         print("⚠️ No player form data available.")
         return pd.DataFrame()
 
-    # Normalize team names
+    # Normalize team codes
     form["team"] = form["team"].astype(str).str.strip().str.upper()
-    team_a = str(team_a).strip().upper()
-    team_b = str(team_b).strip().upper()
+    team_a = str(team_a).strip().upper()[:3]
+    team_b = str(team_b).strip().upper()[:3]
+
+    print("Unique team values in form:", form["team"].unique()[:10])
+    print("Filtering by:", team_a, team_b)
 
     form = form[form["team"].isin([team_a, team_b])]
     if form.empty:
