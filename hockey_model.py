@@ -1,6 +1,6 @@
 # ---------------------------------------------------------------
 # hockey_model.py
-# Hockey Prop Stop — Cleaned and Stable Version
+# Hockey Prop Stop — Final Clean Version
 # ---------------------------------------------------------------
 
 import pandas as pd
@@ -30,7 +30,6 @@ def build_basic_form(shots_df):
 
     df = df[required].rename(columns={player_col: "player", team_col: "team"})
     df["team"] = df["team"].astype(str).str.upper().str.strip()
-
     df["shotWasOnGoal"] = (
         df["shotWasOnGoal"].astype(str).str.lower().isin(["1", "true", "yes"]).astype(int)
     )
@@ -64,12 +63,14 @@ def normalize_team_context(teams):
 
     df = df.rename(columns={"xGoalsFor": "xGF", "xGoalsAgainst": "xGA"})
 
-    # Auto-scale absurd season totals to per-game
+    # Scale to per-game if season totals
     for c in ["xGF", "xGA"]:
         df[c] = pd.to_numeric(df[c], errors="coerce")
-        if df[c].mean() > 10:
+        if df[c].mean() > 10:  # likely season totals
             df[c] = df[c] / 82.0
 
+    # ✅ only one row per team
+    df = df.drop_duplicates(subset=["team"])
     return df[["team", "xGF", "xGA"]]
 
 
@@ -86,9 +87,10 @@ def normalize_goalie_context(goalies):
 
     df["goals"] = pd.to_numeric(df["goals"], errors="coerce")
     df["ongoal"] = pd.to_numeric(df["ongoal"], errors="coerce").replace(0, np.nan)
-
     df["goalieSuppression"] = 1 - (df["goals"] / df["ongoal"])
     df["goalieSuppression"] = df["goalieSuppression"].clip(0.7, 0.97)
+
+    # ✅ one goalie record per team
     return df.groupby("team", as_index=False)["goalieSuppression"].mean()
 
 
@@ -103,7 +105,6 @@ def simple_project_matchup(shots, teams, goalies, team_a, team_b):
         print("❌ No player form available.")
         return pd.DataFrame()
 
-    # Normalize codes
     team_a, team_b = team_a.strip().upper(), team_b.strip().upper()
     player_form["team"] = player_form["team"].astype(str).str.upper()
 
@@ -113,26 +114,22 @@ def simple_project_matchup(shots, teams, goalies, team_a, team_b):
         print("⚠️ No players found for matchup teams.")
         return pd.DataFrame()
 
-    # Contexts
     team_ctx = normalize_team_context(teams)
     goalie_ctx = normalize_goalie_context(goalies)
 
-    # Merge team-level context for each player's team
     merged = player_form.merge(team_ctx, on="team", how="left")
-
-    # Assign opponent
     merged["opponent"] = np.where(merged["team"] == team_a, team_b, team_a)
 
-    # Merge opponent defensive metrics & goalie
+    # Opponent defensive context (unique per team)
     opp_ctx = team_ctx.rename(columns={"team": "opponent", "xGF": "opp_xGF", "xGA": "opp_xGA"})
     opp_goalie = goalie_ctx.rename(columns={"team": "opponent", "goalieSuppression": "opp_goalieSuppression"})
-    merged = merged.merge(opp_ctx, on="opponent", how="left")
-    merged = merged.merge(opp_goalie, on="opponent", how="left")
+    merged = merged.merge(opp_ctx.drop_duplicates(subset=["opponent"]), on="opponent", how="left")
+    merged = merged.merge(opp_goalie.drop_duplicates(subset=["opponent"]), on="opponent", how="left")
 
     # Safe defaults
     merged["xGF"] = merged["xGF"].fillna(2.8)
     merged["opp_xGA"] = merged["opp_xGA"].fillna(2.8)
-    merged["opp_goalieSuppression"] = merged["opp_goalieSuppression"].fillna(0.90)
+    merged["opp_goalieSuppression"] = merged["opp_goalieSuppression"].fillna(0.9)
 
     # --- Weighted formula ---
     merged["Projected_SOG"] = (
@@ -142,15 +139,17 @@ def simple_project_matchup(shots, teams, goalies, team_a, team_b):
     ).clip(lower=0, upper=8).round(2)
 
     merged["SignalStrength"] = pd.cut(
-        merged["Projected_SOG"], bins=[-np.inf, 2, 4, np.inf],
+        merged["Projected_SOG"],
+        bins=[-np.inf, 2, 4, np.inf],
         labels=["Weak", "Moderate", "Strong"]
     )
 
-    result = merged[
+    # ✅ Remove duplicate player rows
+    result = merged.drop_duplicates(subset=["player", "team"])[
         ["player", "team", "opponent", "avg_5", "Projected_SOG", "SignalStrength"]
     ].sort_values("Projected_SOG", ascending=False).reset_index(drop=True)
 
-    print(f"✅ Generated {len(result)} projections for {team_a} vs {team_b}")
+    print(f"✅ Generated {len(result)} unique player projections for {team_a} vs {team_b}")
     return result
 
 
@@ -166,4 +165,4 @@ def project_matchup(skaters, teams, shots, goalies, lines, team_a, team_b):
 
 
 if __name__ == "__main__":
-    print("✅ hockey_model.py (filtered & scaled) loaded successfully.")
+    print("✅ hockey_model.py (deduplicated) loaded successfully.")
