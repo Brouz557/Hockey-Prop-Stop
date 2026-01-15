@@ -1,6 +1,6 @@
 # ---------------------------------------------------------------
 # hockey_model.py
-# Hockey Prop Stop — Simplified SOG Projection Model
+# Hockey Prop Stop — Simplified, Stable SOG Projection Model
 # ---------------------------------------------------------------
 
 import pandas as pd
@@ -16,26 +16,41 @@ def build_basic_form(shots_df):
         print("⚠️ shots.csv empty — cannot compute player form.")
         return pd.DataFrame()
 
-    df = shots_df.rename(columns={"shooterName": "player", "teamCode": "team"}).copy()
+    df = shots_df.copy()
+    df.columns = df.columns.str.strip()  # normalize column headers
+
+    # Identify column names
+    team_col = "teamCode" if "teamCode" in df.columns else "team"
+    player_col = "shooterName" if "shooterName" in df.columns else "player"
+
+    # Ensure all required columns exist
+    required_cols = [player_col, team_col, "game_id", "shotWasOnGoal"]
+    missing = [c for c in required_cols if c not in df.columns]
+    if missing:
+        print(f"❌ Missing columns in shots.csv: {missing}")
+        return pd.DataFrame()
+
+    # Reduce and rename cleanly
+    df = df[required_cols].rename(columns={player_col: "player", team_col: "team"})
+
+    # Convert shotWasOnGoal → binary
     df["shotWasOnGoal"] = (
         df["shotWasOnGoal"].astype(str).str.lower().isin(["1", "true", "yes"]).astype(int)
     )
 
-    if "game_id" not in df.columns:
-        print("⚠️ No game_id found in shots.csv")
-        return pd.DataFrame()
-
+    # Sort chronologically per player
     df = df.sort_values(["player", "game_id"])
-    grouped = (
-        df.groupby(["player", "team", "game_id"], as_index=False)["shotWasOnGoal"].sum()
-    )
 
+    # Aggregate to per-game totals
+    grouped = df.groupby(["player", "team", "game_id"], as_index=False)["shotWasOnGoal"].sum()
+
+    # Rolling 5-game average per player
     grouped["avg_5"] = (
         grouped.groupby("player")["shotWasOnGoal"]
         .transform(lambda x: x.rolling(5, min_periods=1).mean())
     )
 
-    # Only keep each player's most recent game (latest avg_5)
+    # Keep latest record per player
     latest = grouped.groupby(["player", "team"], as_index=False).tail(1)
     print(f"✅ Player form computed for {len(latest)} players.")
     return latest[["player", "team", "avg_5"]]
@@ -53,9 +68,10 @@ def simple_project_matchup(shots, teams, goalies, team_a, team_b):
         print("❌ No player form available.")
         return pd.DataFrame()
 
-    # --- Prepare team-level stats ---
-    team_cols = [c.lower() for c in teams.columns]
-    if "xgoalsfor" not in team_cols or "xgoalsagainst" not in team_cols:
+    # --- Team context ---
+    teams.columns = teams.columns.str.strip()
+    team_cols_lower = [c.lower() for c in teams.columns]
+    if "xgoalsfor" not in team_cols_lower or "xgoalsagainst" not in team_cols_lower:
         print("⚠️ Missing xGoalsFor/xGoalsAgainst columns in teams.csv.")
         return pd.DataFrame()
 
@@ -63,7 +79,7 @@ def simple_project_matchup(shots, teams, goalies, team_a, team_b):
         columns={c: c.strip() for c in teams.columns}
     )[["team", "xGoalsFor", "xGoalsAgainst"]].copy()
 
-    # --- Prepare goalie suppression ---
+    # --- Goalie suppression ---
     if not goalies.empty and all(c in goalies.columns for c in ["goals", "ongoal", "team"]):
         g = goalies.copy()
         g["goalieSuppression"] = 1 - (g["goals"] / g["ongoal"].replace(0, np.nan))
@@ -72,7 +88,7 @@ def simple_project_matchup(shots, teams, goalies, team_a, team_b):
         goalie_stats = pd.DataFrame(columns=["team", "goalieSuppression"])
         print("⚠️ No valid goalie suppression data.")
 
-    # --- Merge ---
+    # --- Merge all context ---
     merged = player_form.merge(teams_clean, on="team", how="left")
     merged["opponent"] = np.where(merged["team"] == team_a, team_b, team_a)
 
@@ -83,7 +99,7 @@ def simple_project_matchup(shots, teams, goalies, team_a, team_b):
         goalie_stats.add_prefix("opp_"), left_on="opponent", right_on="opp_team", how="left"
     )
 
-    # --- Apply simple weighted formula ---
+    # --- Apply weighted formula ---
     merged["opp_goalieSuppression"] = merged["opp_goalieSuppression"].fillna(0.9)
     merged["xGoalsFor"] = merged["xGoalsFor"].fillna(2.5)
     merged["opp_xGoalsAgainst"] = merged["opp_xGoalsAgainst"].fillna(2.5)
@@ -107,7 +123,7 @@ def simple_project_matchup(shots, teams, goalies, team_a, team_b):
 
 
 # ---------------------------------------------------------------
-# Wrapper for Streamlit
+# Step 3️⃣: Wrapper for Streamlit
 # ---------------------------------------------------------------
 def project_matchup(skaters, teams, shots, goalies, lines, team_a, team_b):
     """Compatibility wrapper for Streamlit app."""
@@ -119,4 +135,4 @@ def project_matchup(skaters, teams, shots, goalies, lines, team_a, team_b):
 
 
 if __name__ == "__main__":
-    print("✅ hockey_model.py (simplified) loaded successfully.")
+    print("✅ hockey_model.py (simplified + fixed) loaded successfully.")
