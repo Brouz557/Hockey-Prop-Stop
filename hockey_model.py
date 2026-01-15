@@ -10,12 +10,32 @@ from sklearn.linear_model import LinearRegression
 # Utility: Clean & prepare SOG data
 # ---------------------------------------------------------------
 def _prepare_player_shots(shots_df):
-    """Standardize shots dataframe."""
+    """Standardize shots dataframe and align key columns."""
     shots_df = shots_df.copy()
-    shots_df.columns = shots_df.columns.str.lower()
+    shots_df.columns = shots_df.columns.str.lower().str.strip()
+
+    # Smart rename detection for common variants
+    rename_map = {}
+    for col in shots_df.columns:
+        if col in ["playername", "shootername", "skater", "name"]:
+            rename_map[col] = "player"
+        elif col in ["teamcode", "teamname", "team_name", "playerteam", "player_team"]:
+            rename_map[col] = "team"
+        elif col in ["sog", "shots", "shots_on_goal", "shot", "shotsongoal"]:
+            rename_map[col] = "sog"
+
+    shots_df = shots_df.rename(columns=rename_map)
+
+    # Verify required columns exist
+    required_cols = ["player", "team", "sog"]
+    missing = [c for c in required_cols if c not in shots_df.columns]
+    if missing:
+        raise KeyError(
+            f"shots.csv is missing required column(s): {missing}. "
+            f"Found columns: {list(shots_df.columns)}"
+        )
+
     shots_df = shots_df.dropna(subset=["player", "team"])
-    if "sog" not in shots_df.columns:
-        raise ValueError("shots.csv must contain an 'SOG' or 'sog' column.")
     return shots_df
 
 
@@ -78,8 +98,8 @@ def project_trend_matchup(shots_df, teams_df, goalies_df, team_a, team_b):
         opp_team = team_b if df_p["team"].iloc[-1] == team_a else team_a
         if "team" in goalies_df.columns and "sog_allowed" in goalies_df.columns:
             g_mean = goalies_df.loc[goalies_df["team"] == opp_team, "sog_allowed"].mean()
-            if pd.notna(g_mean):
-                weighted *= (30 / g_mean)  # normalize vs league avg 30 SOG
+            if pd.notna(g_mean) and g_mean > 0:
+                weighted *= (30 / g_mean)  # normalize vs league average ~30 SOG
 
         signal = "strong" if weighted >= 3.5 else ("moderate" if weighted >= 2.0 else "weak")
 
