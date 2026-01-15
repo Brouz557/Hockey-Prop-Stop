@@ -5,6 +5,8 @@
 import pandas as pd
 import numpy as np
 from sklearn.linear_model import LinearRegression
+import streamlit as st  # for debug logging to sidebar
+
 
 # ---------------------------------------------------------------
 # Utility: Clean & prepare SOG data
@@ -14,7 +16,7 @@ def _prepare_player_shots(shots_df):
     shots_df = shots_df.copy()
     shots_df.columns = shots_df.columns.str.lower().str.strip()
 
-    # Smart rename detection for your data
+    # Smart rename detection
     rename_map = {}
     for col in shots_df.columns:
         if col in ["playername", "shootername", "skater", "name"]:
@@ -22,26 +24,42 @@ def _prepare_player_shots(shots_df):
         elif col in ["teamcode", "teamname", "team_name", "playerteam", "player_team"]:
             rename_map[col] = "team"
         elif col in [
-            "sog",
-            "shots",
-            "shots_on_goal",
-            "shot",
-            "shotsongoal",
-            "shotwasongoal",  # your file's column!
+            "sog", "shots", "shots_on_goal", "shot",
+            "shotsongoal", "shotwasongoal"
         ]:
             rename_map[col] = "sog"
 
     shots_df = shots_df.rename(columns=rename_map)
 
-    required_cols = ["player", "team", "sog"]
-    missing = [c for c in required_cols if c not in shots_df.columns]
-    if missing:
-        raise KeyError(
-            f"shots.csv is missing required column(s): {missing}. "
-            f"Found columns: {list(shots_df.columns)}"
-        )
+    # Drop duplicate columns by name
+    shots_df = shots_df.loc[:, ~shots_df.columns.duplicated(keep="first")]
 
+    # Explicitly pick one valid team column if multiple still exist
+    team_candidates = [c for c in shots_df.columns if "team" in c]
+    if len(team_candidates) > 1:
+        shots_df["team"] = shots_df[team_candidates[0]]
+        shots_df = shots_df.drop(columns=[c for c in team_candidates[1:] if c != "team"])
+
+    # Same for player
+    player_candidates = [c for c in shots_df.columns if "player" in c or "shooter" in c]
+    if len(player_candidates) > 1:
+        shots_df["player"] = shots_df[player_candidates[0]]
+        shots_df = shots_df.drop(columns=[c for c in player_candidates[1:] if c != "player"])
+
+    # If no sog yet, derive from shotWasOnGoal if present
+    if "sog" not in shots_df.columns:
+        if "shotwasongoal" in shots_df.columns:
+            shots_df["sog"] = shots_df["shotwasongoal"].astype(float)
+        else:
+            shots_df["sog"] = 0.0
+
+    # Drop nulls
     shots_df = shots_df.dropna(subset=["player", "team"])
+    shots_df = shots_df.reset_index(drop=True)
+
+    # Debug: show what columns remain
+    st.sidebar.write("🧾 Shots columns after cleaning:", list(shots_df.columns))
+
     return shots_df
 
 
@@ -49,7 +67,6 @@ def _prepare_player_shots(shots_df):
 # SIMPLE MODEL: L5 only
 # ---------------------------------------------------------------
 def simple_project_matchup(shots_df, teams_df, goalies_df, team_a, team_b):
-    """Predict shots-on-goal for all players using last 5 games (L5)."""
     shots_df = _prepare_player_shots(shots_df)
     shots_df = shots_df[shots_df["team"].isin([team_a, team_b])]
 
@@ -74,7 +91,6 @@ def simple_project_matchup(shots_df, teams_df, goalies_df, team_a, team_b):
 # TREND MODEL: L3/L5/L10/L20 weighted regression
 # ---------------------------------------------------------------
 def project_trend_matchup(shots_df, teams_df, goalies_df, team_a, team_b):
-    """Weighted regression blending L3/L5/L10/L20 averages."""
     shots_df = _prepare_player_shots(shots_df)
     shots_df = shots_df[shots_df["team"].isin([team_a, team_b])]
 
@@ -89,7 +105,6 @@ def project_trend_matchup(shots_df, teams_df, goalies_df, team_a, team_b):
         l10 = df_p.tail(10)["sog"].mean() if len(df_p) >= 10 else np.nan
         l20 = df_p.tail(20)["sog"].mean() if len(df_p) >= 20 else np.nan
 
-        # Weighted average (heavier on recent form)
         weighted = np.nanmean([
             0.4 * l3 if not np.isnan(l3) else 0,
             0.3 * l5 if not np.isnan(l5) else 0,
@@ -100,12 +115,11 @@ def project_trend_matchup(shots_df, teams_df, goalies_df, team_a, team_b):
         if np.isnan(weighted) or weighted <= 0:
             continue
 
-        # Opponent goalie suppression adjustment (optional)
         opp_team = team_b if df_p["team"].iloc[-1] == team_a else team_a
         if "team" in goalies_df.columns and "sog_allowed" in goalies_df.columns:
             g_mean = goalies_df.loc[goalies_df["team"] == opp_team, "sog_allowed"].mean()
             if pd.notna(g_mean) and g_mean > 0:
-                weighted *= (30 / g_mean)  # normalize vs league avg ~30 SOG
+                weighted *= (30 / g_mean)
 
         signal = "strong" if weighted >= 3.5 else ("moderate" if weighted >= 2.0 else "weak")
 
@@ -127,7 +141,6 @@ def project_trend_matchup(shots_df, teams_df, goalies_df, team_a, team_b):
 # BACKTEST: Player-level accuracy check
 # ---------------------------------------------------------------
 def backtest_sog_accuracy(shots_df, player_name):
-    """Compare projected vs actual SOG for historical games."""
     shots_df = _prepare_player_shots(shots_df)
     df_p = shots_df[shots_df["player"] == player_name].copy()
     if df_p.empty:
