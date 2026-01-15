@@ -1,73 +1,95 @@
-  # ---------------------------------------------------------------
-# hockey_model.py — Regression & Trend-Weighted Projections
+# ---------------------------------------------------------------
+# hockey_model.py — Regression & Trend-Weighted Projections (Foolproof)
 # ---------------------------------------------------------------
 
 import pandas as pd
 import numpy as np
-from sklearn.linear_model import LinearRegression
-import streamlit as st  # for debug logging to sidebar
 
 
 # ---------------------------------------------------------------
 # Utility: Clean & prepare SOG data
 # ---------------------------------------------------------------
-def _prepare_player_shots(shots_df):
+def _prepare_player_shots(shots_df: pd.DataFrame) -> pd.DataFrame:
     """Standardize shots dataframe and align key columns."""
     shots_df = shots_df.copy()
     shots_df.columns = shots_df.columns.str.lower().str.strip()
 
-    # Smart rename detection
     rename_map = {}
     for col in shots_df.columns:
-        if col in ["playername", "shooterName", "skater", "name"]:
+        if any(k in col for k in ["playername", "shootername", "skater", "name", "player"]):
             rename_map[col] = "player"
-        elif col in ["teamCode", "teamname", "team_name", "playerteam", "player_team"]:
+        elif any(k in col for k in ["teamcode", "teamname", "playerteam", "player_team", "team"]):
             rename_map[col] = "team"
-        elif col in [
-            "sog", "shots", "shots_on_goal", "shot",
-            "shotsongoal", "shotWasOnGoal"
-        ]:
+        elif any(k in col for k in ["sog", "shots", "shots_on_goal", "shot", "shotsongoal", "shotwasongoal"]):
             rename_map[col] = "sog"
+        elif any(k in col for k in ["gameid", "game_id", "matchid", "match_id", "game", "game id", "date"]):
+            rename_map[col] = "game_id"
 
     shots_df = shots_df.rename(columns=rename_map)
 
-    # Drop duplicate columns by name
-    shots_df = shots_df.loc[:, ~shots_df.columns.duplicated(keep="first")]
+    # Fill missing critical columns
+    if "team" not in shots_df.columns:
+        team_col = next((c for c in shots_df.columns if "team" in c), None)
+        if team_col:
+            shots_df["team"] = shots_df[team_col]
 
-    # Explicitly pick one valid team column if multiple still exist
-    team_candidates = [c for c in shots_df.columns if "team" in c]
-    if len(team_candidates) > 1:
-        shots_df["team"] = shots_df[team_candidates[0]]
-        shots_df = shots_df.drop(columns=[c for c in team_candidates[1:] if c != "team"])
+    if "player" not in shots_df.columns:
+        player_col = next((c for c in shots_df.columns if "player" in c or "skater" in c), None)
+        if player_col:
+            shots_df["player"] = shots_df[player_col]
 
-    # Same for player
-    player_candidates = [c for c in shots_df.columns if "player" in c or "shooter" in c]
-    if len(player_candidates) > 1:
-        shots_df["player"] = shots_df[player_candidates[0]]
-        shots_df = shots_df.drop(columns=[c for c in player_candidates[1:] if c != "player"])
-
-    # If no sog yet, derive from shotWasOnGoal if present
     if "sog" not in shots_df.columns:
-        if "shotwasongoal" in shots_df.columns:
-            shots_df["sog"] = shots_df["shotwasongoal"].astype(float)
+        sog_col = next((c for c in shots_df.columns if "shot" in c or "sog" in c), None)
+        if sog_col:
+            shots_df["sog"] = shots_df[sog_col].astype(float)
         else:
             shots_df["sog"] = 0.0
 
-    # Drop nulls
-    shots_df = shots_df.dropna(subset=["player", "team"])
-    shots_df = shots_df.reset_index(drop=True)
+    if "game_id" not in shots_df.columns:
+        # Create sequential ID as fallback
+        shots_df["game_id"] = np.arange(len(shots_df))
 
-    # Debug: show what columns remain
-    st.sidebar.write("🧾 Shots columns after cleaning:", list(shots_df.columns))
-
+    shots_df = shots_df.dropna(subset=["player", "team"]).reset_index(drop=True)
     return shots_df
 
 
 # ---------------------------------------------------------------
-# SIMPLE MODEL: L5 only
+# Utility: Clean & prepare Goalie data
+# ---------------------------------------------------------------
+def _prepare_goalie_data(goalies_df: pd.DataFrame) -> pd.DataFrame:
+    """Normalize goalie dataframe for opponent SOG suppression."""
+    goalies_df = goalies_df.copy()
+    goalies_df.columns = goalies_df.columns.str.lower().str.strip()
+
+    rename_map = {}
+    for col in goalies_df.columns:
+        if any(k in col for k in ["team", "teamname", "teamcode", "franchise"]):
+            rename_map[col] = "team"
+        elif any(k in col for k in ["sogallowed", "shots_against", "shotsallowed", "sog_allowed", "shots"]):
+            rename_map[col] = "sog_allowed"
+
+    goalies_df = goalies_df.rename(columns=rename_map)
+
+    if "team" not in goalies_df.columns:
+        team_col = next((c for c in goalies_df.columns if "team" in c), None)
+        if team_col:
+            goalies_df["team"] = goalies_df[team_col]
+    if "sog_allowed" not in goalies_df.columns:
+        goalies_df["sog_allowed"] = np.nanmean(
+            [goalies_df[c] for c in goalies_df.select_dtypes(include=np.number).columns],
+            axis=0,
+        )
+
+    return goalies_df.dropna(subset=["team"]).reset_index(drop=True)
+
+
+# ---------------------------------------------------------------
+# SIMPLE MODEL: L5 Only
 # ---------------------------------------------------------------
 def simple_project_matchup(shots_df, teams_df, goalies_df, team_a, team_b):
     shots_df = _prepare_player_shots(shots_df)
+    goalies_df = _prepare_goalie_data(goalies_df)
+
     shots_df = shots_df[shots_df["team"].isin([team_a, team_b])]
 
     results = []
@@ -92,6 +114,8 @@ def simple_project_matchup(shots_df, teams_df, goalies_df, team_a, team_b):
 # ---------------------------------------------------------------
 def project_trend_matchup(shots_df, teams_df, goalies_df, team_a, team_b):
     shots_df = _prepare_player_shots(shots_df)
+    goalies_df = _prepare_goalie_data(goalies_df)
+
     shots_df = shots_df[shots_df["team"].isin([team_a, team_b])]
 
     results = []
