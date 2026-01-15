@@ -71,8 +71,24 @@ if all([uploaded_skaters, uploaded_teams, uploaded_goalies, uploaded_lines, uplo
 
     # Normalize column names for robustness
     skaters_df.columns = skaters_df.columns.str.strip().str.lower()
+    shots_df.columns = shots_df.columns.str.strip().str.lower()
 
-    # Automatically detect 'team' column
+    # Detect key columns
+    player_col_skaters = next((c for c in skaters_df.columns if "player" in c or "name" in c), None)
+    team_col_skaters = next((c for c in skaters_df.columns if "team" in c), None)
+    player_col_shots = next((c for c in shots_df.columns if "player" in c or "name" in c), None)
+
+    # --- Align team info from SKATERS into SHOTS ---
+    if player_col_skaters and player_col_shots and team_col_skaters:
+        skater_team_map = skaters_df[[player_col_skaters, team_col_skaters]].dropna()
+        skater_team_map.columns = ["player", "team"]
+        shots_df = shots_df.rename(columns={player_col_shots: "player"})
+        shots_df = shots_df.merge(skater_team_map, on="player", how="left")
+        st.success("✅ Linked player → team from SKATERS file.")
+    else:
+        st.warning("⚠️ Could not align team data from SKATERS — using raw SHOT DATA.")
+
+    # --- Build team dropdowns using SKATERS data ---
     team_col = next((c for c in skaters_df.columns if "team" in c), None)
     if not team_col:
         st.error("No 'team' column detected in SKATERS file.")
