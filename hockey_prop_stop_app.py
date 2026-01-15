@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# hockey_prop_stop_app.py — Stable Hockey Prop Stop (Dropdown Edition)
+# hockey_prop_stop_app.py — Stable Hockey Prop Stop (Final Build)
 # ---------------------------------------------------------------
 
 import streamlit as st
@@ -7,7 +7,7 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from io import BytesIO
-import hockey_model  # simple, safe import
+import hockey_model  # ✅ static, stable import — no recursion risk
 
 # ---------------------------------------------------------------
 # Streamlit Setup
@@ -91,13 +91,12 @@ if all([uploaded_skaters, uploaded_teams, uploaded_shots, uploaded_goalies, uplo
             # 📊 Player Projection Table
             # ---------------------------------------------------------------
             st.markdown("### 📊 Ranked Player Projections")
-            st.dataframe(result, use_container_width=True)
+            st.dataframe(result.sort_values(by="Projected_SOG", ascending=False), use_container_width=True)
 
             # ---------------------------------------------------------------
-            # 🧪 Player Backtest (Dropdown)
+            # 🧪 Player Backtest
             # ---------------------------------------------------------------
             st.markdown("### 🧪 Backtest Player Accuracy")
-
             selected_player = st.selectbox(
                 "Select a player to backtest:",
                 result["player"].unique(),
