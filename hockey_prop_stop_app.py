@@ -23,7 +23,7 @@ st.markdown(
 )
 
 # ---------------------------------------------------------------
-# Sidebar: Upload Data Files (CSV or Excel)
+# Sidebar: Upload Daily Data Files (CSV or Excel)
 # ---------------------------------------------------------------
 st.sidebar.header("📂 Upload Daily Data Files")
 
@@ -34,6 +34,7 @@ uploaded_lines   = st.sidebar.file_uploader("LINE DATA (CSV or Excel)", type=["c
 uploaded_shots   = st.sidebar.file_uploader("SHOT DATA (CSV or Excel)", type=["csv", "xlsx", "xls"])
 
 def load_file(file):
+    """Load CSV or Excel file safely."""
     if not file:
         return pd.DataFrame()
     name = file.name.lower()
@@ -68,10 +69,15 @@ if all([uploaded_skaters, uploaded_teams, uploaded_goalies, uploaded_lines, uplo
     goalies_df = raw_files["goalies"]
     lines_df = raw_files["lines"]
 
-    if "team" not in skaters_df.columns:
-        st.error("Missing 'team' column in SKATERS file.")
+    # Normalize column names for robustness
+    skaters_df.columns = skaters_df.columns.str.strip().str.lower()
+
+    # Automatically detect 'team' column
+    team_col = next((c for c in skaters_df.columns if "team" in c), None)
+    if not team_col:
+        st.error("No 'team' column detected in SKATERS file.")
     else:
-        all_teams = sorted(skaters_df["team"].dropna().unique().tolist())
+        all_teams = sorted(skaters_df[team_col].dropna().unique().tolist())
         colA, colB = st.columns(2)
         with colA:
             team_a = st.selectbox("Select Team A", options=all_teams, index=0)
