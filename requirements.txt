@@ -7,4 +7,5 @@ openpyxl
 scikit-learn
 scipy
 chardet
-st_aggrid
+streamlit==1.32.2
+streamlit-aggrid==0.3.4.post3
