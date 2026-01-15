@@ -1,6 +1,6 @@
 # ---------------------------------------------------------------
 # hockey_model.py
-# Hockey Prop Stop — Final Clean Version
+# Hockey Prop Stop — Calibrated Matchup Model
 # ---------------------------------------------------------------
 
 import pandas as pd
@@ -62,14 +62,11 @@ def normalize_team_context(teams):
         return pd.DataFrame(columns=["team", "xGF", "xGA"])
 
     df = df.rename(columns={"xGoalsFor": "xGF", "xGoalsAgainst": "xGA"})
-
-    # Scale to per-game if season totals
     for c in ["xGF", "xGA"]:
         df[c] = pd.to_numeric(df[c], errors="coerce")
-        if df[c].mean() > 10:  # likely season totals
+        if df[c].mean() > 10:  # scale season totals to per-game
             df[c] = df[c] / 82.0
 
-    # ✅ only one row per team
     df = df.drop_duplicates(subset=["team"])
     return df[["team", "xGF", "xGA"]]
 
@@ -90,15 +87,14 @@ def normalize_goalie_context(goalies):
     df["goalieSuppression"] = 1 - (df["goals"] / df["ongoal"])
     df["goalieSuppression"] = df["goalieSuppression"].clip(0.7, 0.97)
 
-    # ✅ one goalie record per team
     return df.groupby("team", as_index=False)["goalieSuppression"].mean()
 
 
 # ---------------------------------------------------------------
-# Simplified projection
+# Calibrated projection model
 # ---------------------------------------------------------------
 def simple_project_matchup(shots, teams, goalies, team_a, team_b):
-    print(f"🔍 Building simple matchup for {team_a} vs {team_b}")
+    print(f"🔍 Building calibrated matchup for {team_a} vs {team_b}")
 
     player_form = build_basic_form(shots)
     if player_form.empty:
@@ -108,7 +104,7 @@ def simple_project_matchup(shots, teams, goalies, team_a, team_b):
     team_a, team_b = team_a.strip().upper(), team_b.strip().upper()
     player_form["team"] = player_form["team"].astype(str).str.upper()
 
-    # ✅ Filter to matchup teams only
+    # Filter only matchup teams
     player_form = player_form[player_form["team"].isin([team_a, team_b])]
     if player_form.empty:
         print("⚠️ No players found for matchup teams.")
@@ -120,23 +116,22 @@ def simple_project_matchup(shots, teams, goalies, team_a, team_b):
     merged = player_form.merge(team_ctx, on="team", how="left")
     merged["opponent"] = np.where(merged["team"] == team_a, team_b, team_a)
 
-    # Opponent defensive context (unique per team)
     opp_ctx = team_ctx.rename(columns={"team": "opponent", "xGF": "opp_xGF", "xGA": "opp_xGA"})
     opp_goalie = goalie_ctx.rename(columns={"team": "opponent", "goalieSuppression": "opp_goalieSuppression"})
     merged = merged.merge(opp_ctx.drop_duplicates(subset=["opponent"]), on="opponent", how="left")
     merged = merged.merge(opp_goalie.drop_duplicates(subset=["opponent"]), on="opponent", how="left")
 
-    # Safe defaults
     merged["xGF"] = merged["xGF"].fillna(2.8)
     merged["opp_xGA"] = merged["opp_xGA"].fillna(2.8)
     merged["opp_goalieSuppression"] = merged["opp_goalieSuppression"].fillna(0.9)
 
-    # --- Weighted formula ---
+    # --- Calibrated formula ---
     merged["Projected_SOG"] = (
-        0.7 * merged["avg_5"]
-        + 0.25 * (merged["xGF"] - merged["opp_xGA"])
-        + 0.05 * (1 - merged["opp_goalieSuppression"])
-    ).clip(lower=0, upper=8).round(2)
+        0.8 * merged["avg_5"]
+        + 0.4 * (merged["xGF"] / 3.0)
+        - 0.3 * (merged["opp_xGA"] / 3.0)
+        + 0.5 * (1 - merged["opp_goalieSuppression"]) * 10
+    ).clip(lower=0, upper=7).round(2)
 
     merged["SignalStrength"] = pd.cut(
         merged["Projected_SOG"],
@@ -144,12 +139,11 @@ def simple_project_matchup(shots, teams, goalies, team_a, team_b):
         labels=["Weak", "Moderate", "Strong"]
     )
 
-    # ✅ Remove duplicate player rows
     result = merged.drop_duplicates(subset=["player", "team"])[
         ["player", "team", "opponent", "avg_5", "Projected_SOG", "SignalStrength"]
     ].sort_values("Projected_SOG", ascending=False).reset_index(drop=True)
 
-    print(f"✅ Generated {len(result)} unique player projections for {team_a} vs {team_b}")
+    print(f"✅ Generated {len(result)} unique calibrated projections for {team_a} vs {team_b}")
     return result
 
 
@@ -165,4 +159,4 @@ def project_matchup(skaters, teams, shots, goalies, lines, team_a, team_b):
 
 
 if __name__ == "__main__":
-    print("✅ hockey_model.py (deduplicated) loaded successfully.")
+    print("✅ hockey_model.py (calibrated) loaded successfully.")
