@@ -19,13 +19,13 @@ def _prepare_player_shots(shots_df):
     # Smart rename detection
     rename_map = {}
     for col in shots_df.columns:
-        if col in ["playername", "shootername", "skater", "name"]:
+        if col in ["playername", "shooterName", "skater", "name"]:
             rename_map[col] = "player"
-        elif col in ["teamcode", "teamname", "team_name", "playerteam", "player_team"]:
+        elif col in ["teamCode", "teamname", "team_name", "playerteam", "player_team"]:
             rename_map[col] = "team"
         elif col in [
             "sog", "shots", "shots_on_goal", "shot",
-            "shotsongoal", "shotwasongoal"
+            "shotsongoal", "shotWasOnGoal"
         ]:
             rename_map[col] = "sog"
 
