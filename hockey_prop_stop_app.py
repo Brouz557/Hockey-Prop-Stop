@@ -1,10 +1,10 @@
 # ---------------------------------------------------------------
 # hockey_prop_stop_app.py
-# Hockey Prop Stop — Simplified Streamlit App
+# Hockey Prop Stop — Final Streamlit App (Persistent Uploads)
 # ---------------------------------------------------------------
 
-import importlib.util
 import os
+import importlib.util
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -12,7 +12,28 @@ import seaborn as sns
 from io import BytesIO
 
 # ---------------------------------------------------------------
-# Load hockey_model.py dynamically
+# App Config
+# ---------------------------------------------------------------
+st.set_page_config(
+    page_title="Hockey Prop Stop",
+    layout="wide",
+    page_icon="🏒",
+)
+
+st.markdown(
+    """
+    <h1 style='text-align:center; color:#BFC0C0;'>
+        <span style='color:#00B140;'>🏒 Hockey Prop Stop</span>
+    </h1>
+    <p style='text-align:center; color:#BFC0C0;'>
+        Team-vs-Team calibrated matchup analytics
+    </p>
+    """,
+    unsafe_allow_html=True
+)
+
+# ---------------------------------------------------------------
+# Load hockey_model dynamically
 # ---------------------------------------------------------------
 module_path = os.path.join(os.path.dirname(__file__), "hockey_model.py")
 spec = importlib.util.spec_from_file_location("hockey_model", module_path)
@@ -20,72 +41,106 @@ hockey_model = importlib.util.module_from_spec(spec)
 
 try:
     spec.loader.exec_module(hockey_model)
-    st.sidebar.success("✅ hockey_model loaded successfully.")
+    st.sidebar.success("✅ hockey_model.py loaded successfully.")
 except Exception as e:
-    import traceback
-    st.sidebar.error(f"❌ Failed to load hockey_model.py:\n\n{e}")
-    st.sidebar.code(traceback.format_exc())
+    st.sidebar.error(f"❌ Failed to load hockey_model.py.\n\n{e}")
     st.stop()
 
 # ---------------------------------------------------------------
-# Streamlit setup
+# Sidebar Uploads with Persistent Session State
 # ---------------------------------------------------------------
-st.set_page_config(page_title="Hockey Prop Stop", layout="wide", page_icon="🏒")
+st.sidebar.header("📂 Upload Daily Data Files")
 
-st.markdown(
-    """
-    <h1 style='text-align:center; color:#00B140;'>🏒 Hockey Prop Stop (Simplified)</h1>
-    <p style='text-align:center; color:#BFC0C0;'>Basic SOG projections using rolling form + team/goalie context</p>
-    """,
-    unsafe_allow_html=True
-)
+def load_csv(uploaded_file):
+    if uploaded_file is not None:
+        return pd.read_csv(uploaded_file)
+    return pd.DataFrame()
+
+# Initialize session state for persistence
+for key in ["skaters", "teams", "shots", "goalies", "lines"]:
+    if key not in st.session_state:
+        st.session_state[key] = pd.DataFrame()
+
+# Uploaders
+uploaded_skaters = st.sidebar.file_uploader("NHL Skaters.csv", type=["csv"])
+uploaded_teams   = st.sidebar.file_uploader("NHL TEAMs.csv", type=["csv"])
+uploaded_shots   = st.sidebar.file_uploader("shots.csv", type=["csv"])
+uploaded_goalies = st.sidebar.file_uploader("goalies.csv", type=["csv"])
+uploaded_lines   = st.sidebar.file_uploader("lines.csv", type=["csv"])
+
+# Handle uploads (persist in session)
+if uploaded_skaters: st.session_state["skaters"] = load_csv(uploaded_skaters)
+if uploaded_teams:   st.session_state["teams"]   = load_csv(uploaded_teams)
+if uploaded_shots:   st.session_state["shots"]   = load_csv(uploaded_shots)
+if uploaded_goalies: st.session_state["goalies"] = load_csv(uploaded_goalies)
+if uploaded_lines:   st.session_state["lines"]   = load_csv(uploaded_lines)
+
+# Reset button
+if st.sidebar.button("🔄 Reset Uploads"):
+    for key in ["skaters", "teams", "shots", "goalies", "lines"]:
+        st.session_state[key] = pd.DataFrame()
+    st.experimental_rerun()
+
+# Pull cached data
+skaters_df = st.session_state["skaters"]
+teams_df   = st.session_state["teams"]
+shots_df   = st.session_state["shots"]
+goalies_df = st.session_state["goalies"]
+lines_df   = st.session_state["lines"]
 
 # ---------------------------------------------------------------
-# Sidebar: Upload files
+# Main Section
 # ---------------------------------------------------------------
-st.sidebar.header("📂 Upload Required Files")
-shots_file = st.sidebar.file_uploader("shots.csv", type=["csv"])
-teams_file = st.sidebar.file_uploader("NHL TEAMs.csv", type=["csv"])
-goalies_file = st.sidebar.file_uploader("goalies.csv", type=["csv"])
+if not all([skaters_df.empty, teams_df.empty, shots_df.empty, goalies_df.empty, lines_df.empty]):
+    st.success("✅ Data ready! Select matchup below.")
 
-if shots_file and teams_file and goalies_file:
-    shots_df = pd.read_csv(shots_file)
-    teams_df = pd.read_csv(teams_file)
-    goalies_df = pd.read_csv(goalies_file)
+    # Derive available teams
+    if "team" in skaters_df.columns:
+        all_teams = sorted(skaters_df["team"].dropna().unique().tolist())
+    else:
+        all_teams = []
 
-    team_list = sorted(teams_df["team"].dropna().unique().tolist())
+    if len(all_teams) < 2:
+        st.error("⚠️ Not enough team data found in your uploads.")
+        st.stop()
+
     colA, colB = st.columns(2)
     with colA:
-        team_a = st.selectbox("Select Team A", options=team_list, index=0)
+        team_a = st.selectbox("Select Team A", options=all_teams)
     with colB:
-        team_b = st.selectbox("Select Team B", options=[t for t in team_list if t != team_a], index=1)
+        team_b = st.selectbox("Select Team B", options=[t for t in all_teams if t != team_a])
 
     if st.button("🚀 Run Simple Model"):
-        with st.spinner(f"Running projection for {team_a} vs {team_b}..."):
-            result = hockey_model.simple_project_matchup(shots_df, teams_df, goalies_df, team_a, team_b)
+        st.info(f"Building calibrated model for **{team_a} vs {team_b}**...")
 
-        if result.empty:
-            st.error("⚠️ No valid projections generated.")
+        result = hockey_model.simple_project_matchup(shots_df, teams_df, goalies_df, team_a, team_b)
+
+        if result is None or result.empty:
+            st.error("⚠️ No valid projections generated. Check your matchup data.")
         else:
             st.success(f"✅ Generated {len(result)} player projections.")
+
+            # Display Table
             st.dataframe(result, use_container_width=True)
 
-            # Plot
-            fig, ax = plt.subplots(figsize=(7, 4))
-            sns.barplot(data=result.head(15), x="Projected_SOG", y="player", hue="SignalStrength", dodge=False)
-            ax.set_title(f"Top 15 Projected SOG — {team_a} vs {team_b}")
+            # Visualization
+            st.markdown("### 📈 Distribution of Projected SOG")
+            fig, ax = plt.subplots(figsize=(6, 4))
+            sns.histplot(result["Projected_SOG"], kde=True, color="#00B140", ax=ax)
+            ax.set_xlabel("Projected Shots on Goal")
             st.pyplot(fig)
 
-            # Download
+            # Download Option
+            st.markdown("### 💾 Export Results")
             out = BytesIO()
             result.to_excel(out, index=False)
             st.download_button(
-                "💾 Download Excel",
+                label="Download Excel",
                 data=out.getvalue(),
-                file_name=f"HockeyPropStop_Simple_{team_a}_vs_{team_b}.xlsx",
+                file_name=f"HockeyPropStop_{team_a}_vs_{team_b}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
 else:
-    st.info("📥 Upload shots.csv, NHL TEAMs.csv, and goalies.csv to begin.")
+    st.info("📥 Upload all five CSV files to begin model building.")
 
-st.caption("© Hockey Prop Stop — Simplified Model v1.0")
+st.caption("© Hockey Prop Stop — calibrated NHL matchup model.")
