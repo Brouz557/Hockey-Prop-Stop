@@ -82,7 +82,12 @@ if all([uploaded_skaters, uploaded_teams, uploaded_goalies, uploaded_lines, uplo
     if player_col_skaters and player_col_shots and team_col_skaters:
         skater_team_map = skaters_df[[player_col_skaters, team_col_skaters]].dropna()
         skater_team_map.columns = ["player", "team"]
+
+        # Coerce join columns to string to avoid dtype mismatch
         shots_df = shots_df.rename(columns={player_col_shots: "player"})
+        shots_df["player"] = shots_df["player"].astype(str).str.strip()
+        skater_team_map["player"] = skater_team_map["player"].astype(str).str.strip()
+
         shots_df = shots_df.merge(skater_team_map, on="player", how="left")
         st.success("✅ Linked player → team from SKATERS file.")
     else:
