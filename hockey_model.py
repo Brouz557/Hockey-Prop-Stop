@@ -1,214 +1,177 @@
 # ---------------------------------------------------------------
-# hockey_model.py — Trend + L3/L5/L10/L20 + TeamCode Fix
+# hockey_prop_stop_app.py — Interactive Hockey Prop Stop
 # ---------------------------------------------------------------
+
+import importlib.util
+import os
+import streamlit as st
 import pandas as pd
 import numpy as np
-
+import matplotlib.pyplot as plt
+from io import BytesIO
+from st_aggrid import AgGrid, GridOptionsBuilder
 
 # ---------------------------------------------------------------
-# 1️⃣ Basic Rolling Form
+# Load hockey_model.py dynamically
 # ---------------------------------------------------------------
-def build_basic_form(shots_df):
-    """Computes simple 5-game rolling average for SOG."""
-    if shots_df.empty:
-        print("⚠️ build_basic_form: empty DataFrame.")
-        return pd.DataFrame()
+module_path = os.path.join(os.path.dirname(__file__), "hockey_model.py")
+spec = importlib.util.spec_from_file_location("hockey_model", module_path)
+hockey_model = importlib.util.module_from_spec(spec)
 
-    df = shots_df.copy()
-    # 🧹 Clean columns
-    df.columns = df.columns.str.strip()
-    df = df.loc[:, ~df.columns.duplicated(keep="first")]
+try:
+    spec.loader.exec_module(hockey_model)
+    st.sidebar.success("✅ hockey_model loaded successfully.")
+except Exception as e:
+    st.sidebar.error(f"❌ Failed to load hockey_model.py.\n\n{e}")
+    st.stop()
 
-    # Always use teamCode for consistency
-    if "teamCode" in df.columns:
-        df = df.drop(columns=["team"], errors="ignore")
-        df = df.rename(columns={"teamCode": "team"})
+# ---------------------------------------------------------------
+# Streamlit Setup
+# ---------------------------------------------------------------
+st.set_page_config(
+    page_title="Hockey Prop Stop",
+    layout="wide",
+    page_icon="🏒"
+)
 
-    if "shooterName" in df.columns:
-        df = df.rename(columns={"shooterName": "player"})
+st.markdown(
+    """
+    <h1 style='text-align:center; color:#BFC0C0;'>
+        <span style='color:#00B140;'>🏒 Hockey Prop Stop</span>
+    </h1>
+    <p style='text-align:center; color:#BFC0C0;'>
+        Team-vs-Team matchup analytics with adaptive regression weighting
+    </p>
+    """,
+    unsafe_allow_html=True
+)
 
-    if "shotWasOnGoal" not in df.columns or "game_id" not in df.columns:
-        print("⚠️ Missing required columns in build_basic_form.")
-        return pd.DataFrame()
+# ---------------------------------------------------------------
+# Sidebar: Upload Data
+# ---------------------------------------------------------------
+st.sidebar.header("📂 Upload Daily Data Files")
+uploaded_skaters = st.sidebar.file_uploader("NHL Skaters.csv", type=["csv"])
+uploaded_teams   = st.sidebar.file_uploader("NHL TEAMs.csv", type=["csv"])
+uploaded_shots   = st.sidebar.file_uploader("shots.csv", type=["csv"])
+uploaded_goalies = st.sidebar.file_uploader("goalies.csv", type=["csv"])
+uploaded_lines   = st.sidebar.file_uploader("lines.csv", type=["csv"])
 
-    df["shotWasOnGoal"] = df["shotWasOnGoal"].astype(int)
-    df["game_id"] = pd.to_numeric(df["game_id"], errors="coerce")
-    df = df.sort_values(["player", "game_id"])
+raw_files = {
+    "skaters": pd.read_csv(uploaded_skaters) if uploaded_skaters else pd.DataFrame(),
+    "teams": pd.read_csv(uploaded_teams) if uploaded_teams else pd.DataFrame(),
+    "shots": pd.read_csv(uploaded_shots) if uploaded_shots else pd.DataFrame(),
+    "goalies": pd.read_csv(uploaded_goalies) if uploaded_goalies else pd.DataFrame(),
+    "lines": pd.read_csv(uploaded_lines) if uploaded_lines else pd.DataFrame(),
+}
 
-    grouped = (
-        df.groupby(["player", "team", "game_id"], as_index=False)["shotWasOnGoal"]
-        .sum()
+# ---------------------------------------------------------------
+# Run only if all five files uploaded
+# ---------------------------------------------------------------
+if all([uploaded_skaters, uploaded_teams, uploaded_shots, uploaded_goalies, uploaded_lines]):
+    st.success("✅ 5 file(s) uploaded successfully.")
+
+    skaters_df = raw_files["skaters"]
+    teams_df = raw_files["teams"]
+    shots_df = raw_files["shots"]
+    goalies_df = raw_files["goalies"]
+    lines_df = raw_files["lines"]
+
+    # Team dropdowns
+    all_teams = sorted(skaters_df["team"].dropna().unique().tolist())
+    colA, colB = st.columns(2)
+    with colA:
+        team_a = st.selectbox("Select Team A", options=all_teams, index=0)
+    with colB:
+        team_b = st.selectbox("Select Team B", options=[t for t in all_teams if t != team_a], index=1)
+
+    model_option = st.radio(
+        "Choose Model Type:",
+        ["Simple (L5 Only)", "Trend Weighted (L3/L5/L10/L20)"],
+        horizontal=True
     )
 
-    grouped["avg_5"] = grouped.groupby("player")["shotWasOnGoal"].transform(
-        lambda x: x.rolling(5, min_periods=1).mean()
-    )
+    if st.button("🚀 Run Model"):
+        st.info(f"Building model for matchup: **{team_a} vs {team_b}** ...")
 
-    latest = grouped.groupby(["player", "team"]).tail(1).reset_index(drop=True)
-    print(f"✅ build_basic_form: {len(latest)} players processed.")
-    return latest[["player", "team", "avg_5"]]
+        if model_option.startswith("Simple"):
+            result = hockey_model.simple_project_matchup(shots_df, teams_df, goalies_df, team_a, team_b)
+        else:
+            result = hockey_model.project_trend_matchup(shots_df, teams_df, goalies_df, team_a, team_b)
 
+        if result is None or result.empty:
+            st.error("⚠️ No valid projections generated.")
+        else:
+            st.success(f"✅ Model built successfully for {team_a} vs {team_b}.")
 
-# ---------------------------------------------------------------
-# 2️⃣ Trend Form (3/5/10/20 Rolling)
-# ---------------------------------------------------------------
-def build_trend_form(shots_df):
-    """Computes rolling 3/5/10/20 averages and trend direction."""
-    if shots_df.empty:
-        print("⚠️ build_trend_form: empty DataFrame.")
-        return pd.DataFrame()
+            # ---------------------------------------------------------------
+            # 📊 Interactive Projections Table
+            # ---------------------------------------------------------------
+            st.markdown("### 📊 Ranked Player Projections")
 
-    df = shots_df.copy()
-    df.columns = df.columns.str.strip()
-    df = df.loc[:, ~df.columns.duplicated(keep="first")]
+            gb = GridOptionsBuilder.from_dataframe(result)
+            gb.configure_selection("single", use_checkbox=False)
+            grid_options = gb.build()
 
-    # Always use teamCode for consistency
-    if "teamCode" in df.columns:
-        df = df.drop(columns=["team"], errors="ignore")
-        df = df.rename(columns={"teamCode": "team"})
+            grid_response = AgGrid(
+                result,
+                gridOptions=grid_options,
+                height=400,
+                allow_unsafe_jscode=True,
+                theme="alpine",
+            )
 
-    if "shooterName" in df.columns:
-        df = df.rename(columns={"shooterName": "player"})
+            if "selected_player" not in st.session_state:
+                st.session_state["selected_player"] = None
 
-    if "shotWasOnGoal" not in df.columns or "game_id" not in df.columns:
-        print("⚠️ Missing required columns in build_trend_form.")
-        return pd.DataFrame()
+            if grid_response["selected_rows"]:
+                selected_row = grid_response["selected_rows"][0]
+                st.session_state["selected_player"] = selected_row["player"]
+                st.success(f"Selected: {st.session_state['selected_player']}")
 
-    df["shotWasOnGoal"] = df["shotWasOnGoal"].astype(int)
-    df["game_id"] = pd.to_numeric(df["game_id"], errors="coerce")
-    df = df.sort_values(["player", "game_id"])
+            # ---------------------------------------------------------------
+            # 🧪 Player-Specific Backtest Section
+            # ---------------------------------------------------------------
+            st.markdown("### 🧪 Backtest Player Accuracy")
+            st.write("Click a player in the table above or select manually below.")
 
-    grouped = (
-        df.groupby(["player", "team", "game_id"], as_index=False)["shotWasOnGoal"]
-        .sum()
-    )
+            manual_player = st.selectbox(
+                "Or choose a player manually:",
+                result["player"].unique(),
+                index=0 if st.session_state["selected_player"] is None else
+                list(result["player"].unique()).index(st.session_state["selected_player"])
+            )
 
-    # Compute rolling averages for multiple windows
-    for w in [3, 5, 10, 20]:
-        grouped[f"avg_{w}"] = grouped.groupby("player")["shotWasOnGoal"].transform(
-            lambda x, w=w: x.rolling(w, min_periods=1).mean()
-        )
+            selected_player = st.session_state["selected_player"] or manual_player
 
-    # Trend: short vs. medium term
-    grouped["trend"] = grouped["avg_3"] - grouped["avg_10"]
-    grouped["direction"] = np.where(grouped["trend"] > 0, "Up", "Down")
+            if st.button(f"📊 Run Backtest for {selected_player}"):
+                st.info(f"Running backtest for **{selected_player}**...")
 
-    latest = grouped.groupby(["player", "team"]).tail(1).reset_index(drop=True)
-    print(f"✅ build_trend_form: {len(latest)} players processed (L3/L5/L10/L20).")
-    return latest[
-        ["player", "team", "avg_3", "avg_5", "avg_10", "avg_20", "trend", "direction"]
-    ]
+                bt = hockey_model.backtest_sog_accuracy(shots_df, player_name=selected_player)
 
+                if bt is None or bt.empty:
+                    st.warning("⚠️ No valid data found for that player.")
+                else:
+                    bt["error"] = bt["Projected_SOG"] - bt["Actual_SOG"]
+                    mae = abs(bt["error"]).mean()
+                    rmse = np.sqrt((bt["error"] ** 2).mean())
+                    corr = bt[["Projected_SOG", "Actual_SOG"]].corr().iloc[0, 1]
 
-# ---------------------------------------------------------------
-# 3️⃣ Team & Goalie Context
-# ---------------------------------------------------------------
-def build_team_goalie_context(teams_df, goalies_df):
-    """Prepares simplified team and goalie suppression context."""
-    team_ctx = pd.DataFrame(columns=["team", "xGoalsFor", "xGoalsAgainst"])
-    if not teams_df.empty:
-        df = teams_df.copy()
-        if "xGoalsFor" in df.columns and "xGoalsAgainst" in df.columns:
-            team_ctx = df[["team", "xGoalsFor", "xGoalsAgainst"]]
+                    col1, col2, col3 = st.columns(3)
+                    col1.metric("Mean Abs Error", f"{mae:.2f}")
+                    col2.metric("RMSE", f"{rmse:.2f}")
+                    col3.metric("Correlation", f"{corr:.2f}")
 
-    goalie_ctx = pd.DataFrame(columns=["team", "goalieSuppression"])
-    if not goalies_df.empty:
-        g = goalies_df.copy()
-        if "goals" in g.columns and "ongoal" in g.columns:
-            g["goalieSuppression"] = 1 - (g["goals"] / g["ongoal"].replace(0, np.nan))
-            goalie_ctx = g[["team", "goalieSuppression"]]
-    return team_ctx, goalie_ctx
+                    st.markdown(f"#### 📈 {selected_player} — Projected vs Actual SOG per Game")
+                    fig, ax = plt.subplots(figsize=(7, 4))
+                    ax.plot(bt["game_id"], bt["Projected_SOG"], label="Projected", marker="o", color="#00B140")
+                    ax.plot(bt["game_id"], bt["Actual_SOG"], label="Actual", marker="x", color="#FF4B4B")
+                    ax.set_xlabel("Game ID")
+                    ax.set_ylabel("Shots on Goal")
+                    ax.legend()
+                    ax.grid(True, linestyle="--", alpha=0.4)
+                    st.pyplot(fig)
 
+else:
+    st.info("📥 Upload all five CSV files to begin model building.")
 
-# ---------------------------------------------------------------
-# 4️⃣ Simple Projection (L5 only)
-# ---------------------------------------------------------------
-def simple_project_matchup(shots, teams, goalies, team_a, team_b):
-    """Simple model using avg_5 only."""
-    print(f"🏒 Running simple model for {team_a} vs {team_b}")
-    pf = build_basic_form(shots)
-    if pf.empty:
-        print("⚠️ No player form data found.")
-        return pd.DataFrame()
-
-    # Normalize team codes
-    pf["team"] = pf["team"].astype(str).str.strip().str.upper()
-    team_a = str(team_a).strip().upper()[:3]
-    team_b = str(team_b).strip().upper()[:3]
-
-    print("Unique team values in form:", pf["team"].unique()[:10])
-    print("Filtering by:", team_a, team_b)
-
-    pf = pf[pf["team"].isin([team_a, team_b])]
-    if pf.empty:
-        print("⚠️ No players found for selected teams.")
-        return pd.DataFrame()
-
-    pf["opponent"] = np.where(pf["team"] == team_a, team_b, team_a)
-    pf["Projected_SOG"] = pf["avg_5"].round(2)
-    pf["SignalStrength"] = pd.cut(
-        pf["avg_5"], bins=[-np.inf, 2, 3.5, np.inf],
-        labels=["Weak", "Moderate", "Strong"]
-    )
-    print(f"✅ simple_project_matchup: {len(pf)} player projections created.")
-    return pf.sort_values("Projected_SOG", ascending=False).reset_index(drop=True)
-
-
-# ---------------------------------------------------------------
-# 5️⃣ Trend-Weighted Projection (L3/L5/L10/L20)
-# ---------------------------------------------------------------
-def project_trend_matchup(shots, teams, goalies, team_a, team_b):
-    """Trend-weighted projection using multiple rolling windows and goalie suppression."""
-    print(f"🏒 Running trend-weighted model for {team_a} vs {team_b}")
-    form = build_trend_form(shots)
-    team_ctx, goalie_ctx = build_team_goalie_context(teams, goalies)
-
-    if form.empty:
-        print("⚠️ No player form data available.")
-        return pd.DataFrame()
-
-    # Normalize team codes
-    form["team"] = form["team"].astype(str).str.strip().str.upper()
-    team_a = str(team_a).strip().upper()[:3]
-    team_b = str(team_b).strip().upper()[:3]
-
-    print("Unique team values in form:", form["team"].unique()[:10])
-    print("Filtering by:", team_a, team_b)
-
-    form = form[form["team"].isin([team_a, team_b])]
-    if form.empty:
-        print("⚠️ No players found for selected matchup.")
-        return pd.DataFrame()
-
-    # Merge opponent goalie context
-    form["opponent"] = np.where(form["team"] == team_a, team_b, team_a)
-    opp_goalie = goalie_ctx.rename(
-        columns={"team": "opponent", "goalieSuppression": "oppGoalieSuppression"}
-    )
-    merged = form.merge(opp_goalie, on="opponent", how="left")
-    merged["oppGoalieSuppression"] = merged["oppGoalieSuppression"].fillna(0.9)
-
-    # Weighted projection formula using all windows
-    merged["Projected_SOG"] = (
-        0.4 * merged["avg_3"]
-        + 0.3 * merged["avg_5"]
-        + 0.2 * merged["avg_10"]
-        + 0.1 * merged["avg_20"]
-    ) * (1 - 0.5 * merged["oppGoalieSuppression"])
-
-    merged["Projected_SOG"] = merged["Projected_SOG"].clip(lower=0).round(2)
-
-    merged["SignalStrength"] = pd.cut(
-        merged["trend"], bins=[-np.inf, -0.5, 0.5, np.inf],
-        labels=["Weak", "Moderate", "Strong"]
-    )
-
-    print(f"✅ project_trend_matchup: {len(merged)} projections generated.")
-    return merged[
-        [
-            "player", "team", "opponent",
-            "avg_3", "avg_5", "avg_10", "avg_20",
-            "trend", "direction", "oppGoalieSuppression",
-            "Projected_SOG", "SignalStrength"
-        ]
-    ].sort_values("Projected_SOG", ascending=False).reset_index(drop=True)
+st.caption("© Hockey Prop Stop — adaptive NHL matchup model.")
