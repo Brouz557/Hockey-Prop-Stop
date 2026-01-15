@@ -1,24 +1,14 @@
 # ---------------------------------------------------------------
-# hockey_prop_stop_app.py — Stable Hockey Prop Stop (Fixed Version)
+# hockey_prop_stop_app.py — Streamlit Front End (Fixed)
 # ---------------------------------------------------------------
 
-import os
 import streamlit as st
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-from io import BytesIO
-from st_aggrid import AgGrid, GridOptionsBuilder
-import hockey_model  # ✅ simple static import — NO recursion issue
+import hockey_model
 
-# ---------------------------------------------------------------
-# Streamlit Setup
-# ---------------------------------------------------------------
-st.set_page_config(
-    page_title="Hockey Prop Stop",
-    layout="wide",
-    page_icon="🏒"
-)
+st.set_page_config(page_title="Hockey Prop Stop", layout="wide", page_icon="🏒")
 
 st.markdown(
     """
@@ -32,9 +22,6 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-# ---------------------------------------------------------------
-# Sidebar: Upload Daily Data Files
-# ---------------------------------------------------------------
 st.sidebar.header("📂 Upload Daily Data Files")
 uploaded_skaters = st.sidebar.file_uploader("NHL Skaters.csv", type=["csv"])
 uploaded_teams   = st.sidebar.file_uploader("NHL TEAMs.csv", type=["csv"])
@@ -50,9 +37,6 @@ raw_files = {
     "lines": pd.read_csv(uploaded_lines) if uploaded_lines else pd.DataFrame(),
 }
 
-# ---------------------------------------------------------------
-# Run only if all five files uploaded
-# ---------------------------------------------------------------
 if all([uploaded_skaters, uploaded_teams, uploaded_shots, uploaded_goalies, uploaded_lines]):
     st.success("✅ 5 file(s) uploaded successfully.")
 
@@ -62,100 +46,65 @@ if all([uploaded_skaters, uploaded_teams, uploaded_shots, uploaded_goalies, uplo
     goalies_df = raw_files["goalies"]
     lines_df = raw_files["lines"]
 
-    # Team dropdowns
-    all_teams = sorted(skaters_df["team"].dropna().unique().tolist())
-    colA, colB = st.columns(2)
-    with colA:
-        team_a = st.selectbox("Select Team A", options=all_teams, index=0)
-    with colB:
-        team_b = st.selectbox("Select Team B", options=[t for t in all_teams if t != team_a], index=1)
+    if "team" not in skaters_df.columns:
+        st.error("Missing 'team' column in skaters file.")
+    else:
+        all_teams = sorted(skaters_df["team"].dropna().unique().tolist())
+        colA, colB = st.columns(2)
+        with colA:
+            team_a = st.selectbox("Select Team A", options=all_teams, index=0)
+        with colB:
+            team_b = st.selectbox("Select Team B", options=[t for t in all_teams if t != team_a], index=1)
 
-    model_option = st.radio(
-        "Choose Model Type:",
-        ["Simple (L5 Only)", "Trend Weighted (L3/L5/L10/L20)"],
-        horizontal=True
-    )
+        model_option = st.radio(
+            "Choose Model Type:",
+            ["Simple (L5 Only)", "Trend Weighted (L3/L5/L10/L20)"],
+            horizontal=True
+        )
 
-    if st.button("🚀 Run Model"):
-        st.info(f"Building model for matchup: **{team_a} vs {team_b}** ...")
+        if st.button("🚀 Run Model"):
+            st.info(f"Building model for matchup: **{team_a} vs {team_b}** ...")
 
-        if model_option.startswith("Simple"):
-            result = hockey_model.simple_project_matchup(shots_df, teams_df, goalies_df, team_a, team_b)
-        else:
-            result = hockey_model.project_trend_matchup(shots_df, teams_df, goalies_df, team_a, team_b)
+            if model_option.startswith("Simple"):
+                result = hockey_model.simple_project_matchup(shots_df, teams_df, goalies_df, team_a, team_b)
+            else:
+                result = hockey_model.project_trend_matchup(shots_df, teams_df, goalies_df, team_a, team_b)
 
-        if result is None or result.empty:
-            st.error("⚠️ No valid projections generated.")
-        else:
-            st.success(f"✅ Model built successfully for {team_a} vs {team_b}.")
+            if result is None or result.empty:
+                st.error("⚠️ No valid projections generated.")
+            else:
+                st.success(f"✅ Model built successfully for {team_a} vs {team_b}.")
+                st.markdown("### 📊 Ranked Player Projections")
+                st.dataframe(result, use_container_width=True)
 
-            # ---------------------------------------------------------------
-            # 📊 Interactive Projections Table
-            # ---------------------------------------------------------------
-            st.markdown("### 📊 Ranked Player Projections")
+                st.markdown("### 🧪 Backtest Player Accuracy")
+                selected_player = st.selectbox("Select player for backtest:", result["player"].unique(), index=0)
 
-            gb = GridOptionsBuilder.from_dataframe(result)
-            gb.configure_selection("single", use_checkbox=False)
-            grid_options = gb.build()
+                if st.button(f"📊 Run Backtest for {selected_player}"):
+                    st.info(f"Running backtest for **{selected_player}**...")
+                    bt = hockey_model.backtest_sog_accuracy(shots_df, player_name=selected_player)
 
-            grid_response = AgGrid(
-                result,
-                gridOptions=grid_options,
-                height=400,
-                allow_unsafe_jscode=True,
-                theme="alpine",
-            )
+                    if bt is None or bt.empty:
+                        st.warning("⚠️ No valid data found for that player.")
+                    else:
+                        bt["error"] = bt["Projected_SOG"] - bt["Actual_SOG"]
+                        mae = abs(bt["error"]).mean()
+                        rmse = np.sqrt((bt["error"] ** 2).mean())
+                        corr = bt[["Projected_SOG", "Actual_SOG"]].corr().iloc[0, 1]
 
-            if "selected_player" not in st.session_state:
-                st.session_state["selected_player"] = None
+                        col1, col2, col3 = st.columns(3)
+                        col1.metric("Mean Abs Error", f"{mae:.2f}")
+                        col2.metric("RMSE", f"{rmse:.2f}")
+                        col3.metric("Correlation", f"{corr:.2f}")
 
-            if grid_response["selected_rows"]:
-                selected_row = grid_response["selected_rows"][0]
-                st.session_state["selected_player"] = selected_row["player"]
-                st.success(f"Selected: {st.session_state['selected_player']}")
-
-            # ---------------------------------------------------------------
-            # 🧪 Player-Specific Backtest Section
-            # ---------------------------------------------------------------
-            st.markdown("### 🧪 Backtest Player Accuracy")
-            st.write("Click a player in the table above or select manually below.")
-
-            manual_player = st.selectbox(
-                "Or choose a player manually:",
-                result["player"].unique(),
-                index=0 if st.session_state["selected_player"] is None else
-                list(result["player"].unique()).index(st.session_state["selected_player"])
-            )
-
-            selected_player = st.session_state["selected_player"] or manual_player
-
-            if st.button(f"📊 Run Backtest for {selected_player}"):
-
-                st.info(f"Running backtest for **{selected_player}**...")
-                bt = hockey_model.backtest_sog_accuracy(shots_df, player_name=selected_player)
-
-                if bt is None or bt.empty:
-                    st.warning("⚠️ No valid data found for that player.")
-                else:
-                    bt["error"] = bt["Projected_SOG"] - bt["Actual_SOG"]
-                    mae = abs(bt["error"]).mean()
-                    rmse = np.sqrt((bt["error"] ** 2).mean())
-                    corr = bt[["Projected_SOG", "Actual_SOG"]].corr().iloc[0, 1]
-
-                    col1, col2, col3 = st.columns(3)
-                    col1.metric("Mean Abs Error", f"{mae:.2f}")
-                    col2.metric("RMSE", f"{rmse:.2f}")
-                    col3.metric("Correlation", f"{corr:.2f}")
-
-                    st.markdown(f"#### 📈 {selected_player} — Projected vs Actual SOG per Game")
-                    fig, ax = plt.subplots(figsize=(7, 4))
-                    ax.plot(bt["game_id"], bt["Projected_SOG"], label="Projected", marker="o", color="#00B140")
-                    ax.plot(bt["game_id"], bt["Actual_SOG"], label="Actual", marker="x", color="#FF4B4B")
-                    ax.set_xlabel("Game ID")
-                    ax.set_ylabel("Shots on Goal")
-                    ax.legend()
-                    ax.grid(True, linestyle="--", alpha=0.4)
-                    st.pyplot(fig)
+                        fig, ax = plt.subplots(figsize=(7, 4))
+                        ax.plot(bt["game_id"], bt["Projected_SOG"], label="Projected", marker="o", color="#00B140")
+                        ax.plot(bt["game_id"], bt["Actual_SOG"], label="Actual", marker="x", color="#FF4B4B")
+                        ax.set_xlabel("Game ID")
+                        ax.set_ylabel("Shots on Goal")
+                        ax.legend()
+                        ax.grid(True, linestyle="--", alpha=0.4)
+                        st.pyplot(fig)
 
 else:
     st.info("📥 Upload all five CSV files to begin model building.")
