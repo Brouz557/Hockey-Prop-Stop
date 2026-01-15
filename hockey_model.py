@@ -1,11 +1,11 @@
 # ---------------------------------------------------------------
-# hockey_model.py — Trend-Weighted Version (Validated)
+# hockey_model.py — Trend-Weighted Version (Column-Safe)
 # ---------------------------------------------------------------
 import pandas as pd
 import numpy as np
 
 # ---------------------------------------------------------------
-# 1️⃣ Basic Rolling Form
+# 1️⃣ Basic Rolling Form (with safe deduplication)
 # ---------------------------------------------------------------
 def build_basic_form(shots_df):
     """Computes simple 5-game rolling average for SOG."""
@@ -14,8 +14,17 @@ def build_basic_form(shots_df):
         return pd.DataFrame()
 
     df = shots_df.copy()
-    df = df.rename(columns={"shooterName": "player", "teamCode": "team"})
+    # 🧹 Clean up duplicate / messy columns
+    df.columns = df.columns.str.strip()
+    df = df.loc[:, ~df.columns.duplicated(keep="first")]
 
+    # Safe renaming
+    if "shooterName" in df.columns:
+        df = df.rename(columns={"shooterName": "player"})
+    if "teamCode" in df.columns and "team" not in df.columns:
+        df = df.rename(columns={"teamCode": "team"})
+
+    # Validate required columns
     if "shotWasOnGoal" not in df.columns or "game_id" not in df.columns:
         print("⚠️ Missing 'shotWasOnGoal' or 'game_id'.")
         return pd.DataFrame()
@@ -38,7 +47,7 @@ def build_basic_form(shots_df):
 
 
 # ---------------------------------------------------------------
-# 2️⃣ Trend Form (3/5/10/20 Rolling)
+# 2️⃣ Trend Form (3/5/10/20 Rolling + Safe Dedup)
 # ---------------------------------------------------------------
 def build_trend_form(shots_df):
     """Adds rolling averages and trend/direction indicators."""
@@ -47,7 +56,14 @@ def build_trend_form(shots_df):
         return pd.DataFrame()
 
     df = shots_df.copy()
-    df = df.rename(columns={"shooterName": "player", "teamCode": "team"})
+    # 🧹 Clean column names and remove duplicates
+    df.columns = df.columns.str.strip()
+    df = df.loc[:, ~df.columns.duplicated(keep="first")]
+
+    if "shooterName" in df.columns:
+        df = df.rename(columns={"shooterName": "player"})
+    if "teamCode" in df.columns and "team" not in df.columns:
+        df = df.rename(columns={"teamCode": "team"})
 
     if "shotWasOnGoal" not in df.columns or "game_id" not in df.columns:
         print("⚠️ Missing key columns.")
