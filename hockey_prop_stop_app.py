@@ -1,32 +1,22 @@
 # ---------------------------------------------------------------
-# hockey_prop_stop_app.py — Stable Hockey Prop Stop
+# hockey_prop_stop_app.py — Stable Hockey Prop Stop (Dropdown Edition)
 # ---------------------------------------------------------------
 
-import os
-import sys
-import importlib.util
 import streamlit as st
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from io import BytesIO
+import hockey_model  # simple, safe import
 
 # ---------------------------------------------------------------
-# Safe dynamic import for hockey_model.py
+# Streamlit Setup
 # ---------------------------------------------------------------
-module_path = os.path.join(os.path.dirname(__file__), "hockey_model.py")
-
-if "hockey_model" in sys.modules:
-    hockey_model = sys.modules["hockey_model"]
-else:
-    spec = importlib.util.spec_from_file_location("hockey_model", module_path)
-    hockey_model = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(hockey_model)
-
-# ---------------------------------------------------------------
-# Streamlit setup
-# ---------------------------------------------------------------
-st.set_page_config(page_title="Hockey Prop Stop", layout="wide", page_icon="🏒")
+st.set_page_config(
+    page_title="Hockey Prop Stop",
+    layout="wide",
+    page_icon="🏒"
+)
 
 st.markdown(
     """
@@ -41,7 +31,7 @@ st.markdown(
 )
 
 # ---------------------------------------------------------------
-# Sidebar — Upload CSVs
+# Sidebar: Upload Data Files
 # ---------------------------------------------------------------
 st.sidebar.header("📂 Upload Daily Data Files")
 uploaded_skaters = st.sidebar.file_uploader("NHL Skaters.csv", type=["csv"])
@@ -59,7 +49,7 @@ raw_files = {
 }
 
 # ---------------------------------------------------------------
-# Process after all 5 files uploaded
+# Run only when all five files are uploaded
 # ---------------------------------------------------------------
 if all([uploaded_skaters, uploaded_teams, uploaded_shots, uploaded_goalies, uploaded_lines]):
     st.success("✅ 5 file(s) uploaded successfully.")
@@ -87,7 +77,6 @@ if all([uploaded_skaters, uploaded_teams, uploaded_shots, uploaded_goalies, uplo
     if st.button("🚀 Run Model"):
         st.info(f"Building model for matchup: **{team_a} vs {team_b}** ...")
 
-        # Choose model
         if model_option.startswith("Simple"):
             result = hockey_model.simple_project_matchup(shots_df, teams_df, goalies_df, team_a, team_b)
         else:
@@ -104,16 +93,10 @@ if all([uploaded_skaters, uploaded_teams, uploaded_shots, uploaded_goalies, uplo
             st.markdown("### 📊 Ranked Player Projections")
             st.dataframe(result, use_container_width=True)
 
-            # Save projection for later backtest selection
-            st.session_state["result_df"] = result
-
             # ---------------------------------------------------------------
-            # 🧪 Player Backtest Section
+            # 🧪 Player Backtest (Dropdown)
             # ---------------------------------------------------------------
             st.markdown("### 🧪 Backtest Player Accuracy")
-
-            if "selected_player" not in st.session_state:
-                st.session_state["selected_player"] = None
 
             selected_player = st.selectbox(
                 "Select a player to backtest:",
