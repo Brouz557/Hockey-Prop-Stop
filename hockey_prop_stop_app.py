@@ -1,13 +1,15 @@
 # ---------------------------------------------------------------
-# hockey_prop_stop_app.py — Stable Hockey Prop Stop (Final Build)
+# hockey_prop_stop_app.py — Stable Hockey Prop Stop (Fixed Version)
 # ---------------------------------------------------------------
 
+import os
 import streamlit as st
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from io import BytesIO
-import hockey_model  # ✅ static, stable import — no recursion risk
+from st_aggrid import AgGrid, GridOptionsBuilder
+import hockey_model  # ✅ simple static import — NO recursion issue
 
 # ---------------------------------------------------------------
 # Streamlit Setup
@@ -31,7 +33,7 @@ st.markdown(
 )
 
 # ---------------------------------------------------------------
-# Sidebar: Upload Data Files
+# Sidebar: Upload Daily Data Files
 # ---------------------------------------------------------------
 st.sidebar.header("📂 Upload Daily Data Files")
 uploaded_skaters = st.sidebar.file_uploader("NHL Skaters.csv", type=["csv"])
@@ -49,7 +51,7 @@ raw_files = {
 }
 
 # ---------------------------------------------------------------
-# Run only when all five files are uploaded
+# Run only if all five files uploaded
 # ---------------------------------------------------------------
 if all([uploaded_skaters, uploaded_teams, uploaded_shots, uploaded_goalies, uploaded_lines]):
     st.success("✅ 5 file(s) uploaded successfully.")
@@ -60,7 +62,7 @@ if all([uploaded_skaters, uploaded_teams, uploaded_shots, uploaded_goalies, uplo
     goalies_df = raw_files["goalies"]
     lines_df = raw_files["lines"]
 
-    # Team selectors
+    # Team dropdowns
     all_teams = sorted(skaters_df["team"].dropna().unique().tolist())
     colA, colB = st.columns(2)
     with colA:
@@ -88,24 +90,48 @@ if all([uploaded_skaters, uploaded_teams, uploaded_shots, uploaded_goalies, uplo
             st.success(f"✅ Model built successfully for {team_a} vs {team_b}.")
 
             # ---------------------------------------------------------------
-            # 📊 Player Projection Table
+            # 📊 Interactive Projections Table
             # ---------------------------------------------------------------
             st.markdown("### 📊 Ranked Player Projections")
-            st.dataframe(result.sort_values(by="Projected_SOG", ascending=False), use_container_width=True)
 
-            # ---------------------------------------------------------------
-            # 🧪 Player Backtest
-            # ---------------------------------------------------------------
-            st.markdown("### 🧪 Backtest Player Accuracy")
-            selected_player = st.selectbox(
-                "Select a player to backtest:",
-                result["player"].unique(),
-                index=0
+            gb = GridOptionsBuilder.from_dataframe(result)
+            gb.configure_selection("single", use_checkbox=False)
+            grid_options = gb.build()
+
+            grid_response = AgGrid(
+                result,
+                gridOptions=grid_options,
+                height=400,
+                allow_unsafe_jscode=True,
+                theme="alpine",
             )
 
-            if st.button(f"📊 Run Backtest for {selected_player}"):
-                st.info(f"Running backtest for **{selected_player}**...")
+            if "selected_player" not in st.session_state:
+                st.session_state["selected_player"] = None
 
+            if grid_response["selected_rows"]:
+                selected_row = grid_response["selected_rows"][0]
+                st.session_state["selected_player"] = selected_row["player"]
+                st.success(f"Selected: {st.session_state['selected_player']}")
+
+            # ---------------------------------------------------------------
+            # 🧪 Player-Specific Backtest Section
+            # ---------------------------------------------------------------
+            st.markdown("### 🧪 Backtest Player Accuracy")
+            st.write("Click a player in the table above or select manually below.")
+
+            manual_player = st.selectbox(
+                "Or choose a player manually:",
+                result["player"].unique(),
+                index=0 if st.session_state["selected_player"] is None else
+                list(result["player"].unique()).index(st.session_state["selected_player"])
+            )
+
+            selected_player = st.session_state["selected_player"] or manual_player
+
+            if st.button(f"📊 Run Backtest for {selected_player}"):
+
+                st.info(f"Running backtest for **{selected_player}**...")
                 bt = hockey_model.backtest_sog_accuracy(shots_df, player_name=selected_player)
 
                 if bt is None or bt.empty:
