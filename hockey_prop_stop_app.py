@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Hockey Prop Stop — Team Column Added
+# 🏒 Hockey Prop Stop — Final Projection Edition
 # ---------------------------------------------------------------
 
 import streamlit as st
@@ -258,7 +258,7 @@ if run_model:
                 "Base Projection": round(base_proj, 2),
                 "Goalie Adj": round(goalie_factor, 2),
                 "Line Adj": round(line_factor, 2),
-                "Adj Projection": adj_proj,
+                "Final Projection": adj_proj,
             }
         )
 
@@ -267,7 +267,7 @@ if run_model:
     progress.empty()
 
     result_df = pd.DataFrame(results)
-    avg_proj, std_proj = result_df["Adj Projection"].mean(), result_df["Adj Projection"].std()
+    avg_proj, std_proj = result_df["Final Projection"].mean(), result_df["Final Projection"].std()
 
     def rate(val):
         if val >= avg_proj + std_proj:
@@ -277,7 +277,7 @@ if run_model:
         else:
             return "Weak"
 
-    result_df["Matchup Rating"] = result_df["Adj Projection"].apply(rate)
+    result_df["Matchup Rating"] = result_df["Final Projection"].apply(rate)
 
     # ---------------------------------------------------------------
     # 🌡️ Trend Gradient Visualization
@@ -313,12 +313,12 @@ if run_model:
     )
 
     display_cols = [
-        "Player", "Team", "Trend", "Adj Projection", "Season Avg", "Matchup Rating",
+        "Player", "Team", "Trend", "Final Projection", "Season Avg", "Matchup Rating",
         "L3 Shots", "L5 Shots", "L10 Shots", "Base Projection", "Goalie Adj", "Line Adj"
     ]
 
     visible_df = result_df[[c for c in display_cols if c in result_df.columns]]
-    visible_df = visible_df.sort_values("Adj Projection", ascending=False)
+    visible_df = visible_df.sort_values("Final Projection", ascending=False)
 
     st.success(f"✅ Model built successfully for {team_a} vs {team_b}!")
     st.markdown(f"### 📊 {team_a} vs {team_b} — Player Projections (Adjusted)")
