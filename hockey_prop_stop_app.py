@@ -86,7 +86,7 @@ def load_data(file_uploader, default_path):
 # SIDEBAR UPLOADS
 # ---------------------------------------------------------------
 st.sidebar.header("📂 Upload New Data Files (optional)")
-skaters_file = st.sidebar.file_uploader("SKATERS", type=["xlsx", "csv"])
+skaters_file = st.sidebar.file_uploader("Skaters", type=["xlsx", "csv"])
 shots_file = st.sidebar.file_uploader("SHOT DATA", type=["xlsx", "csv"])
 goalies_file = st.sidebar.file_uploader("GOALTENDERS", type=["xlsx", "csv"])
 lines_file = st.sidebar.file_uploader("LINE DATA", type=["xlsx", "csv"])
@@ -98,7 +98,7 @@ teams_file = st.sidebar.file_uploader("TEAMS", type=["xlsx", "csv"])
 @st.cache_data(show_spinner=True)
 def load_all_data(skaters_file, shots_file, goalies_file, lines_file, teams_file):
     """Load all five datasets once per session (cached)."""
-    skaters = load_data(skaters_file, "SKATERS.xlsx")
+    skaters = load_data(skaters_file, "Skaters.xlsx")
     shots = load_data(shots_file, "SHOT DATA.xlsx")
     goalies = load_data(goalies_file, "GOALTENDERS.xlsx")
     lines = load_data(lines_file, "LINE DATA.xlsx")
@@ -323,3 +323,4 @@ if not skaters_df.empty and not shots_df.empty:
 
 else:
     st.info("📥 Upload files or use defaults from repo to begin.")
+
