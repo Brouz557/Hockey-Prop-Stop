@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Hockey Prop Stop — Final Projection + NHL Logos
+# 🏒 Hockey Prop Stop — Opponent-Adjusted Matchup Rating
 # ---------------------------------------------------------------
 
 import streamlit as st
@@ -215,11 +215,8 @@ if run_model:
         game_sogs = df_p.groupby("gameid")["sog"].sum().reset_index().sort_values("gameid")
         sog_values = game_sogs["sog"].tolist()
 
-        last3, last5, last10 = sog_values[-3:], sog_values[-5:], sog_values[-10:]
-        # Reverse order (most recent first)
-        last3, last5, last10 = list(reversed(last3)), list(reversed(last5)), list(reversed(last10))
-
-        l3, l5, l10 = np.mean(last3) if last3 else np.nan, np.mean(last5) if last5 else np.nan, np.mean(last10) if last10 else np.nan
+        last3, last5, last10 = list(reversed(sog_values[-3:])), list(reversed(sog_values[-5:])), list(reversed(sog_values[-10:]))
+        l3, l5, l10 = np.mean(last3), np.mean(last5), np.mean(last10)
         season_avg = np.mean(sog_values)
         trend = 0 if pd.isna(l10) or l10 == 0 else (l3 - l10) / l10
         base_proj = np.nansum([0.5 * l3, 0.3 * l5, 0.2 * l10])
@@ -267,20 +264,28 @@ if run_model:
     progress.empty()
 
     result_df = pd.DataFrame(results)
-    avg_proj, std_proj = result_df["Final Projection"].mean(), result_df["Final Projection"].std()
 
-    def rate(val):
-        if val >= avg_proj + std_proj:
+    # ---------------------------------------------------------------
+    # 🧮 Improved Opponent-Adjusted Matchup Rating
+    # ---------------------------------------------------------------
+    result_df["Opp Difficulty"] = ((1 / result_df["Goalie Adj"]) + (1 / result_df["Line Adj"])) / 2
+    result_df["Rating Score"] = result_df["Final Projection"] / result_df["Opp Difficulty"]
+
+    mean_score = result_df["Rating Score"].mean()
+    std_score = result_df["Rating Score"].std()
+
+    def rate_improved(val):
+        if val >= mean_score + std_score:
             return "Strong"
-        elif val >= avg_proj:
+        elif val >= mean_score:
             return "Moderate"
         else:
             return "Weak"
 
-    result_df["Matchup Rating"] = result_df["Final Projection"].apply(rate)
+    result_df["Matchup Rating"] = result_df["Rating Score"].apply(rate_improved)
 
     # ---------------------------------------------------------------
-    # 🌡️ Trend Visualization
+    # 🌡️ Trend Visualization (color-coded)
     # ---------------------------------------------------------------
     def trend_color(val):
         if pd.isna(val):
@@ -299,7 +304,7 @@ if run_model:
     result_df["Trend"] = result_df["Trend Score"].apply(trend_color)
 
     # ---------------------------------------------------------------
-    # 🏒 TEAM LOGOS (auto-loaded from NHL CDN)
+    # 🏒 TEAM LOGOS
     # ---------------------------------------------------------------
     team_logos = {
         "Toronto Maple Leafs": "TOR", "Vancouver Canucks": "VAN", "Edmonton Oilers": "EDM",
@@ -322,10 +327,11 @@ if run_model:
         url = f"https://assets.nhle.com/logos/nhl/svg/{abbr}_light.svg"
         return f"<img src='{url}' width='26' style='vertical-align:middle;margin-right:6px;'> {team_name}"
 
-    # Replace team names with logos in table
     result_df["Team"] = result_df["Team"].apply(get_logo_html)
 
-    # Matchup banner
+    # ---------------------------------------------------------------
+    # Display Results
+    # ---------------------------------------------------------------
     team_a_logo = get_logo_html(team_a)
     team_b_logo = get_logo_html(team_b)
     st.markdown(
@@ -339,23 +345,10 @@ if run_model:
         unsafe_allow_html=True,
     )
 
-    # ---------------------------------------------------------------
-    # 🎯 Legend + Reordered Table
-    # ---------------------------------------------------------------
-    st.markdown(
-        """
-        <div style='display:flex;justify-content:center;gap:16px;margin-bottom:10px;font-size:15px;'>
-            <div style='background-color:rgb(255,80,80);color:white;padding:4px 10px;border-radius:4px;'>▼ Downtrend</div>
-            <div style='background-color:rgb(255,255,120);color:black;padding:4px 10px;border-radius:4px;'>– Neutral</div>
-            <div style='background-color:rgb(80,200,80);color:white;padding:4px 10px;border-radius:4px;'>▲ Uptrend</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
     display_cols = [
-        "Player", "Team", "Trend", "Final Projection", "Season Avg", "Matchup Rating",
-        "L3 Shots", "L5 Shots", "L10 Shots", "Base Projection", "Goalie Adj", "Line Adj"
+        "Player", "Team", "Trend", "Final Projection", "Season Avg",
+        "Matchup Rating", "L3 Shots", "L5 Shots", "L10 Shots",
+        "Base Projection", "Goalie Adj", "Line Adj"
     ]
 
     visible_df = result_df[[c for c in display_cols if c in result_df.columns]]
@@ -363,6 +356,4 @@ if run_model:
 
     st.success(f"✅ Model built successfully for {team_a} vs {team_b}!")
     st.markdown(f"### 📊 {team_a} vs {team_b} — Player Projections (Adjusted)")
-
-    html_table = visible_df.to_html(index=False, escape=False)
-    st.markdown(f"<div style='overflow-x:auto'>{html_table}</div>", unsafe_allow_html=True)
+    st.markdown(visible_df.to_html(index=False, escape=False), unsafe_allow_html=True)
