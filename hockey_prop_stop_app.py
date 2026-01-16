@@ -1,6 +1,9 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.linear_model import LinearRegression
 
 # ---------------------------------------------------------------
 # Page setup
@@ -106,13 +109,12 @@ if not skaters_df.empty and not shots_df.empty:
     run_model = st.button("🚀 Run Model")
 
     if run_model:
-        st.info(f"Building model for matchup: **{team_a} vs {team_b}** ...")
+        st.info(f"Building model for matchup: **{team_a} vs {team_b}** …")
 
         # -------------------------------------------------------
         # 🥅 GOALIE ADJUSTMENTS
         # -------------------------------------------------------
-        goalie_adj = {}
-        rebound_rate = {}
+        goalie_adj, rebound_rate = {}, {}
         if not goalies_df.empty:
             try:
                 df_g = goalies_df.copy()
@@ -120,7 +122,6 @@ if not skaters_df.empty and not shots_df.empty:
                 df_g["games"] = pd.to_numeric(df_g["games"], errors="coerce").fillna(0)
                 df_g["unblocked attempts"] = pd.to_numeric(df_g["unblocked attempts"], errors="coerce").fillna(0)
                 df_g["rebounds"] = pd.to_numeric(df_g["rebounds"], errors="coerce").fillna(0)
-
                 df_g["shots_allowed_per_game"] = np.where(
                     df_g["games"] > 0,
                     df_g["unblocked attempts"] / df_g["games"],
@@ -131,7 +132,6 @@ if not skaters_df.empty and not shots_df.empty:
                     df_g["rebounds"] / df_g["unblocked attempts"],
                     0,
                 )
-
                 team_avg = df_g.groupby("team")["shots_allowed_per_game"].mean()
                 league_avg = team_avg.mean()
                 goalie_adj = (league_avg / team_avg).to_dict()
@@ -142,44 +142,36 @@ if not skaters_df.empty and not shots_df.empty:
         # -------------------------------------------------------
         # 🧱 LINE ADJUSTMENTS (Weighted by games)
         # -------------------------------------------------------
-        line_adj = {}
+        line_adj = pd.DataFrame()
         if not lines_df.empty:
             try:
                 df_l = lines_df.copy()
                 df_l["games"] = pd.to_numeric(df_l["games"], errors="coerce").fillna(0)
                 df_l["sog against"] = pd.to_numeric(df_l["sog against"], errors="coerce").fillna(0)
-
-                # collapse duplicates by line pairings + team
                 df_l = (
                     df_l.groupby(["line pairings", "team"], as_index=False)
                     .agg({"games": "sum", "sog against": "sum"})
                 )
-
                 df_l["sog_against_per_game"] = np.where(
                     df_l["games"] > 0,
                     df_l["sog against"] / df_l["games"],
                     np.nan,
                 )
-
-                # league-relative factor
                 team_avg = df_l.groupby("team")["sog_against_per_game"].mean()
                 league_avg = team_avg.mean()
                 df_l["line_factor"] = league_avg / df_l["sog_against_per_game"]
-
-                # cleanup
                 df_l["line_factor"] = (
                     df_l["line_factor"]
                     .replace([np.inf, -np.inf], np.nan)
                     .fillna(1.0)
                     .clip(0.7, 1.3)
                 )
-
-                line_adj = df_l.copy()  # keep full table for weighted lookup
+                line_adj = df_l
             except Exception as e:
                 st.warning(f"⚠️ Line data incomplete or invalid: {e}")
 
         # -------------------------------------------------------
-        # Build team roster
+        # Build team roster and results
         # -------------------------------------------------------
         roster = (
             skaters_df[skaters_df[team_col].isin([team_a, team_b])][[player_col, team_col]]
@@ -212,21 +204,16 @@ if not skaters_df.empty and not shots_df.empty:
 
             game_sogs = df_p.groupby("gameid")["sog"].sum().reset_index().sort_values("gameid")
             sog_values = game_sogs["sog"].tolist()
-
             last3, last5, last10 = sog_values[-3:], sog_values[-5:], sog_values[-10:]
             l3, l5, l10 = np.mean(last3) if last3 else np.nan, np.mean(last5) if last5 else np.nan, np.mean(last10) if last10 else np.nan
             season_avg = np.mean(sog_values)
             trend = 0 if pd.isna(l10) or l10 == 0 else (l3 - l10) / l10
             base_proj = np.nansum([0.5 * l3, 0.3 * l5, 0.2 * l10])
 
-            # ------------------------------
-            # Goalie + Weighted Line Adjustments
-            # ------------------------------
             opp_team = team_b if team == team_a else team_a
             goalie_factor = np.clip(goalie_adj.get(opp_team, 1.0), 0.7, 1.3)
             rebound_factor = rebound_rate.get(opp_team, 0.0)
             line_factor = 1.0
-
             if not line_adj.empty:
                 try:
                     last_name = str(player).split()[-1].lower()
@@ -269,7 +256,6 @@ if not skaters_df.empty and not shots_df.empty:
             progress.progress(i / total)
 
         progress.empty()
-
         if not results:
             st.warning("⚠️ No matching players found for these teams.")
             st.stop()
@@ -282,16 +268,51 @@ if not skaters_df.empty and not shots_df.empty:
                 return "Strong"
             elif val >= avg_proj:
                 return "Moderate"
-            else:
-                return "Weak"
+            return "Weak"
 
         result_df["Matchup Rating"] = result_df["Adj Projection"].apply(rate)
         result_df = result_df.sort_values("Adj Projection", ascending=False)
+        st.session_state["result_df"], st.session_state["shots_df"] = result_df, shots_df
 
         st.success(f"✅ Model built successfully for {team_a} vs {team_b}!")
         st.markdown(f"### 📊 {team_a} vs {team_b} — Player Projections (Adjusted)")
         st.markdown(result_df.to_html(index=False, escape=False), unsafe_allow_html=True)
 
+# ---------------------------------------------------------------
+# 🔥 Player SOG Heatmap — Recent Game Trends
+# ---------------------------------------------------------------
+if "result_df" in st.session_state and "shots_df" in st.session_state:
+    result_df = st.session_state["result_df"]
+    shots_df = st.session_state["shots_df"]
+
+    st.markdown("### 🔥 Player Shot Trend Heatmap")
+    selected_player = st.selectbox("Select a player to visualize:", result_df["Player"].unique())
+
+    if selected_player:
+        df_p = shots_df[shots_df["player"].str.lower() == selected_player.lower()].copy()
+        if not df_p.empty:
+            df_p = df_p.groupby("gameid")["sog"].sum().reset_index().sort_values("gameid").tail(20)
+            data = df_p.set_index("gameid").T
+            fig, ax = plt.subplots(figsize=(10, 1.5))
+            sns.heatmap(
+                data,
+                cmap="YlGnBu",
+                cbar_kws={"orientation": "horizontal", "label": "Shots on Goal"},
+                linewidths=0.5,
+                linecolor="gray",
+                ax=ax,
+            )
+            ax.set_xlabel("Game ID")
+            ax.set_yticks([])
+            ax.set_title(f"{selected_player} — Last {len(df_p)} Games SOG Heatmap", pad=10)
+            st.pyplot(fig)
+
+            avg_sog = df_p["sog"].mean()
+            rolling = df_p["sog"].rolling(5).mean()
+            trend = rolling.iloc[-1] - rolling.iloc[0] if len(rolling.dropna()) >= 5 else 0
+            direction = "📈 rising" if trend > 0 else "📉 falling" if trend < 0 else "➡ steady"
+            st.caption(f"🔥 Average SOG: {avg_sog:.2f} | Trend (5-game): {direction}")
+        else:
+            st.warning("No shot data found for that player.")
 else:
     st.info("📥 Upload at least SKATERS and SHOT DATA to begin.")
-
