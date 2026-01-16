@@ -47,7 +47,7 @@ st.markdown(
 # File Uploaders
 # ---------------------------------------------------------------
 st.sidebar.header("📂 Upload Data Files (.xlsx or .csv)")
-skaters_file = st.sidebar.file_uploader("SKATERS", type=["xlsx", "csv"])
+skaters_file = st.sidebar.file_uploader("Skaters", type=["xlsx", "csv"])
 shots_file = st.sidebar.file_uploader("SHOT DATA", type=["xlsx", "csv"])
 goalies_file = st.sidebar.file_uploader("GOALTENDERS", type=["xlsx", "csv"])
 lines_file = st.sidebar.file_uploader("LINE DATA", type=["xlsx", "csv"])
@@ -109,7 +109,7 @@ def load_all_data(skaters_file, shots_file, goalies_file, lines_file, teams_file
         return None  # not found
 
     with contextlib.redirect_stdout(io.StringIO()):  # silent
-        skaters = load_data(skaters_file, find_file("SKATERS.xlsx") or "SKATERS.xlsx")
+        skaters = load_data(skaters_file, find_file("Skaters.xlsx") or "SKATERS.xlsx")
         shots = load_data(shots_file, find_file("SHOT DATA.xlsx") or "SHOT DATA.xlsx")
         goalies = load_data(goalies_file, find_file("GOALTENDERS.xlsx") or "GOALTENDERS.xlsx")
         lines = load_data(lines_file, find_file("LINE DATA.xlsx") or "LINE DATA.xlsx")
@@ -368,3 +368,4 @@ if not skaters_df.empty and not shots_df.empty:
 
 else:
     st.info("📥 Upload files or use defaults from repo to begin.")
+
