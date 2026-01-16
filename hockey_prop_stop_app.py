@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Hockey Prop Stop — Full App with Timestamp + Everything
+# 🏒 Hockey Prop Stop — Persistent Mobile Version (Full App)
 # ---------------------------------------------------------------
 
 import streamlit as st
@@ -108,18 +108,27 @@ def get_file_last_modified(path):
         return None
 
 # ---------------------------------------------------------------
-# Load Data
+# Load Data Once and Store in Session
 # ---------------------------------------------------------------
-skaters_df, shots_df, goalies_df, lines_df, teams_df = load_all_data(
-    skaters_file, shots_file, goalies_file, lines_file, teams_file
-)
+if "data_loaded" not in st.session_state:
+    skaters_df, shots_df, goalies_df, lines_df, teams_df = load_all_data(
+        skaters_file, shots_file, goalies_file, lines_file, teams_file
+    )
+    st.session_state.data_loaded = True
+    st.session_state.skaters_df = skaters_df
+    st.session_state.shots_df = shots_df
+    st.session_state.goalies_df = goalies_df
+    st.session_state.lines_df = lines_df
+    st.session_state.teams_df = teams_df
+else:
+    skaters_df = st.session_state.skaters_df
+    shots_df = st.session_state.shots_df
+    goalies_df = st.session_state.goalies_df
+    lines_df = st.session_state.lines_df
+    teams_df = st.session_state.teams_df
 
-# Determine update timestamp
-possible_paths = [
-    "Skaters.xlsx",
-    "./data/Skaters.xlsx",
-    "/mount/src/hockey-prop-stop/data/Skaters.xlsx",
-]
+# Timestamp (displayed once)
+possible_paths = ["Skaters.xlsx", "./data/Skaters.xlsx", "/mount/src/hockey-prop-stop/data/Skaters.xlsx"]
 skaters_path = next((p for p in possible_paths if os.path.exists(p)), None)
 
 update_info = None
@@ -136,9 +145,6 @@ if not update_info:
 
 st.success(f"✅ Data loaded successfully ({update_info}).")
 
-# ---------------------------------------------------------------
-# Stop if missing key data
-# ---------------------------------------------------------------
 if skaters_df.empty or shots_df.empty:
     st.warning("⚠️ Missing required data. Please upload or verify repo files.")
     st.stop()
@@ -160,29 +166,36 @@ game_col = next((c for c in shots_df.columns if "game" in c and "id" in c), None
 player_col_shots = next((c for c in shots_df.columns if "player" in c or "name" in c), None)
 
 # ---------------------------------------------------------------
-# Team Selectors
+# Team Selection
 # ---------------------------------------------------------------
 all_teams = sorted(skaters_df[team_col].dropna().unique().tolist())
 col1, col2 = st.columns(2)
 with col1:
-    team_a = st.selectbox("Select Team A", all_teams)
+    team_a = st.selectbox("Select Team A", all_teams, key="team_a")
 with col2:
-    team_b = st.selectbox("Select Team B", [t for t in all_teams if t != team_a])
+    team_b = st.selectbox("Select Team B", [t for t in all_teams if t != st.session_state.get("team_a")], key="team_b")
 
 st.markdown("---")
 run_model = st.button("🚀 Run Model")
 
 # ---------------------------------------------------------------
-# Model
+# Run Model or Load from Session
 # ---------------------------------------------------------------
+if "model_results" not in st.session_state:
+    st.session_state.model_results = None
+
 if run_model:
     st.info(f"Building model for matchup: **{team_a} vs {team_b}** ...")
 
+    skaters = skaters_df.copy()
+    shots = shots_df.copy()
+    goalies = goalies_df.copy()
+    lines = lines_df.copy()
+
     # 🥅 Goalie Adjustments
     goalie_adj, rebound_rate = {}, {}
-    if not goalies_df.empty:
-        df_g = goalies_df.copy()
-        df_g = df_g[df_g["situation"].str.lower() == "all"]
+    if not goalies.empty:
+        df_g = goalies[goalies["situation"].str.lower() == "all"].copy()
         df_g["games"] = pd.to_numeric(df_g["games"], errors="coerce").fillna(0)
         df_g["unblocked attempts"] = pd.to_numeric(df_g["unblocked attempts"], errors="coerce").fillna(0)
         df_g["rebounds"] = pd.to_numeric(df_g["rebounds"], errors="coerce").fillna(0)
@@ -195,8 +208,8 @@ if run_model:
 
     # 🧱 Line Adjustments
     line_adj = {}
-    if not lines_df.empty:
-        df_l = lines_df.copy()
+    if not lines.empty:
+        df_l = lines.copy()
         df_l["games"] = pd.to_numeric(df_l["games"], errors="coerce").fillna(0)
         df_l["sog against"] = pd.to_numeric(df_l["sog against"], errors="coerce").fillna(0)
         df_l = (
@@ -209,43 +222,32 @@ if run_model:
         df_l["line_factor"] = (league_avg / df_l["sog_against_per_game"]).clip(0.7, 1.3)
         line_adj = df_l.copy()
 
-    # ---------------------------------------------------------------
-    # Build roster and projections
-    # ---------------------------------------------------------------
+    # Roster and Projections
     roster = (
-        skaters_df[skaters_df[team_col].isin([team_a, team_b])][[player_col, team_col]]
+        skaters[skaters[team_col].isin([team_a, team_b])][[player_col, team_col]]
         .rename(columns={player_col: "player", team_col: "team"})
         .drop_duplicates(subset=["player"])
         .reset_index(drop=True)
     )
 
-    shots_df = shots_df.rename(columns={player_col_shots: "player", game_col: "gameid", sog_col: "sog"})
-    shots_df["player"] = shots_df["player"].astype(str).str.strip()
+    shots = shots.rename(columns={player_col_shots: "player", game_col: "gameid", sog_col: "sog"})
+    shots["player"] = shots["player"].astype(str).str.strip()
     roster["player"] = roster["player"].astype(str).str.strip()
 
-    grouped_shots = {
-        name.lower(): g.sort_values("gameid")
-        for name, g in shots_df.groupby(shots_df["player"].str.lower())
-    }
-
+    grouped_shots = {name.lower(): g.sort_values("gameid") for name, g in shots.groupby(shots["player"].str.lower())}
     results = []
-    progress = st.progress(0)
-    total = len(roster)
 
-    for i, row in enumerate(roster.itertuples(index=False), start=1):
+    for row in roster.itertuples(index=False):
         player, team = row.player, row.team
         df_p = grouped_shots.get(str(player).lower(), pd.DataFrame())
         if df_p.empty:
-            progress.progress(i / total)
             continue
 
-        game_sogs = df_p.groupby("gameid")["sog"].sum().reset_index().sort_values("gameid")
-        sog_values = game_sogs["sog"].tolist()
-
-        last3, last5, last10 = list(reversed(sog_values[-3:])), list(reversed(sog_values[-5:])), list(reversed(sog_values[-10:]))
-        l3, l5, l10 = np.mean(last3) if last3 else np.nan, np.mean(last5) if last5 else np.nan, np.mean(last10) if last10 else np.nan
+        sog_values = df_p.groupby("gameid")["sog"].sum().sort_index().tolist()
+        last3, last5, last10 = sog_values[-3:], sog_values[-5:], sog_values[-10:]
+        l3, l5, l10 = np.mean(last3), np.mean(last5), np.mean(last10)
         season_avg = np.mean(sog_values)
-        trend = 0 if pd.isna(l10) or l10 == 0 else (l3 - l10) / l10
+        trend = (l3 - l10) / l10 if l10 else 0
         base_proj = np.nansum([0.5 * l3, 0.3 * l5, 0.2 * l10])
 
         opp_team = team_b if team == team_a else team_a
@@ -255,20 +257,14 @@ if run_model:
 
         if not line_adj.empty:
             last_name = str(player).split()[-1].lower()
-            matching = line_adj[line_adj["line pairings"].str.contains(last_name, case=False, na=False)]
-            if not matching.empty:
-                line_factor = np.average(matching["line_factor"], weights=matching["games"])
+            match = line_adj[line_adj["line pairings"].str.contains(last_name, case=False, na=False)]
+            if not match.empty:
+                line_factor = np.average(match["line_factor"], weights=match["games"])
             line_factor = np.clip(line_factor, 0.7, 1.3)
 
         adj_proj = base_proj * (0.7 + 0.3 * goalie_factor) * (0.7 + 0.3 * line_factor)
         adj_proj *= (1 + rebound_factor * 0.1)
-        adj_proj = max(0, round(adj_proj, 2))
-
-        l10_shots_formatted = (
-            "<br>".join([", ".join(map(str, last10[:5])), ", ".join(map(str, last10[5:]))])
-            if len(last10) > 5
-            else ", ".join(map(str, last10))
-        )
+        adj_proj = round(max(0, adj_proj), 2)
 
         results.append({
             "Player": player,
@@ -276,21 +272,17 @@ if run_model:
             "Season Avg": round(season_avg, 2),
             "L3 Shots": ", ".join(map(str, last3)),
             "L5 Shots": ", ".join(map(str, last5)),
-            "L10 Shots": l10_shots_formatted,
+            "L10 Shots": ", ".join(map(str, last10)),
             "Trend Score": round(trend, 3),
             "Base Projection": round(base_proj, 2),
             "Goalie Adj": round(goalie_factor, 2),
             "Line Adj": round(line_factor, 2),
             "Final Projection": adj_proj,
         })
-        progress.progress(i / total)
-    progress.empty()
 
-    # ---------------------------------------------------------------
-    # Ratings + Trend color
-    # ---------------------------------------------------------------
     result_df = pd.DataFrame(results)
-    avg_proj, std_proj = result_df["Final Projection"].mean(), result_df["Final Projection"].std()
+    avg_proj = result_df["Final Projection"].mean()
+    std_proj = result_df["Final Projection"].std()
 
     def rate(val):
         if val >= avg_proj + std_proj:
@@ -301,61 +293,18 @@ if run_model:
             return "Weak"
 
     result_df["Matchup Rating"] = result_df["Final Projection"].apply(rate)
+    result_df["Trend"] = result_df["Trend Score"].apply(lambda v: "▲" if v > 0.05 else "▼" if v < -0.05 else "–")
 
-    def trend_color(val):
-        if pd.isna(val):
-            return "<div style='background:#E0E0E0;color:#000;border-radius:6px;'>–</div>"
-        val = max(min(val, 0.5), -0.5)
-        norm = (val + 0.5)
-        if norm < 0.5:
-            r, g, b = 255, int(255 * (norm * 2)), 0
-        else:
-            r, g, b = int(255 * (1 - (norm - 0.5) * 2)), 255, 0
-        color = f"rgb({r},{g},{b})"
-        text = "▲" if val > 0.05 else ("▼" if val < -0.05 else "–")
-        text_color = "#000" if abs(val) < 0.2 else "#fff"
-        return f"<div style='background:{color};color:{text_color};font-weight:600;border-radius:6px;padding:4px 8px;text-align:center;' title='Trend: {val:+.2f}'>{text}</div>"
+    st.session_state.model_results = result_df
+    st.session_state.last_run = datetime.datetime.now()
 
-    result_df["Trend"] = result_df["Trend Score"].apply(trend_color)
-
-    # ---------------------------------------------------------------
-    # TEAM LOGOS
-    # ---------------------------------------------------------------
-    team_logos = {
-        "Toronto Maple Leafs": "TOR", "Vancouver Canucks": "VAN", "Edmonton Oilers": "EDM",
-        "Calgary Flames": "CGY", "Montreal Canadiens": "MTL", "Ottawa Senators": "OTT",
-        "Boston Bruins": "BOS", "New York Rangers": "NYR", "New York Islanders": "NYI",
-        "Philadelphia Flyers": "PHI", "Pittsburgh Penguins": "PIT", "Chicago Blackhawks": "CHI",
-        "Colorado Avalanche": "COL", "Dallas Stars": "DAL", "Vegas Golden Knights": "VGK",
-        "Los Angeles Kings": "LAK", "San Jose Sharks": "SJS", "Seattle Kraken": "SEA",
-        "Detroit Red Wings": "DET", "Tampa Bay Lightning": "TBL", "Florida Panthers": "FLA",
-        "Nashville Predators": "NSH", "Washington Capitals": "WSH", "Buffalo Sabres": "BUF",
-        "St. Louis Blues": "STL", "Winnipeg Jets": "WPG", "Minnesota Wild": "MIN",
-        "Anaheim Ducks": "ANA", "Arizona Coyotes": "ARI", "Columbus Blue Jackets": "CBJ",
-        "New Jersey Devils": "NJD"
-    }
-
-    def get_logo_html(team_name):
-        abbr = team_logos.get(team_name, None)
-        if not abbr:
-            return team_name
-        url = f"https://assets.nhle.com/logos/nhl/svg/{abbr}_light.svg"
-        return f"<img src='{url}' width='26' style='vertical-align:middle;margin-right:6px;'> {team_name}"
-
-    result_df["Team"] = result_df["Team"].apply(get_logo_html)
-
-    # ---------------------------------------------------------------
-    # Display Table
-    # ---------------------------------------------------------------
-    display_cols = [
-        "Player", "Team", "Trend", "Final Projection", "Season Avg", "Matchup Rating",
-        "L3 Shots", "L5 Shots", "L10 Shots", "Base Projection", "Goalie Adj", "Line Adj"
-    ]
-
-    visible_df = result_df[[c for c in display_cols if c in result_df.columns]]
-    visible_df = visible_df.sort_values("Final Projection", ascending=False)
-
-    st.success(f"✅ Model built successfully for {team_a} vs {team_b}!")
+# ---------------------------------------------------------------
+# Display Results (Persistent)
+# ---------------------------------------------------------------
+if st.session_state.model_results is not None:
+    df = st.session_state.model_results
+    df = df.sort_values("Final Projection", ascending=False)
+    st.success(f"✅ Model last run on {st.session_state.last_run.strftime('%B %d, %Y — %I:%M %p CT')}")
     st.markdown(f"### 📊 {team_a} vs {team_b} — Player Projections (Adjusted)")
-    html_table = visible_df.to_html(index=False, escape=False)
+    html_table = df.to_html(index=False, escape=False)
     st.markdown(f"<div style='overflow-x:auto'>{html_table}</div>", unsafe_allow_html=True)
