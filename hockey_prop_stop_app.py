@@ -7,7 +7,7 @@ from sklearn.linear_model import LinearRegression
 # ---------------------------------------------------------------
 # Page setup
 # ---------------------------------------------------------------
-st.set_page_config(page_title="Hockey Prop Stop", layout="wide", page_icon="🏒")
+st.set_page_config(page_title="Hockey Prop Stop", layout="centered", page_icon="🏒")
 
 st.markdown(
     """
@@ -371,3 +371,4 @@ if not skaters_df.empty and not shots_df.empty:
 
 else:
     st.info("📥 Upload at least SKATERS and SHOT DATA to begin.")
+
