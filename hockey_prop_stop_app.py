@@ -86,7 +86,7 @@ def load_data(file_uploader, default_path):
 # SIDEBAR: Optional Upload (Overrides Repo Files)
 # ---------------------------------------------------------------
 st.sidebar.header("📂 Upload New Data Files (optional)")
-skaters_file = st.sidebar.file_uploader("SKATERS", type=["xlsx", "csv"])
+skaters_file = st.sidebar.file_uploader("Skaters", type=["xlsx", "csv"])
 shots_file = st.sidebar.file_uploader("SHOT DATA", type=["xlsx", "csv"])
 goalies_file = st.sidebar.file_uploader("GOALTENDERS", type=["xlsx", "csv"])
 lines_file = st.sidebar.file_uploader("LINE DATA", type=["xlsx", "csv"])
@@ -314,3 +314,4 @@ if not skaters_df.empty and not shots_df.empty:
 
 else:
     st.info("📥 Upload files or use defaults in repo to begin.")
+
