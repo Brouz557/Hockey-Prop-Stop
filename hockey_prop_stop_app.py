@@ -316,3 +316,4 @@ if "result_df" in st.session_state and "shots_df" in st.session_state:
             st.warning("No shot data found for that player.")
 else:
     st.info("📥 Upload at least SKATERS and SHOT DATA to begin.")
+
