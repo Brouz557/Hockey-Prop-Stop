@@ -5,6 +5,8 @@ import os
 import plotly.graph_objects as go
 from sklearn.linear_model import LinearRegression
 from difflib import get_close_matches
+import contextlib
+import io
 
 # ---------------------------------------------------------------
 # PAGE SETUP
@@ -22,7 +24,7 @@ st.markdown(
 )
 
 # ---------------------------------------------------------------
-# STYLES
+# STYLE (responsive table)
 # ---------------------------------------------------------------
 st.markdown(
     """
@@ -51,7 +53,7 @@ st.markdown(
 )
 
 # ---------------------------------------------------------------
-# FILE LOADING HELPERS
+# FILE LOADING HELPERS (fully silent on success)
 # ---------------------------------------------------------------
 def load_file(file):
     """Read CSV or Excel safely."""
@@ -66,19 +68,27 @@ def load_file(file):
         return pd.DataFrame()
 
 
+def safe_read(path):
+    """Silent reader for repo files (CSV or Excel)."""
+    try:
+        if not os.path.exists(path):
+            return pd.DataFrame()
+        if path.lower().endswith(".csv"):
+            return pd.read_csv(path)
+        return pd.read_excel(path)
+    except Exception as e:
+        st.error(f"❌ Failed to read {path}: {e}")
+        return pd.DataFrame()
+
+
 def load_data(file_uploader, default_path):
-    """Use uploaded file if present, otherwise load repo-stored file."""
-    if file_uploader is not None:
-        st.success(f"✅ Loaded uploaded file: {file_uploader.name}")
-        return load_file(file_uploader)
-    elif os.path.exists(default_path):
-        st.info(f"📂 Using default file: {default_path}")
-        if default_path.lower().endswith(".csv"):
-            return pd.read_csv(default_path)
-        else:
-            return pd.read_excel(default_path)
-    else:
-        st.warning(f"⚠️ File not found: {default_path}")
+    """Prefer uploaded file, fallback to repo file. Fully silent unless error."""
+    try:
+        if file_uploader is not None:
+            return load_file(file_uploader)
+        return safe_read(default_path)
+    except Exception as e:
+        st.error(f"❌ Error loading {default_path}: {e}")
         return pd.DataFrame()
 
 
@@ -86,38 +96,39 @@ def load_data(file_uploader, default_path):
 # SIDEBAR UPLOADS
 # ---------------------------------------------------------------
 st.sidebar.header("📂 Upload New Data Files (optional)")
-skaters_file = st.sidebar.file_uploader("Skaters", type=["xlsx", "csv"])
+skaters_file = st.sidebar.file_uploader("SKATERS", type=["xlsx", "csv"])
 shots_file = st.sidebar.file_uploader("SHOT DATA", type=["xlsx", "csv"])
 goalies_file = st.sidebar.file_uploader("GOALTENDERS", type=["xlsx", "csv"])
 lines_file = st.sidebar.file_uploader("LINE DATA", type=["xlsx", "csv"])
 teams_file = st.sidebar.file_uploader("TEAMS", type=["xlsx", "csv"])
 
 # ---------------------------------------------------------------
-# SMART CACHED DATA LOADING
+# SMART CACHED DATA LOADING (completely silent on success)
 # ---------------------------------------------------------------
-@st.cache_data(show_spinner=True)
+@st.cache_data(show_spinner=False)
 def load_all_data(skaters_file, shots_file, goalies_file, lines_file, teams_file):
     """Load all five datasets once per session (cached)."""
-    skaters = load_data(skaters_file, "Skaters.xlsx")
-    shots = load_data(shots_file, "SHOT DATA.xlsx")
-    goalies = load_data(goalies_file, "GOALTENDERS.xlsx")
-    lines = load_data(lines_file, "LINE DATA.xlsx")
-    teams = load_data(teams_file, "TEAMS.xlsx")
+    with contextlib.redirect_stdout(io.StringIO()):  # suppress prints/spinners
+        skaters = load_data(skaters_file, "SKATERS.xlsx")
+        shots = load_data(shots_file, "SHOT DATA.xlsx")
+        goalies = load_data(goalies_file, "GOALTENDERS.xlsx")
+        lines = load_data(lines_file, "LINE DATA.xlsx")
+        teams = load_data(teams_file, "TEAMS.xlsx")
     return skaters, shots, goalies, lines, teams
 
 
-# ✅ Load everything ONCE (cached)
+# ✅ Load once (silent)
 skaters_df, shots_df, goalies_df, lines_df, teams_df = load_all_data(
     skaters_file, shots_file, goalies_file, lines_file, teams_file
 )
 
-# Manual refresh button
+# Optional manual refresh button
 if st.sidebar.button("🔄 Reload Data"):
     st.cache_data.clear()
     st.experimental_rerun()
 
 # ---------------------------------------------------------------
-# MAIN LOGIC
+# MAIN APP LOGIC
 # ---------------------------------------------------------------
 if not skaters_df.empty and not shots_df.empty:
     st.success("✅ Data loaded successfully.")
@@ -289,7 +300,6 @@ if not skaters_df.empty and not shots_df.empty:
         # PLAYER TREND CHART
         # -------------------------------------------------------
         st.markdown("### 📈 Player Shot Trend")
-
         player_names = sorted(shots_df["player"].dropna().unique().tolist())
         selected_player = st.selectbox("Select a player to visualize:", player_names)
 
@@ -323,5 +333,3 @@ if not skaters_df.empty and not shots_df.empty:
 
 else:
     st.info("📥 Upload files or use defaults from repo to begin.")
-
-
