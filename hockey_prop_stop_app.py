@@ -21,7 +21,6 @@ st.markdown(
 # File uploaders
 # ---------------------------------------------------------------
 st.sidebar.header("📂 Upload Data Files (.xlsx or .csv)")
-
 skaters_file = st.sidebar.file_uploader("SKATERS", type=["xlsx", "csv"])
 shots_file   = st.sidebar.file_uploader("SHOT DATA", type=["xlsx", "csv"])
 goalies_file = st.sidebar.file_uploader("GOALTENDERS", type=["xlsx", "csv"])
@@ -96,11 +95,13 @@ if not skaters_df.empty and not shots_df.empty:
     for _, row in roster.iterrows():
         player = row["player"]
         team   = row["team"]
-        df_p = shots_df.loc[shots_df["player"] == player].copy()
+        # case-insensitive match
+        df_p = shots_df.loc[shots_df["player"].str.lower() == str(player).lower()].copy()
         if df_p.empty:
             continue
         df_p = df_p.sort_values("gameid")
 
+        # rolling averages
         l3  = df_p["sog"].tail(3).mean()
         l5  = df_p["sog"].tail(5).mean()
         l10 = df_p["sog"].tail(10).mean()
@@ -122,11 +123,18 @@ if not skaters_df.empty and not shots_df.empty:
             "Base Projection": round(base_proj, 2)
         })
 
-    result_df = pd.DataFrame(results).sort_values("Base Projection", ascending=False)
+    # 🩹 Handle case when no matches found
+    if not results:
+        st.error(
+            "⚠️ No players from the selected teams were found in your SHOT DATA file.\n"
+            "Please check that player names in SKATERS and SHOT DATA match (e.g. 'Auston Matthews' vs 'Matthews, Auston')."
+        )
+        st.write("✅ Player names in SKATERS (first 5):", roster["player"].head().tolist())
+        st.write("✅ Player names in SHOT DATA (first 5):", shots_df["player"].head().tolist())
+        st.stop()
 
-    # -----------------------------------------------------------
-    # Display results
-    # -----------------------------------------------------------
+    # Build and display table
+    result_df = pd.DataFrame(results).sort_values("Base Projection", ascending=False)
     st.markdown(f"### 📊 {team_a} vs {team_b} — Player Trend Table")
     st.dataframe(result_df, use_container_width=True)
 
