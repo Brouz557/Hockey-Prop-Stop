@@ -22,7 +22,7 @@ st.markdown(
 )
 
 # ---------------------------------------------------------------
-# STYLE (responsive + readable)
+# STYLES
 # ---------------------------------------------------------------
 st.markdown(
     """
@@ -51,10 +51,10 @@ st.markdown(
 )
 
 # ---------------------------------------------------------------
-# FILE LOADING FUNCTIONS
+# FILE LOADING HELPERS
 # ---------------------------------------------------------------
 def load_file(file):
-    """Read CSV or Excel with fallback error handling"""
+    """Read CSV or Excel safely."""
     if not file:
         return pd.DataFrame()
     try:
@@ -67,7 +67,7 @@ def load_file(file):
 
 
 def load_data(file_uploader, default_path):
-    """Use uploaded file if present, otherwise load repo-stored file"""
+    """Use uploaded file if present, otherwise load repo-stored file."""
     if file_uploader is not None:
         st.success(f"✅ Loaded uploaded file: {file_uploader.name}")
         return load_file(file_uploader)
@@ -83,23 +83,38 @@ def load_data(file_uploader, default_path):
 
 
 # ---------------------------------------------------------------
-# SIDEBAR: Optional Upload (Overrides Repo Files)
+# SIDEBAR UPLOADS
 # ---------------------------------------------------------------
 st.sidebar.header("📂 Upload New Data Files (optional)")
-skaters_file = st.sidebar.file_uploader("Skaters", type=["xlsx", "csv"])
+skaters_file = st.sidebar.file_uploader("SKATERS", type=["xlsx", "csv"])
 shots_file = st.sidebar.file_uploader("SHOT DATA", type=["xlsx", "csv"])
 goalies_file = st.sidebar.file_uploader("GOALTENDERS", type=["xlsx", "csv"])
 lines_file = st.sidebar.file_uploader("LINE DATA", type=["xlsx", "csv"])
 teams_file = st.sidebar.file_uploader("TEAMS", type=["xlsx", "csv"])
 
 # ---------------------------------------------------------------
-# LOAD DEFAULT DATA FROM REPO
+# SMART CACHED DATA LOADING
 # ---------------------------------------------------------------
-skaters_df = load_data(skaters_file, "Skaters.xlsx")
-shots_df = load_data(shots_file, "SHOT DATA.xlsx")
-goalies_df = load_data(goalies_file, "GOALTENDERS.xlsx")
-lines_df = load_data(lines_file, "LINE DATA.xlsx")
-teams_df = load_data(teams_file, "TEAMS.xlsx")
+@st.cache_data(show_spinner=True)
+def load_all_data(skaters_file, shots_file, goalies_file, lines_file, teams_file):
+    """Load all five datasets once per session (cached)."""
+    skaters = load_data(skaters_file, "SKATERS.xlsx")
+    shots = load_data(shots_file, "SHOT DATA.xlsx")
+    goalies = load_data(goalies_file, "GOALTENDERS.xlsx")
+    lines = load_data(lines_file, "LINE DATA.xlsx")
+    teams = load_data(teams_file, "TEAMS.xlsx")
+    return skaters, shots, goalies, lines, teams
+
+
+# ✅ Load everything ONCE (cached)
+skaters_df, shots_df, goalies_df, lines_df, teams_df = load_all_data(
+    skaters_file, shots_file, goalies_file, lines_file, teams_file
+)
+
+# Manual refresh button
+if st.sidebar.button("🔄 Reload Data"):
+    st.cache_data.clear()
+    st.experimental_rerun()
 
 # ---------------------------------------------------------------
 # MAIN LOGIC
@@ -113,7 +128,7 @@ if not skaters_df.empty and not shots_df.empty:
     goalies_df.columns = goalies_df.columns.str.lower().str.strip() if not goalies_df.empty else []
     lines_df.columns = lines_df.columns.str.lower().str.strip() if not lines_df.empty else []
 
-    # Identify columns
+    # Identify key columns
     team_col = next((c for c in skaters_df.columns if "team" in c), None)
     player_col = "name" if "name" in skaters_df.columns else None
     sog_col = next((c for c in shots_df.columns if "sog" in c), None)
@@ -121,10 +136,10 @@ if not skaters_df.empty and not shots_df.empty:
     player_col_shots = next((c for c in shots_df.columns if "player" in c or "name" in c), None)
 
     if not all([team_col, player_col, sog_col, game_col, player_col_shots]):
-        st.error("⚠️ Missing required columns in uploaded/default files.")
+        st.error("⚠️ Missing required columns in files.")
         st.stop()
 
-    # Team selection
+    # Team dropdowns
     all_teams = sorted(skaters_df[team_col].dropna().unique().tolist())
     col1, col2 = st.columns(2)
     with col1:
@@ -139,7 +154,7 @@ if not skaters_df.empty and not shots_df.empty:
         st.info(f"Building model for matchup: **{team_a} vs {team_b}** …")
 
         # -------------------------------------------------------
-        # 🥅 GOALIE ADJUSTMENTS
+        # GOALIE ADJUSTMENTS
         # -------------------------------------------------------
         goalie_adj, rebound_rate = {}, {}
         if not goalies_df.empty:
@@ -163,7 +178,7 @@ if not skaters_df.empty and not shots_df.empty:
                 st.warning(f"⚠️ Goalie data incomplete: {e}")
 
         # -------------------------------------------------------
-        # 🧱 LINE ADJUSTMENTS
+        # LINE ADJUSTMENTS
         # -------------------------------------------------------
         line_adj = pd.DataFrame()
         if not lines_df.empty:
@@ -250,10 +265,9 @@ if not skaters_df.empty and not shots_df.empty:
                 "Adj Projection": adj_proj,
             })
 
-        if not results:
-            st.warning("⚠️ No matching players found for these teams.")
-            st.stop()
-
+        # -------------------------------------------------------
+        # TABLE & RATINGS
+        # -------------------------------------------------------
         result_df = pd.DataFrame(results)
         avg_proj, std_proj = result_df["Adj Projection"].mean(), result_df["Adj Projection"].std()
 
@@ -272,14 +286,9 @@ if not skaters_df.empty and not shots_df.empty:
         st.markdown(result_df.to_html(index=False, escape=False), unsafe_allow_html=True)
 
         # -------------------------------------------------------
-        # 📈 PLAYER TREND CHART (auto Name → player)
+        # PLAYER TREND CHART
         # -------------------------------------------------------
-        st.markdown("### 📈 Player Shot Trend (Interactive)")
-
-        # Normalize columns for safety
-        shots_df.columns = shots_df.columns.str.lower().str.strip()
-        if "name" in shots_df.columns and "player" not in shots_df.columns:
-            shots_df.rename(columns={"name": "player"}, inplace=True)
+        st.markdown("### 📈 Player Shot Trend")
 
         player_names = sorted(shots_df["player"].dropna().unique().tolist())
         selected_player = st.selectbox("Select a player to visualize:", player_names)
@@ -313,6 +322,4 @@ if not skaters_df.empty and not shots_df.empty:
                 st.warning(f"⚠️ No shot data found for {selected_player}.")
 
 else:
-    st.info("📥 Upload files or use defaults in repo to begin.")
-
-
+    st.info("📥 Upload files or use defaults from repo to begin.")
