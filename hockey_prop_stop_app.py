@@ -119,17 +119,27 @@ if not skaters_df.empty and not shots_df.empty:
                 progress.progress(i / total)
                 continue
 
+            # ✅ Aggregate to per-game level (sum SOG by game)
+            game_sogs = (
+                df_p.groupby("gameid")["sog"]
+                .sum()
+                .reset_index()
+                .sort_values("gameid")
+            )
+
+            sog_values = game_sogs["sog"].tolist()
+
             # recent games
-            last3 = df_p["sog"].tail(3).tolist()
-            last5 = df_p["sog"].tail(5).tolist()
-            last10 = df_p["sog"].tail(10).tolist()
-            last20 = df_p["sog"].tail(20).tolist()
+            last3 = sog_values[-3:]
+            last5 = sog_values[-5:]
+            last10 = sog_values[-10:]
+            last20 = sog_values[-20:]
 
             l3 = np.mean(last3) if last3 else np.nan
             l5 = np.mean(last5) if last5 else np.nan
             l10 = np.mean(last10) if last10 else np.nan
             l20 = np.mean(last20) if last20 else np.nan
-            season_avg = df_p["sog"].mean()
+            season_avg = np.mean(sog_values)
 
             trend = 0 if pd.isna(l10) or l10 == 0 else (l3 - l10) / l10
             base_proj = np.nanmean([0.4 * l3, 0.3 * l5, 0.2 * l10, 0.1 * l20])
