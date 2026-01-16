@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Hockey Prop Stop — Final Projection Edition
+# 🏒 Hockey Prop Stop — Final Projection + NHL Logos
 # ---------------------------------------------------------------
 
 import streamlit as st
@@ -17,7 +17,7 @@ st.markdown(
     """
     <h1 style='text-align:center;color:#00B140;'>🏒 Hockey Prop Stop</h1>
     <p style='text-align:center;color:#BFC0C0;'>
-        Team-vs-Team matchup analytics with goalie & weighted line adjustments
+        Team-vs-Team matchup analytics with goalie, line, and trend visualization
     </p>
     """,
     unsafe_allow_html=True,
@@ -54,7 +54,7 @@ lines_file = st.sidebar.file_uploader("LINE DATA", type=["xlsx", "csv"])
 teams_file = st.sidebar.file_uploader("TEAMS", type=["xlsx", "csv"])
 
 # ---------------------------------------------------------------
-# File Loaders
+# File Loading Helpers
 # ---------------------------------------------------------------
 def load_file(file):
     if not file:
@@ -82,14 +82,11 @@ def load_data(file_uploader, default_path):
     return safe_read(default_path)
 
 # ---------------------------------------------------------------
-# Cached Loader
+# Cache the data load
 # ---------------------------------------------------------------
 @st.cache_data(show_spinner=False)
 def load_all_data(skaters_file, shots_file, goalies_file, lines_file, teams_file):
-    base_paths = [
-        ".", "data", "/mount/src/hockey-prop-stop/data", "/mount/src/hockey-prop-stop"
-    ]
-
+    base_paths = [".", "data", "/mount/src/hockey-prop-stop/data"]
     def find_file(filename):
         for p in base_paths:
             full = os.path.join(p, filename)
@@ -154,7 +151,7 @@ run_model = st.button("🚀 Run Model")
 if run_model:
     st.info(f"Building model for matchup: **{team_a} vs {team_b}** ...")
 
-    # Goalie Adjustments
+    # 🥅 Goalie Adjustments
     goalie_adj, rebound_rate = {}, {}
     if not goalies_df.empty:
         df_g = goalies_df.copy()
@@ -169,7 +166,7 @@ if run_model:
         goalie_adj = (league_avg / team_avg).to_dict()
         rebound_rate = df_g.groupby("team")["rebound_rate"].mean().to_dict()
 
-    # Line Adjustments
+    # 🧱 Line Adjustments
     line_adj = {}
     if not lines_df.empty:
         df_l = lines_df.copy()
@@ -219,6 +216,9 @@ if run_model:
         sog_values = game_sogs["sog"].tolist()
 
         last3, last5, last10 = sog_values[-3:], sog_values[-5:], sog_values[-10:]
+        # Reverse order (most recent first)
+        last3, last5, last10 = list(reversed(last3)), list(reversed(last5)), list(reversed(last10))
+
         l3, l5, l10 = np.mean(last3) if last3 else np.nan, np.mean(last5) if last5 else np.nan, np.mean(last10) if last10 else np.nan
         season_avg = np.mean(sog_values)
         trend = 0 if pd.isna(l10) or l10 == 0 else (l3 - l10) / l10
@@ -280,16 +280,16 @@ if run_model:
     result_df["Matchup Rating"] = result_df["Final Projection"].apply(rate)
 
     # ---------------------------------------------------------------
-    # 🌡️ Trend Gradient Visualization
+    # 🌡️ Trend Visualization
     # ---------------------------------------------------------------
     def trend_color(val):
         if pd.isna(val):
             return "<div style='background-color:#E0E0E0;color:#000;border-radius:6px;'>–</div>"
         val = max(min(val, 0.5), -0.5)
         norm = (val + 0.5)
-        if norm < 0.5:  # red→yellow
+        if norm < 0.5:
             r, g, b = 255, int(255 * (norm * 2)), 0
-        else:  # yellow→green
+        else:
             r, g, b = int(255 * (1 - (norm - 0.5) * 2)), 255, 0
         color = f"rgb({r},{g},{b})"
         text = "▲" if val > 0.05 else ("▼" if val < -0.05 else "–")
@@ -297,6 +297,47 @@ if run_model:
         return f"<div style='background:{color};color:{text_color};font-weight:600;border-radius:6px;padding:4px 8px;text-align:center;' title='Trend: {val:+.2f}'>{text}</div>"
 
     result_df["Trend"] = result_df["Trend Score"].apply(trend_color)
+
+    # ---------------------------------------------------------------
+    # 🏒 TEAM LOGOS (auto-loaded from NHL CDN)
+    # ---------------------------------------------------------------
+    team_logos = {
+        "Toronto Maple Leafs": "TOR", "Vancouver Canucks": "VAN", "Edmonton Oilers": "EDM",
+        "Calgary Flames": "CGY", "Montreal Canadiens": "MTL", "Ottawa Senators": "OTT",
+        "Boston Bruins": "BOS", "New York Rangers": "NYR", "New York Islanders": "NYI",
+        "Philadelphia Flyers": "PHI", "Pittsburgh Penguins": "PIT", "Chicago Blackhawks": "CHI",
+        "Colorado Avalanche": "COL", "Dallas Stars": "DAL", "Vegas Golden Knights": "VGK",
+        "Los Angeles Kings": "LAK", "San Jose Sharks": "SJS", "Seattle Kraken": "SEA",
+        "Detroit Red Wings": "DET", "Tampa Bay Lightning": "TBL", "Florida Panthers": "FLA",
+        "Nashville Predators": "NSH", "Washington Capitals": "WSH", "Buffalo Sabres": "BUF",
+        "St. Louis Blues": "STL", "Winnipeg Jets": "WPG", "Minnesota Wild": "MIN",
+        "Anaheim Ducks": "ANA", "Arizona Coyotes": "ARI", "Columbus Blue Jackets": "CBJ",
+        "New Jersey Devils": "NJD"
+    }
+
+    def get_logo_html(team_name):
+        abbr = team_logos.get(team_name, None)
+        if not abbr:
+            return team_name
+        url = f"https://assets.nhle.com/logos/nhl/svg/{abbr}_light.svg"
+        return f"<img src='{url}' width='26' style='vertical-align:middle;margin-right:6px;'> {team_name}"
+
+    # Replace team names with logos in table
+    result_df["Team"] = result_df["Team"].apply(get_logo_html)
+
+    # Matchup banner
+    team_a_logo = get_logo_html(team_a)
+    team_b_logo = get_logo_html(team_b)
+    st.markdown(
+        f"""
+        <div style='text-align:center;margin-bottom:10px;'>
+            <span style='font-size:22px;'>{team_a_logo}</span>
+            <span style='font-size:20px;color:#999;margin:0 10px;'>vs</span>
+            <span style='font-size:22px;'>{team_b_logo}</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
     # ---------------------------------------------------------------
     # 🎯 Legend + Reordered Table
