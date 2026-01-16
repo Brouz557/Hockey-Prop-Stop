@@ -42,26 +42,21 @@ skaters_df = load_file(skaters_file)
 shots_df   = load_file(shots_file)
 
 # ---------------------------------------------------------------
-# Proceed only if SKATERS + SHOT DATA uploaded
+# Main logic
 # ---------------------------------------------------------------
 if not skaters_df.empty and not shots_df.empty:
-    st.success("✅ SKATERS and SHOT DATA loaded")
+    st.success("✅ SKATERS and SHOT DATA loaded successfully.")
 
     # Normalize headers
     skaters_df.columns = skaters_df.columns.str.lower().str.strip()
     shots_df.columns   = shots_df.columns.str.lower().str.strip()
 
-    # -----------------------------------------------------------
     # Identify key columns
-    # -----------------------------------------------------------
     team_col   = next((c for c in skaters_df.columns if "team" in c), None)
-    player_col = "name" if "name" in skaters_df.columns else None  # 👈 always use Name
-
+    player_col = "name" if "name" in skaters_df.columns else None
     sog_col    = next((c for c in shots_df.columns if "sog" in c), None)
     game_col   = next((c for c in shots_df.columns if "game" in c and "id" in c), None)
     player_col_shots = next((c for c in shots_df.columns if "player" in c or "name" in c), None)
-
-    st.sidebar.write(f"🧾 Using player column: **{player_col}**, team column: **{team_col}**")
 
     if not all([team_col, player_col, sog_col, game_col, player_col_shots]):
         st.error("⚠️ Missing required columns in uploaded files.")
@@ -75,37 +70,4 @@ if not skaters_df.empty and not shots_df.empty:
     with col1:
         team_a = st.selectbox("Select Team A", all_teams)
     with col2:
-        team_b = st.selectbox("Select Team B", [t for t in all_teams if t != team_a])
-
-    # -----------------------------------------------------------
-    # Roster for selected teams — ensure unique player names
-    # -----------------------------------------------------------
-    roster = (
-        skaters_df[skaters_df[team_col].isin([team_a, team_b])][[player_col, team_col]]
-        .rename(columns={player_col: "player", team_col: "team"})
-        .drop_duplicates(subset=["player"])
-        .reset_index(drop=True)
-    )
-
-    # -----------------------------------------------------------
-    # Compute SOG trends + raw values
-    # -----------------------------------------------------------
-    shots_df = shots_df.rename(
-        columns={player_col_shots: "player", game_col: "gameid", sog_col: "sog"}
-    )
-    shots_df["player"] = shots_df["player"].astype(str).str.strip()
-    roster["player"]   = roster["player"].astype(str).str.strip()
-
-    results = []
-    for _, row in roster.iterrows():
-        player = row["player"]
-        team   = row["team"]
-        df_p = shots_df.loc[shots_df["player"].str.lower() == str(player).lower()].copy()
-        if df_p.empty:
-            continue
-        df_p = df_p.sort_values("gameid")
-
-        # recent games
-        last3  = df_p["sog"].tail(3).tolist()
-        last5  = df_p["sog"].tail(5).tolist()
-        last10 = df_p["sog"].tail(10).tolist()
+        team_b = st.selectbox("Select Team B",_
