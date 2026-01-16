@@ -17,7 +17,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# ✅ Add custom CSS for wrapped table text
+# ✅ Add custom CSS for wrapped table text with line spacing
 st.markdown(
     """
     <style>
@@ -25,6 +25,7 @@ st.markdown(
         white-space: normal !important;
         word-wrap: break-word !important;
         text-align: center !important;
+        line-height: 1.3em !important;
     }
     .stDataFrame {
         overflow-x: auto;
@@ -217,6 +218,14 @@ if not skaters_df.empty and not shots_df.empty:
             adjusted_proj = base_proj * goalie_factor * line_factor
             adjusted_proj = max(0, round(adjusted_proj, 2))  # no negatives
 
+            # ✅ Format L10 Shots as two-line cell (5 + 5)
+            l10_shots_formatted = (
+                "<br>".join([
+                    ", ".join(map(str, last10[:5])),
+                    ", ".join(map(str, last10[5:]))
+                ]) if len(last10) > 5 else ", ".join(map(str, last10))
+            )
+
             results.append(
                 {
                     "Player": player,
@@ -226,7 +235,7 @@ if not skaters_df.empty and not shots_df.empty:
                     "L3 Avg": round(l3, 2),
                     "L5 Shots": ", ".join(map(str, last5)),
                     "L5 Avg": round(l5, 2),
-                    "L10 Shots": ", ".join(map(str, last10)),
+                    "L10 Shots": l10_shots_formatted,
                     "L10 Avg": round(l10, 2),
                     "Trend Score": round(trend, 3),
                     "Base Projection": round(base_proj, 2),
@@ -263,7 +272,7 @@ if not skaters_df.empty and not shots_df.empty:
         st.success(f"✅ Model built successfully for {team_a} vs {team_b}!")
         st.markdown(f"### 📊 {team_a} vs {team_b} — Player Projections (Adjusted)")
 
-        # ✅ Wrap text and display
+        # ✅ Render with HTML so <br> works inside cells
         st.markdown(result_df.to_html(index=False, escape=False), unsafe_allow_html=True)
 
 else:
