@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Hockey Prop Stop — Trend Gradient Edition
+# 🏒 Hockey Prop Stop — Team Column Added
 # ---------------------------------------------------------------
 
 import streamlit as st
@@ -24,7 +24,7 @@ st.markdown(
 )
 
 # ---------------------------------------------------------------
-# Custom CSS for clean table layout
+# Custom CSS
 # ---------------------------------------------------------------
 st.markdown(
     """
@@ -54,7 +54,7 @@ lines_file = st.sidebar.file_uploader("LINE DATA", type=["xlsx", "csv"])
 teams_file = st.sidebar.file_uploader("TEAMS", type=["xlsx", "csv"])
 
 # ---------------------------------------------------------------
-# Helper Functions
+# File Loaders
 # ---------------------------------------------------------------
 def load_file(file):
     if not file:
@@ -82,7 +82,7 @@ def load_data(file_uploader, default_path):
     return safe_read(default_path)
 
 # ---------------------------------------------------------------
-# Cached Loader for Repo Files
+# Cached Loader
 # ---------------------------------------------------------------
 @st.cache_data(show_spinner=False)
 def load_all_data(skaters_file, shots_file, goalies_file, lines_file, teams_file):
@@ -252,11 +252,8 @@ if run_model:
                 "Team": team,
                 "Season Avg": round(season_avg, 2),
                 "L3 Shots": ", ".join(map(str, last3)),
-                "L3 Avg": round(l3, 2),
                 "L5 Shots": ", ".join(map(str, last5)),
-                "L5 Avg": round(l5, 2),
                 "L10 Shots": l10_shots_formatted,
-                "L10 Avg": round(l10, 2),
                 "Trend Score": round(trend, 3),
                 "Base Projection": round(base_proj, 2),
                 "Goalie Adj": round(goalie_factor, 2),
@@ -268,10 +265,6 @@ if run_model:
         progress.progress(i / total)
 
     progress.empty()
-
-    if not results:
-        st.warning("⚠️ No matching players found for these teams.")
-        st.stop()
 
     result_df = pd.DataFrame(results)
     avg_proj, std_proj = result_df["Adj Projection"].mean(), result_df["Adj Projection"].std()
@@ -306,7 +299,7 @@ if run_model:
     result_df["Trend"] = result_df["Trend Score"].apply(trend_color)
 
     # ---------------------------------------------------------------
-    # 🎯 Legend + Table
+    # 🎯 Legend + Reordered Table
     # ---------------------------------------------------------------
     st.markdown(
         """
@@ -320,15 +313,15 @@ if run_model:
     )
 
     display_cols = [
-        "Player", "Team", "Season Avg",
-        "L3 Shots", "L3 Avg", "L5 Shots", "L5 Avg",
-        "L10 Shots", "L10 Avg", "Trend",
-        "Base Projection", "Goalie Adj", "Line Adj",
-        "Adj Projection", "Matchup Rating"
+        "Player", "Team", "Trend", "Adj Projection", "Season Avg", "Matchup Rating",
+        "L3 Shots", "L5 Shots", "L10 Shots", "Base Projection", "Goalie Adj", "Line Adj"
     ]
+
+    visible_df = result_df[[c for c in display_cols if c in result_df.columns]]
+    visible_df = visible_df.sort_values("Adj Projection", ascending=False)
 
     st.success(f"✅ Model built successfully for {team_a} vs {team_b}!")
     st.markdown(f"### 📊 {team_a} vs {team_b} — Player Projections (Adjusted)")
 
-    html_table = result_df[display_cols].to_html(index=False, escape=False)
+    html_table = visible_df.to_html(index=False, escape=False)
     st.markdown(f"<div style='overflow-x:auto'>{html_table}</div>", unsafe_allow_html=True)
