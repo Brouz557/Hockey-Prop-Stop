@@ -17,6 +17,23 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+# ✅ Add custom CSS for wrapped table text
+st.markdown(
+    """
+    <style>
+    .dataframe td {
+        white-space: normal !important;
+        word-wrap: break-word !important;
+        text-align: center !important;
+    }
+    .stDataFrame {
+        overflow-x: auto;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 # ---------------------------------------------------------------
 # File uploaders
 # ---------------------------------------------------------------
@@ -119,7 +136,7 @@ if not skaters_df.empty and not shots_df.empty:
                 progress.progress(i / total)
                 continue
 
-            # ✅ Aggregate to per-game level (sum SOG by game)
+            # Aggregate to per-game level (sum SOG by game)
             game_sogs = (
                 df_p.groupby("gameid")["sog"]
                 .sum()
@@ -133,16 +150,14 @@ if not skaters_df.empty and not shots_df.empty:
             last3 = sog_values[-3:]
             last5 = sog_values[-5:]
             last10 = sog_values[-10:]
-            last20 = sog_values[-20:]
 
             l3 = np.mean(last3) if last3 else np.nan
             l5 = np.mean(last5) if last5 else np.nan
             l10 = np.mean(last10) if last10 else np.nan
-            l20 = np.mean(last20) if last20 else np.nan
             season_avg = np.mean(sog_values)
 
             trend = 0 if pd.isna(l10) or l10 == 0 else (l3 - l10) / l10
-            base_proj = np.nanmean([0.4 * l3, 0.3 * l5, 0.2 * l10, 0.1 * l20])
+            base_proj = np.nanmean([0.5 * l3, 0.3 * l5, 0.2 * l10])
 
             # Assign matchup strength rating
             if base_proj >= 3.5:
@@ -163,8 +178,6 @@ if not skaters_df.empty and not shots_df.empty:
                     "L5 Avg": round(l5, 2),
                     "L10 Shots": ", ".join(map(str, last10)),
                     "L10 Avg": round(l10, 2),
-                    "L20 Shots": ", ".join(map(str, last20)),
-                    "L20 Avg": round(l20, 2),
                     "Trend Score": round(trend, 3),
                     "Base Projection": round(base_proj, 2),
                     "Matchup Rating": signal,
@@ -183,7 +196,9 @@ if not skaters_df.empty and not shots_df.empty:
         st.success(f"✅ Model built successfully for {team_a} vs {team_b}!")
         result_df = pd.DataFrame(results).sort_values("Base Projection", ascending=False)
         st.markdown(f"### 📊 {team_a} vs {team_b} — Player Trend Table")
-        st.dataframe(result_df, use_container_width=True)
+
+        # ✅ Wrap text using HTML table display
+        st.markdown(result_df.to_html(index=False, escape=False), unsafe_allow_html=True)
 
 else:
     st.info("📥 Upload at least SKATERS and SHOT DATA to begin.")
