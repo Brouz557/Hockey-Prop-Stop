@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Hockey Prop Stop — Opponent-Adjusted Matchup Rating
+# 🏒 Hockey Prop Stop — Opponent-Adjusted Matchup Rating + Repo Timestamp
 # ---------------------------------------------------------------
 
 import streamlit as st
@@ -8,6 +8,7 @@ import numpy as np
 import os
 import contextlib
 import io
+import datetime
 
 # ---------------------------------------------------------------
 # Page Setup
@@ -114,7 +115,36 @@ if skaters_df.empty or shots_df.empty:
     st.warning("⚠️ Missing required data. Please upload or verify repo files.")
     st.stop()
 
-st.success("✅ Data loaded successfully.")
+# ---------------------------------------------------------------
+# 📅 Show Last Repo Data Update Timestamp
+# ---------------------------------------------------------------
+repo_files = [
+    "Skaters.xlsx",
+    "SHOT DATA.xlsx",
+    "GOALTENDERS.xlsx",
+    "LINE DATA.xlsx",
+    "TEAMS.xlsx"
+]
+
+def get_repo_last_modified(file_list):
+    times = []
+    for fname in file_list:
+        for base in [".", "data", "/mount/src/hockey-prop-stop/data"]:
+            path = os.path.join(base, fname)
+            if os.path.exists(path):
+                ts = os.path.getmtime(path)
+                times.append(ts)
+                break
+    if times:
+        return datetime.datetime.fromtimestamp(max(times))
+    return None
+
+last_update = get_repo_last_modified(repo_files)
+if last_update:
+    formatted_time = last_update.strftime("%B %d, %Y — %I:%M %p")
+    st.success(f"✅ Data loaded successfully (repo last updated **{formatted_time}**).")
+else:
+    st.success("✅ Data loaded successfully (repo timestamp unavailable).")
 
 # ---------------------------------------------------------------
 # Data Prep
@@ -266,7 +296,7 @@ if run_model:
     result_df = pd.DataFrame(results)
 
     # ---------------------------------------------------------------
-    # 🧮 Improved Opponent-Adjusted Matchup Rating
+    # 🧮 Opponent-Adjusted Matchup Rating
     # ---------------------------------------------------------------
     result_df["Opp Difficulty"] = ((1 / result_df["Goalie Adj"]) + (1 / result_df["Line Adj"])) / 2
     result_df["Rating Score"] = result_df["Final Projection"] / result_df["Opp Difficulty"]
@@ -285,7 +315,7 @@ if run_model:
     result_df["Matchup Rating"] = result_df["Rating Score"].apply(rate_improved)
 
     # ---------------------------------------------------------------
-    # 🌡️ Trend Visualization (color-coded)
+    # 🌡️ Trend Visualization
     # ---------------------------------------------------------------
     def trend_color(val):
         if pd.isna(val):
