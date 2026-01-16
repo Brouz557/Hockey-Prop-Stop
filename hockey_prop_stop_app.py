@@ -11,13 +11,15 @@ st.markdown(
     """
     <h1 style='text-align:center;color:#00B140;'>🏒 Hockey Prop Stop</h1>
     <p style='text-align:center;color:#BFC0C0;'>
-        Team-vs-Team matchup analytics with goalie and line integration
+        Team-vs-Team matchup analytics with goalie & weighted line adjustments
     </p>
     """,
     unsafe_allow_html=True,
 )
 
-# ✅ Add custom CSS for wrapped table text with line spacing
+# ---------------------------------------------------------------
+# Custom CSS for table readability
+# ---------------------------------------------------------------
 st.markdown(
     """
     <style>
@@ -103,9 +105,6 @@ if not skaters_df.empty and not shots_df.empty:
     st.markdown("---")
     run_model = st.button("🚀 Run Model")
 
-    # -----------------------------------------------------------
-    # Run only when button clicked
-    # -----------------------------------------------------------
     if run_model:
         st.info(f"Building model for matchup: **{team_a} vs {team_b}** ...")
 
@@ -118,34 +117,69 @@ if not skaters_df.empty and not shots_df.empty:
             try:
                 df_g = goalies_df.copy()
                 df_g = df_g[df_g["situation"].str.lower() == "all"]
-                df_g["shots_allowed_per_game"] = df_g["unblocked attempts"] / df_g["games"]
-                df_g["rebound_rate"] = df_g["rebounds"] / df_g["unblocked attempts"]
+                df_g["games"] = pd.to_numeric(df_g["games"], errors="coerce").fillna(0)
+                df_g["unblocked attempts"] = pd.to_numeric(df_g["unblocked attempts"], errors="coerce").fillna(0)
+                df_g["rebounds"] = pd.to_numeric(df_g["rebounds"], errors="coerce").fillna(0)
+
+                df_g["shots_allowed_per_game"] = np.where(
+                    df_g["games"] > 0,
+                    df_g["unblocked attempts"] / df_g["games"],
+                    np.nan,
+                )
+                df_g["rebound_rate"] = np.where(
+                    df_g["unblocked attempts"] > 0,
+                    df_g["rebounds"] / df_g["unblocked attempts"],
+                    0,
+                )
 
                 team_avg = df_g.groupby("team")["shots_allowed_per_game"].mean()
                 league_avg = team_avg.mean()
                 goalie_adj = (league_avg / team_avg).to_dict()
-
                 rebound_rate = df_g.groupby("team")["rebound_rate"].mean().to_dict()
             except Exception as e:
                 st.warning(f"⚠️ Goalie data incomplete or invalid: {e}")
 
         # -------------------------------------------------------
-        # 🧱 LINE ADJUSTMENTS
+        # 🧱 LINE ADJUSTMENTS (Weighted by games)
         # -------------------------------------------------------
         line_adj = {}
         if not lines_df.empty:
             try:
                 df_l = lines_df.copy()
-                df_l["sog_against_per_game"] = df_l["sog against"] / df_l["games"]
+                df_l["games"] = pd.to_numeric(df_l["games"], errors="coerce").fillna(0)
+                df_l["sog against"] = pd.to_numeric(df_l["sog against"], errors="coerce").fillna(0)
+
+                # collapse duplicates by line pairings + team
+                df_l = (
+                    df_l.groupby(["line pairings", "team"], as_index=False)
+                    .agg({"games": "sum", "sog against": "sum"})
+                )
+
+                df_l["sog_against_per_game"] = np.where(
+                    df_l["games"] > 0,
+                    df_l["sog against"] / df_l["games"],
+                    np.nan,
+                )
+
+                # league-relative factor
                 team_avg = df_l.groupby("team")["sog_against_per_game"].mean()
                 league_avg = team_avg.mean()
                 df_l["line_factor"] = league_avg / df_l["sog_against_per_game"]
-                line_adj = df_l.set_index("line pairings")["line_factor"].to_dict()
+
+                # cleanup
+                df_l["line_factor"] = (
+                    df_l["line_factor"]
+                    .replace([np.inf, -np.inf], np.nan)
+                    .fillna(1.0)
+                    .clip(0.7, 1.3)
+                )
+
+                line_adj = df_l.copy()  # keep full table for weighted lookup
             except Exception as e:
                 st.warning(f"⚠️ Line data incomplete or invalid: {e}")
 
         # -------------------------------------------------------
-        # Roster for selected teams
+        # Build team roster
         # -------------------------------------------------------
         roster = (
             skaters_df[skaters_df[team_col].isin([team_a, team_b])][[player_col, team_col]]
@@ -154,7 +188,6 @@ if not skaters_df.empty and not shots_df.empty:
             .reset_index(drop=True)
         )
 
-        # Prepare shot data
         shots_df = shots_df.rename(
             columns={player_col_shots: "player", game_col: "gameid", sog_col: "sog"}
         )
@@ -177,7 +210,6 @@ if not skaters_df.empty and not shots_df.empty:
                 progress.progress(i / total)
                 continue
 
-            # Aggregate per game
             game_sogs = df_p.groupby("gameid")["sog"].sum().reset_index().sort_values("gameid")
             sog_values = game_sogs["sog"].tolist()
 
@@ -185,33 +217,30 @@ if not skaters_df.empty and not shots_df.empty:
             l3, l5, l10 = np.mean(last3) if last3 else np.nan, np.mean(last5) if last5 else np.nan, np.mean(last10) if last10 else np.nan
             season_avg = np.mean(sog_values)
             trend = 0 if pd.isna(l10) or l10 == 0 else (l3 - l10) / l10
-
             base_proj = np.nansum([0.5 * l3, 0.3 * l5, 0.2 * l10])
 
             # ------------------------------
-            # Goalie + Line Adjustments
+            # Goalie + Weighted Line Adjustments
             # ------------------------------
             opp_team = team_b if team == team_a else team_a
-            goalie_factor = goalie_adj.get(opp_team, 1.0)
+            goalie_factor = np.clip(goalie_adj.get(opp_team, 1.0), 0.7, 1.3)
             rebound_factor = rebound_rate.get(opp_team, 0.0)
             line_factor = 1.0
 
-            if not lines_df.empty:
+            if not line_adj.empty:
                 try:
                     last_name = str(player).split()[-1].lower()
-                    matching_lines = [v for k, v in line_adj.items() if last_name in str(k).lower()]
-                    if matching_lines:
-                        line_factor = np.nanmean(matching_lines)
+                    matching = line_adj[line_adj["line pairings"].str.contains(last_name, case=False, na=False)]
+                    if not matching.empty:
+                        line_factor = np.average(matching["line_factor"], weights=matching["games"])
+                    line_factor = np.clip(line_factor, 0.7, 1.3)
                 except Exception:
                     pass
 
-            # Blended adjustment
             adj_proj = base_proj * (0.7 + 0.3 * goalie_factor) * (0.7 + 0.3 * line_factor)
-            # small boost if goalie rebounds often
             adj_proj *= (1 + rebound_factor * 0.1)
             adj_proj = max(0, round(adj_proj, 2))
 
-            # 2-line L10 format
             l10_shots_formatted = (
                 "<br>".join([", ".join(map(str, last10[:5])), ", ".join(map(str, last10[5:]))])
                 if len(last10) > 5
@@ -245,7 +274,6 @@ if not skaters_df.empty and not shots_df.empty:
             st.warning("⚠️ No matching players found for these teams.")
             st.stop()
 
-        # Dynamic matchup rating
         result_df = pd.DataFrame(results)
         avg_proj, std_proj = result_df["Adj Projection"].mean(), result_df["Adj Projection"].std()
 
@@ -262,7 +290,6 @@ if not skaters_df.empty and not shots_df.empty:
 
         st.success(f"✅ Model built successfully for {team_a} vs {team_b}!")
         st.markdown(f"### 📊 {team_a} vs {team_b} — Player Projections (Adjusted)")
-
         st.markdown(result_df.to_html(index=False, escape=False), unsafe_allow_html=True)
 
 else:
