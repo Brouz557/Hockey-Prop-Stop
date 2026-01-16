@@ -71,3 +71,4 @@ if not skaters_df.empty and not shots_df.empty:
         team_a = st.selectbox("Select Team A", all_teams)
     with col2:
         team_b = st.selectbox("Select Team B",_
+
