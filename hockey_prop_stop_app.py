@@ -11,7 +11,7 @@ st.markdown(
     """
     <h1 style='text-align:center;color:#00B140;'>🏒 Hockey Prop Stop</h1>
     <p style='text-align:center;color:#BFC0C0;'>
-        Team-vs-Team matchup analytics with goalie and line impact
+        Team-vs-Team matchup analytics with goalie and line integration
     </p>
     """,
     unsafe_allow_html=True,
@@ -110,32 +110,39 @@ if not skaters_df.empty and not shots_df.empty:
         st.info(f"Building model for matchup: **{team_a} vs {team_b}** ...")
 
         # -------------------------------------------------------
-        # Goalie suppression factors
+        # 🥅 GOALIE ADJUSTMENTS
         # -------------------------------------------------------
         goalie_adj = {}
+        rebound_rate = {}
         if not goalies_df.empty:
             try:
-                goalies_df = goalies_df[goalies_df["situation"].str.lower() == "all"]
-                goalies_df["sog_allowed_per_game"] = goalies_df["unblocked attempts"] / goalies_df["games"]
-                team_avg = goalies_df.groupby("team")["sog_allowed_per_game"].mean()
+                df_g = goalies_df.copy()
+                df_g = df_g[df_g["situation"].str.lower() == "all"]
+                df_g["shots_allowed_per_game"] = df_g["unblocked attempts"] / df_g["games"]
+                df_g["rebound_rate"] = df_g["rebounds"] / df_g["unblocked attempts"]
+
+                team_avg = df_g.groupby("team")["shots_allowed_per_game"].mean()
                 league_avg = team_avg.mean()
                 goalie_adj = (league_avg / team_avg).to_dict()
+
+                rebound_rate = df_g.groupby("team")["rebound_rate"].mean().to_dict()
             except Exception as e:
-                st.warning(f"⚠️ Could not calculate goalie suppression: {e}")
+                st.warning(f"⚠️ Goalie data incomplete or invalid: {e}")
 
         # -------------------------------------------------------
-        # Line matchup impact
+        # 🧱 LINE ADJUSTMENTS
         # -------------------------------------------------------
         line_adj = {}
         if not lines_df.empty:
             try:
-                lines_df["sog_against_per_game"] = lines_df["sog against"] / lines_df["games"]
-                team_avg = lines_df.groupby("team")["sog_against_per_game"].mean()
+                df_l = lines_df.copy()
+                df_l["sog_against_per_game"] = df_l["sog against"] / df_l["games"]
+                team_avg = df_l.groupby("team")["sog_against_per_game"].mean()
                 league_avg = team_avg.mean()
-                lines_df["line_factor"] = league_avg / lines_df["sog_against_per_game"]
-                line_adj = lines_df.set_index("line pairings")["line_factor"].to_dict()
+                df_l["line_factor"] = league_avg / df_l["sog_against_per_game"]
+                line_adj = df_l.set_index("line pairings")["line_factor"].to_dict()
             except Exception as e:
-                st.warning(f"⚠️ Could not calculate line matchup adjustments: {e}")
+                st.warning(f"⚠️ Line data incomplete or invalid: {e}")
 
         # -------------------------------------------------------
         # Roster for selected teams
@@ -154,7 +161,6 @@ if not skaters_df.empty and not shots_df.empty:
         shots_df["player"] = shots_df["player"].astype(str).str.strip()
         roster["player"] = roster["player"].astype(str).str.strip()
 
-        # Group shots once for performance
         grouped_shots = {
             name.lower(): g.sort_values("gameid")
             for name, g in shots_df.groupby(shots_df["player"].str.lower())
@@ -171,59 +177,45 @@ if not skaters_df.empty and not shots_df.empty:
                 progress.progress(i / total)
                 continue
 
-            # Aggregate to per-game level (sum SOG by game)
-            game_sogs = (
-                df_p.groupby("gameid")["sog"]
-                .sum()
-                .reset_index()
-                .sort_values("gameid")
-            )
+            # Aggregate per game
+            game_sogs = df_p.groupby("gameid")["sog"].sum().reset_index().sort_values("gameid")
             sog_values = game_sogs["sog"].tolist()
 
-            last3 = sog_values[-3:]
-            last5 = sog_values[-5:]
-            last10 = sog_values[-10:]
-
-            l3 = np.mean(last3) if last3 else np.nan
-            l5 = np.mean(last5) if last5 else np.nan
-            l10 = np.mean(last10) if last10 else np.nan
+            last3, last5, last10 = sog_values[-3:], sog_values[-5:], sog_values[-10:]
+            l3, l5, l10 = np.mean(last3) if last3 else np.nan, np.mean(last5) if last5 else np.nan, np.mean(last10) if last10 else np.nan
             season_avg = np.mean(sog_values)
-
             trend = 0 if pd.isna(l10) or l10 == 0 else (l3 - l10) / l10
 
-            # ✅ FIXED weighting (sum, not mean)
             base_proj = np.nansum([0.5 * l3, 0.3 * l5, 0.2 * l10])
 
-            # ---------------------------------------------------
-            # Apply Goalie Adjustment
-            # ---------------------------------------------------
+            # ------------------------------
+            # Goalie + Line Adjustments
+            # ------------------------------
             opp_team = team_b if team == team_a else team_a
             goalie_factor = goalie_adj.get(opp_team, 1.0)
-
-            # ---------------------------------------------------
-            # Apply Line Adjustment
-            # ---------------------------------------------------
+            rebound_factor = rebound_rate.get(opp_team, 0.0)
             line_factor = 1.0
+
             if not lines_df.empty:
                 try:
                     last_name = str(player).split()[-1].lower()
-                    matching_lines = [
-                        v for k, v in line_adj.items() if last_name in str(k).lower()
-                    ]
+                    matching_lines = [v for k, v in line_adj.items() if last_name in str(k).lower()]
                     if matching_lines:
                         line_factor = np.nanmean(matching_lines)
                 except Exception:
                     pass
 
-            adjusted_proj = base_proj * goalie_factor * line_factor
-            adjusted_proj = max(0, round(adjusted_proj, 2))  # no negatives
+            # Blended adjustment
+            adj_proj = base_proj * (0.7 + 0.3 * goalie_factor) * (0.7 + 0.3 * line_factor)
+            # small boost if goalie rebounds often
+            adj_proj *= (1 + rebound_factor * 0.1)
+            adj_proj = max(0, round(adj_proj, 2))
 
-            # ✅ Format L10 Shots as two-line cell (5 + 5)
+            # 2-line L10 format
             l10_shots_formatted = (
-                "<br>".join([
-                    ", ".join(map(str, last10[:5])),
-                    ", ".join(map(str, last10[5:]))
-                ]) if len(last10) > 5 else ", ".join(map(str, last10))
+                "<br>".join([", ".join(map(str, last10[:5])), ", ".join(map(str, last10[5:]))])
+                if len(last10) > 5
+                else ", ".join(map(str, last10))
             )
 
             results.append(
@@ -241,7 +233,7 @@ if not skaters_df.empty and not shots_df.empty:
                     "Base Projection": round(base_proj, 2),
                     "Goalie Adj": round(goalie_factor, 2),
                     "Line Adj": round(line_factor, 2),
-                    "Adj Projection": adjusted_proj,
+                    "Adj Projection": adj_proj,
                 }
             )
 
@@ -253,10 +245,9 @@ if not skaters_df.empty and not shots_df.empty:
             st.warning("⚠️ No matching players found for these teams.")
             st.stop()
 
-        # Dynamic matchup rating (relative to group)
+        # Dynamic matchup rating
         result_df = pd.DataFrame(results)
-        avg_proj = result_df["Adj Projection"].mean()
-        std_proj = result_df["Adj Projection"].std()
+        avg_proj, std_proj = result_df["Adj Projection"].mean(), result_df["Adj Projection"].std()
 
         def rate(val):
             if val >= avg_proj + std_proj:
@@ -272,7 +263,6 @@ if not skaters_df.empty and not shots_df.empty:
         st.success(f"✅ Model built successfully for {team_a} vs {team_b}!")
         st.markdown(f"### 📊 {team_a} vs {team_b} — Player Projections (Adjusted)")
 
-        # ✅ Render with HTML so <br> works inside cells
         st.markdown(result_df.to_html(index=False, escape=False), unsafe_allow_html=True)
 
 else:
