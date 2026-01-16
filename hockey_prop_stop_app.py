@@ -7,7 +7,6 @@ import os
 # Page setup
 # ---------------------------------------------------------------
 st.set_page_config(page_title="Hockey Prop Stop", layout="wide", page_icon="🏒")
-
 st.markdown(
     """
     <h1 style='text-align:center;color:#00B140;'>🏒 Hockey Prop Stop</h1>
@@ -19,7 +18,7 @@ st.markdown(
 )
 
 # ---------------------------------------------------------------
-# Custom CSS for better table layout and color heatmap
+# Custom CSS
 # ---------------------------------------------------------------
 st.markdown(
     """
@@ -38,7 +37,7 @@ st.markdown(
 )
 
 # ---------------------------------------------------------------
-# File uploaders
+# Sidebar uploaders
 # ---------------------------------------------------------------
 st.sidebar.header("📂 Upload Data Files (.xlsx or .csv)")
 skaters_file = st.sidebar.file_uploader("Skaters", type=["xlsx", "csv"])
@@ -47,7 +46,7 @@ goalies_file = st.sidebar.file_uploader("Goaltenders", type=["xlsx", "csv"])
 lines_file = st.sidebar.file_uploader("Line Data", type=["xlsx", "csv"])
 
 # ---------------------------------------------------------------
-# Helper: load file safely
+# Helper to load files safely
 # ---------------------------------------------------------------
 def load_file(file):
     if not file:
@@ -68,10 +67,16 @@ shots_df = load_file(shots_file)
 goalies_df = load_file(goalies_file)
 lines_df = load_file(lines_file)
 
-if not skaters_df.empty and not shots_df.empty:
+# Always render UI even if empty
+if skaters_df.empty or shots_df.empty:
+    st.warning("📥 Please upload at least Skaters and Shot Data to enable model building.")
+else:
     st.success("✅ Skaters and Shot Data loaded successfully.")
 
-    # normalize columns
+# ---------------------------------------------------------------
+# Continue only when skaters + shots exist
+# ---------------------------------------------------------------
+if not skaters_df.empty and not shots_df.empty:
     skaters_df.columns = skaters_df.columns.str.lower().str.strip()
     shots_df.columns = shots_df.columns.str.lower().str.strip()
     goalies_df.columns = goalies_df.columns.str.lower().str.strip() if not goalies_df.empty else []
@@ -88,7 +93,7 @@ if not skaters_df.empty and not shots_df.empty:
         st.stop()
 
     # -----------------------------------------------------------
-    # Select teams
+    # Team selectors
     # -----------------------------------------------------------
     all_teams = sorted(skaters_df[team_col].dropna().unique().tolist())
     col1, col2 = st.columns(2)
@@ -100,11 +105,14 @@ if not skaters_df.empty and not shots_df.empty:
     st.markdown("---")
     run_model = st.button("🚀 Run Model")
 
+    # -----------------------------------------------------------
+    # Run model logic
+    # -----------------------------------------------------------
     if run_model:
         st.info(f"Building model for matchup: **{team_a} vs {team_b}** ...")
 
         # -------------------------------------------------------
-        # 🥅 Goalie adjustments
+        # Goalie adjustments
         # -------------------------------------------------------
         goalie_adj, rebound_rate = {}, {}
         if not goalies_df.empty:
@@ -113,19 +121,17 @@ if not skaters_df.empty and not shots_df.empty:
             df_g["games"] = pd.to_numeric(df_g["games"], errors="coerce").fillna(0)
             df_g["unblocked attempts"] = pd.to_numeric(df_g["unblocked attempts"], errors="coerce").fillna(0)
             df_g["rebounds"] = pd.to_numeric(df_g["rebounds"], errors="coerce").fillna(0)
-
             df_g["shots_allowed_per_game"] = np.where(df_g["games"] > 0,
                                                       df_g["unblocked attempts"] / df_g["games"], np.nan)
             df_g["rebound_rate"] = np.where(df_g["unblocked attempts"] > 0,
                                             df_g["rebounds"] / df_g["unblocked attempts"], 0)
-
             team_avg = df_g.groupby("team")["shots_allowed_per_game"].mean()
             league_avg = team_avg.mean()
             goalie_adj = (league_avg / team_avg).to_dict()
             rebound_rate = df_g.groupby("team")["rebound_rate"].mean().to_dict()
 
         # -------------------------------------------------------
-        # 🧱 Line adjustments
+        # Line adjustments
         # -------------------------------------------------------
         line_adj = {}
         if not lines_df.empty:
@@ -146,7 +152,7 @@ if not skaters_df.empty and not shots_df.empty:
             line_adj = df_l.copy()
 
         # -------------------------------------------------------
-        # Team roster
+        # Team roster & shots
         # -------------------------------------------------------
         roster = (skaters_df[skaters_df[team_col].isin([team_a, team_b])][[player_col, team_col]]
                   .rename(columns={player_col: "player", team_col: "team"})
@@ -155,10 +161,8 @@ if not skaters_df.empty and not shots_df.empty:
         grouped_shots = {n.lower(): g.sort_values("gameid")
                          for n, g in shots_df.groupby(shots_df["player"].str.lower())}
 
-        # -------------------------------------------------------
-        # Process players
-        # -------------------------------------------------------
-        results, progress = [], st.progress(0)
+        results = []
+        progress = st.progress(0)
         total = len(roster)
 
         for i, row in enumerate(roster.itertuples(index=False), start=1):
@@ -209,14 +213,13 @@ if not skaters_df.empty and not shots_df.empty:
             progress.progress(i / total)
         progress.empty()
 
-        # -------------------------------------------------------
-        # ✅ Enhanced Matchup Rating
-        # -------------------------------------------------------
         result_df = pd.DataFrame(results)
+        # -------------------------------------------------------
+        # Enhanced matchup rating (opponent-adjusted)
+        # -------------------------------------------------------
         result_df["Effective Projection"] = result_df.apply(
             lambda x: x["Final Projection"] / ((x["Goalie Adj"] + x["Line Adj"]) / 2), axis=1
         )
-
         avg_proj = result_df["Effective Projection"].mean()
         std_proj = result_df["Effective Projection"].std()
 
@@ -231,7 +234,7 @@ if not skaters_df.empty and not shots_df.empty:
         result_df["Matchup Rating"] = result_df["Effective Projection"].apply(rate)
 
         # -------------------------------------------------------
-        # 🏒 NHL Logos (PNG CDN)
+        # NHL Logos
         # -------------------------------------------------------
         team_logos = {
             "Toronto Maple Leafs": "TOR", "Vancouver Canucks": "VAN", "Edmonton Oilers": "EDM",
@@ -265,10 +268,6 @@ if not skaters_df.empty and not shots_df.empty:
             "Base Projection", "Goalie Adj", "Line Adj"
         ]
         visible_df = result_df[display_cols]
-
         st.success(f"✅ Model built successfully for {team_a} vs {team_b}")
         st.markdown(f"### 📊 {team_a} vs {team_b} — Player Projections (Adjusted)")
         st.markdown(visible_df.to_html(index=False, escape=False), unsafe_allow_html=True)
-
-else:
-    st.info("📥 Upload at least Skaters and Shot Data to begin.")
