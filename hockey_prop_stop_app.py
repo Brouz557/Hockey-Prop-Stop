@@ -95,7 +95,7 @@ teams_file = st.sidebar.file_uploader("TEAMS", type=["xlsx", "csv"])
 # ---------------------------------------------------------------
 # LOAD DEFAULT DATA FROM REPO
 # ---------------------------------------------------------------
-skaters_df = load_data(skaters_file, "SKATERS.xlsx")
+skaters_df = load_data(skaters_file, "Skaters.xlsx")
 shots_df = load_data(shots_file, "SHOT DATA.xlsx")
 goalies_df = load_data(goalies_file, "GOALTENDERS.xlsx")
 lines_df = load_data(lines_file, "LINE DATA.xlsx")
@@ -314,4 +314,5 @@ if not skaters_df.empty and not shots_df.empty:
 
 else:
     st.info("📥 Upload files or use defaults in repo to begin.")
+
 
