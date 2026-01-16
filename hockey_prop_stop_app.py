@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Hockey Prop Stop — Smart Data Loading + Persistent Cache
+# 🏒 Hockey Prop Stop — Trend Heatmap Edition
 # ---------------------------------------------------------------
 
 import streamlit as st
@@ -24,7 +24,7 @@ st.markdown(
 )
 
 # ---------------------------------------------------------------
-# Custom CSS for readable tables
+# Custom CSS
 # ---------------------------------------------------------------
 st.markdown(
     """
@@ -57,7 +57,6 @@ teams_file = st.sidebar.file_uploader("TEAMS", type=["xlsx", "csv"])
 # File Loading Utilities
 # ---------------------------------------------------------------
 def load_file(file):
-    """Read CSV or Excel safely."""
     if not file:
         return pd.DataFrame()
     try:
@@ -70,7 +69,6 @@ def load_file(file):
 
 
 def safe_read(path):
-    """Silent reader for local repo files."""
     try:
         if not path or not os.path.exists(path):
             return pd.DataFrame()
@@ -82,23 +80,18 @@ def safe_read(path):
 
 
 def load_data(file_uploader, default_path):
-    """Prefer uploaded file, fallback to repo default (silent)."""
     if file_uploader is not None:
         return load_file(file_uploader)
     return safe_read(default_path)
 
 
 # ---------------------------------------------------------------
-# Smart Cached Loader (now auto-finds files)
+# Smart Cached Loader (auto-finds files)
 # ---------------------------------------------------------------
 @st.cache_data(show_spinner=False)
 def load_all_data(skaters_file, shots_file, goalies_file, lines_file, teams_file):
-    """Load all five datasets once per session (cached, robust path lookup)."""
     base_paths = [
-        ".",                     # repo root
-        "data",                  # /data folder
-        "/mount/src/hockey-prop-stop/data",
-        "/mount/src/hockey-prop-stop"
+        ".", "data", "/mount/src/hockey-prop-stop/data", "/mount/src/hockey-prop-stop"
     ]
 
     def find_file(filename):
@@ -106,10 +99,10 @@ def load_all_data(skaters_file, shots_file, goalies_file, lines_file, teams_file
             full = os.path.join(p, filename)
             if os.path.exists(full):
                 return full
-        return None  # not found
+        return None
 
-    with contextlib.redirect_stdout(io.StringIO()):  # silent
-        skaters = load_data(skaters_file, find_file("Skaters.xlsx") or "SKATERS.xlsx")
+    with contextlib.redirect_stdout(io.StringIO()):
+        skaters = load_data(skaters_file, find_file("Skaters.xlsx") or "Skaters.xlsx")
         shots = load_data(shots_file, find_file("SHOT DATA.xlsx") or "SHOT DATA.xlsx")
         goalies = load_data(goalies_file, find_file("GOALTENDERS.xlsx") or "GOALTENDERS.xlsx")
         lines = load_data(lines_file, find_file("LINE DATA.xlsx") or "LINE DATA.xlsx")
@@ -119,16 +112,15 @@ def load_all_data(skaters_file, shots_file, goalies_file, lines_file, teams_file
 
 
 # ---------------------------------------------------------------
-# Load Everything Once (silent cache)
+# Load All Data
 # ---------------------------------------------------------------
 skaters_df, shots_df, goalies_df, lines_df, teams_df = load_all_data(
     skaters_file, shots_file, goalies_file, lines_file, teams_file
 )
 
-# Confirm visible only if missing
 missing = []
 if skaters_df.empty:
-    missing.append("SKATERS.xlsx")
+    missing.append("Skaters.xlsx")
 if shots_df.empty:
     missing.append("SHOT DATA.xlsx")
 
@@ -139,17 +131,15 @@ else:
 
 
 # ---------------------------------------------------------------
-# Proceed only if data available
+# Proceed if Data Available
 # ---------------------------------------------------------------
 if not skaters_df.empty and not shots_df.empty:
 
-    # Normalize column names
     skaters_df.columns = skaters_df.columns.str.lower().str.strip()
     shots_df.columns = shots_df.columns.str.lower().str.strip()
     goalies_df.columns = goalies_df.columns.str.lower().str.strip() if not goalies_df.empty else []
     lines_df.columns = lines_df.columns.str.lower().str.strip() if not lines_df.empty else []
 
-    # Identify key columns
     team_col = next((c for c in skaters_df.columns if "team" in c), None)
     player_col = "name" if "name" in skaters_df.columns else None
     sog_col = next((c for c in shots_df.columns if "sog" in c), None)
@@ -160,9 +150,6 @@ if not skaters_df.empty and not shots_df.empty:
         st.error("⚠️ Missing required columns in uploaded files.")
         st.stop()
 
-    # -----------------------------------------------------------
-    # Team Selection UI
-    # -----------------------------------------------------------
     all_teams = sorted(skaters_df[team_col].dropna().unique().tolist())
     col1, col2 = st.columns(2)
     with col1:
@@ -174,16 +161,15 @@ if not skaters_df.empty and not shots_df.empty:
     run_model = st.button("🚀 Run Model")
 
     # -----------------------------------------------------------
-    # Main Model Run
+    # Main Model Execution
     # -----------------------------------------------------------
     if run_model:
         st.info(f"Building model for matchup: **{team_a} vs {team_b}** ...")
 
-        # -------------------------------------------------------
-        # 🥅 Goalie Adjustments
-        # -------------------------------------------------------
-        goalie_adj = {}
-        rebound_rate = {}
+        # Goalie and line adjustments (same logic as before)
+        goalie_adj, rebound_rate, line_adj = {}, {}, {}
+
+        # Goalie Adjustments
         if not goalies_df.empty:
             try:
                 df_g = goalies_df.copy()
@@ -193,14 +179,10 @@ if not skaters_df.empty and not shots_df.empty:
                 df_g["rebounds"] = pd.to_numeric(df_g["rebounds"], errors="coerce").fillna(0)
 
                 df_g["shots_allowed_per_game"] = np.where(
-                    df_g["games"] > 0,
-                    df_g["unblocked attempts"] / df_g["games"],
-                    np.nan,
+                    df_g["games"] > 0, df_g["unblocked attempts"] / df_g["games"], np.nan
                 )
                 df_g["rebound_rate"] = np.where(
-                    df_g["unblocked attempts"] > 0,
-                    df_g["rebounds"] / df_g["unblocked attempts"],
-                    0,
+                    df_g["unblocked attempts"] > 0, df_g["rebounds"] / df_g["unblocked attempts"], 0
                 )
 
                 team_avg = df_g.groupby("team")["shots_allowed_per_game"].mean()
@@ -210,10 +192,7 @@ if not skaters_df.empty and not shots_df.empty:
             except Exception as e:
                 st.warning(f"⚠️ Goalie data incomplete or invalid: {e}")
 
-        # -------------------------------------------------------
-        # 🧱 Line Adjustments
-        # -------------------------------------------------------
-        line_adj = {}
+        # Line Adjustments
         if not lines_df.empty:
             try:
                 df_l = lines_df.copy()
@@ -224,9 +203,7 @@ if not skaters_df.empty and not shots_df.empty:
                     .agg({"games": "sum", "sog against": "sum"})
                 )
                 df_l["sog_against_per_game"] = np.where(
-                    df_l["games"] > 0,
-                    df_l["sog against"] / df_l["games"],
-                    np.nan,
+                    df_l["games"] > 0, df_l["sog against"] / df_l["games"], np.nan
                 )
                 team_avg = df_l.groupby("team")["sog_against_per_game"].mean()
                 league_avg = team_avg.mean()
@@ -242,7 +219,7 @@ if not skaters_df.empty and not shots_df.empty:
                 st.warning(f"⚠️ Line data incomplete or invalid: {e}")
 
         # -------------------------------------------------------
-        # Build Team Roster
+        # Build Team Roster and Calculate Projections
         # -------------------------------------------------------
         roster = (
             skaters_df[skaters_df[team_col].isin([team_a, team_b])][[player_col, team_col]]
@@ -251,9 +228,7 @@ if not skaters_df.empty and not shots_df.empty:
             .reset_index(drop=True)
         )
 
-        shots_df = shots_df.rename(
-            columns={player_col_shots: "player", game_col: "gameid", sog_col: "sog"}
-        )
+        shots_df = shots_df.rename(columns={player_col_shots: "player", game_col: "gameid", sog_col: "sog"})
         shots_df["player"] = shots_df["player"].astype(str).str.strip()
         roster["player"] = roster["player"].astype(str).str.strip()
 
@@ -262,9 +237,6 @@ if not skaters_df.empty and not shots_df.empty:
             for name, g in shots_df.groupby(shots_df["player"].str.lower())
         }
 
-        # -------------------------------------------------------
-        # Main Loop
-        # -------------------------------------------------------
         results = []
         progress = st.progress(0)
         total = len(roster)
@@ -343,7 +315,6 @@ if not skaters_df.empty and not shots_df.empty:
 
         progress.empty()
 
-        # Final Output
         if not results:
             st.warning("⚠️ No matching players found for these teams.")
             st.stop()
@@ -360,12 +331,70 @@ if not skaters_df.empty and not shots_df.empty:
                 return "Weak"
 
         result_df["Matchup Rating"] = result_df["Adj Projection"].apply(rate)
-        result_df = result_df.sort_values("Adj Projection", ascending=False)
+
+        # ---------------------------------------------------------------
+        # 🌡️ Continuous Heatmap for Trend Score
+        # ---------------------------------------------------------------
+        def trend_color(val):
+            if pd.isna(val):
+                return "<div style='background-color:#E0E0E0; color:#000; border-radius:6px;'>–</div>"
+
+            val = max(min(val, 0.5), -0.5)
+            norm = (val + 0.5) / 1.0
+            r = int(255 - (norm * 255)) if val > 0 else 255
+            g = int(255 - abs(val) * 255)
+            b = int(255 - (1 - norm) * 255) if val < 0 else 255 - int(norm * 255)
+
+            color = f"rgb({r},{g},{b})"
+            text_color = "#000" if abs(val) < 0.2 else "#fff"
+            text = "▲" if val > 0.05 else ("▼" if val < -0.05 else "–")
+
+            return f"""
+            <div style='background:{color};
+                        color:{text_color};
+                        font-weight:600;
+                        border-radius:6px;
+                        padding:4px 8px;
+                        text-align:center;
+                        transition:0.3s ease;
+                        ' title='Trend: {val:+.2f}'>
+                {text}
+            </div>
+            """
+
+        result_df["Trend"] = result_df["Trend Score"].apply(trend_color)
+
+        # ---------------------------------------------------------------
+        # 🎯 Trend Legend
+        # ---------------------------------------------------------------
+        st.markdown(
+            """
+            <div style='display:flex;justify-content:center;gap:16px;margin-bottom:10px;font-size:15px;'>
+                <div style='background-color:rgb(255,100,100);color:white;padding:4px 10px;border-radius:4px;'>▼ Strong Downtrend</div>
+                <div style='background-color:rgb(255,255,150);color:black;padding:4px 10px;border-radius:4px;'>– Neutral</div>
+                <div style='background-color:rgb(100,220,100);color:white;padding:4px 10px;border-radius:4px;'>▲ Strong Uptrend</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        # ---------------------------------------------------------------
+        # 📊 Display Final Table
+        # ---------------------------------------------------------------
+        display_cols = [
+            "Player", "Team",
+            "Season Avg",
+            "L3 Shots", "L3 Avg",
+            "L5 Shots", "L5 Avg",
+            "L10 Shots", "L10 Avg",
+            "Trend", "Base Projection",
+            "Goalie Adj", "Line Adj",
+            "Adj Projection", "Matchup Rating"
+        ]
 
         st.success(f"✅ Model built successfully for {team_a} vs {team_b}!")
         st.markdown(f"### 📊 {team_a} vs {team_b} — Player Projections (Adjusted)")
-        st.markdown(result_df.to_html(index=False, escape=False), unsafe_allow_html=True)
+        st.markdown(result_df[display_cols].to_html(index=False, escape=False), unsafe_allow_html=True)
 
 else:
     st.info("📥 Upload files or use defaults from repo to begin.")
-
