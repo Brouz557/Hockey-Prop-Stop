@@ -1,12 +1,12 @@
 # ---------------------------------------------------------------
-# 🏒 Hockey Prop Stop — Improved Goal Projections + Probabilities
+# 🏒 Hockey Prop Stop — Shot Projection Probabilities + Odds
 # ---------------------------------------------------------------
 
 import streamlit as st
 import pandas as pd
 import numpy as np
 import os, contextlib, io
-from scipy.stats import poisson  # NEW for probabilities
+from scipy.stats import poisson  # for probabilities
 
 # ---------------------------------------------------------------
 # Page Setup
@@ -16,7 +16,7 @@ st.markdown(
     """
     <h1 style='text-align:center;color:#00B140;'>🏒 Hockey Prop Stop</h1>
     <p style='text-align:center;color:#BFC0C0;'>
-        Team-vs-Team matchup analytics with improved shot projections + probabilities
+        Team-vs-Team matchup analytics with shot projection probabilities + odds
     </p>
     """,
     unsafe_allow_html=True,
@@ -219,15 +219,20 @@ if run_model:
             prob_hit_proj = 1 - poisson.cdf(np.floor(x) - 1, mu=lambda_recent)
         prob_hit_proj_pct = round(prob_hit_proj * 100, 1) if not pd.isna(prob_hit_proj) else np.nan
 
-        # --- Convert probability to implied American odds ---
+        # --- Convert probability to implied American odds (safe + formatted) ---
         if not pd.isna(prob_hit_proj) and prob_hit_proj > 0:
-            p = prob_hit_proj
+            p = min(max(prob_hit_proj, 0.001), 0.999)
             if p >= 0.5:
-                implied_odds = round(-100 * (p / (1 - p)))
+                odds_val = -100 * (p / (1 - p))
             else:
-                implied_odds = round(100 * ((1 - p) / p))
+                odds_val = 100 * ((1 - p) / p)
+            odds_val = round(odds_val)
+            if odds_val > 0:
+                implied_odds = f"+{odds_val}"
+            else:
+                implied_odds = str(odds_val)
         else:
-            implied_odds = np.nan
+            implied_odds = "–"
 
         l10_fmt=", ".join(map(str,last10))
         results.append({
