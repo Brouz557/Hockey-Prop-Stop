@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Hockey Prop Stop — Hybrid Regression Model
+# 🏒 Hockey Prop Stop — Betting-Focused Hybrid Regression Model
 # ---------------------------------------------------------------
 
 import streamlit as st
@@ -7,6 +7,7 @@ import pandas as pd
 import numpy as np
 import os, contextlib, io
 from scipy.stats import poisson
+import altair as alt
 
 # ---------------------------------------------------------------
 # Page Setup
@@ -16,7 +17,7 @@ st.markdown(
     """
     <h1 style='text-align:center;color:#00B140;'>🏒 Hockey Prop Stop</h1>
     <p style='text-align:center;color:#BFC0C0;'>
-        Team-vs-Team matchup analytics with hybrid regression and goal probability modeling
+        Team-vs-Team matchup analytics with hybrid regression and player trend visualization
     </p>
     """,
     unsafe_allow_html=True,
@@ -112,8 +113,8 @@ if not lines_df.empty:   lines_df.columns   = lines_df.columns.str.lower().str.s
 
 team_col   = next((c for c in skaters_df.columns if "team" in c), None)
 player_col = "name" if "name" in skaters_df.columns else None
-toi_col    = "icetime"   # your TOI column (in seconds)
-gp_col     = "games"     # your Games Played column
+toi_col    = "icetime"   # seconds
+gp_col     = "games"     # games played
 
 sog_col    = next((c for c in shots_df.columns if "sog" in c), None)
 goal_col   = next((c for c in shots_df.columns if "goal" in c), None)
@@ -159,17 +160,14 @@ if run_model:
         l = lines_df.copy()
         l["games"] = pd.to_numeric(l["games"], errors="coerce").fillna(0)
         l["sog against"] = pd.to_numeric(l["sog against"], errors="coerce").fillna(0)
-        l = (
-            l.groupby(["line pairings","team"],as_index=False)
-             .agg({"games":"sum","sog against":"sum"})
-        )
+        l = l.groupby(["line pairings","team"],as_index=False).agg({"games":"sum","sog against":"sum"})
         l["sog_against_per_game"] = np.where(l["games"]>0,l["sog against"]/l["games"],np.nan)
         team_avg = l.groupby("team")["sog_against_per_game"].mean()
         league_avg = team_avg.mean()
         l["line_factor"] = (league_avg / l["sog_against_per_game"]).clip(0.7,1.3)
         line_adj = l.copy()
 
-    # --- Roster setup ---
+    # --- Roster ---
     roster = (
         skaters_df[skaters_df[team_col].isin([team_a, team_b])]
         [[player_col, team_col]]
@@ -177,9 +175,9 @@ if run_model:
         .drop_duplicates("player")
         .reset_index(drop=True)
     )
-    shots_df = shots_df.rename(
-        columns={player_col_shots: "player", game_col: "gameid", sog_col: "sog", goal_col: "goal"}
-    )
+    shots_df = shots_df.rename(columns={
+        player_col_shots: "player", game_col: "gameid", sog_col: "sog", goal_col: "goal"
+    })
     shots_df["player"] = shots_df["player"].astype(str).str.strip()
     roster["player"] = roster["player"].astype(str).str.strip()
     grouped = {n.lower(): g.sort_values("gameid") for n, g in shots_df.groupby(shots_df["player"].str.lower())}
@@ -194,7 +192,6 @@ if run_model:
             progress.progress(i / total)
             continue
 
-        # --- Shot trends ---
         game_sogs = df_p.groupby("gameid")[["sog","goal"]].sum().reset_index().sort_values("gameid")
         sog_values = game_sogs["sog"].tolist()
         last3, last5, last10 = sog_values[-3:], sog_values[-5:], sog_values[-10:]
@@ -205,8 +202,6 @@ if run_model:
 
         opp = team_b if team == team_a else team_a
         goalie_factor = np.clip(goalie_adj.get(opp, 1.0), 0.7, 1.3)
-
-        # --- Line factor per player ---
         line_factor = 1.0
         if not isinstance(line_adj, dict):
             last_name = str(player).split()[-1].lower()
@@ -218,7 +213,7 @@ if run_model:
         adj_proj = base_proj * (0.7 + 0.3 * goalie_factor) * (0.7 + 0.3 * line_factor)
         adj_proj = max(0, round(adj_proj, 2))
 
-        # --- Poisson probability ---
+        # --- Poisson probability for hitting projection ---
         lambda_recent = np.mean(df_p.groupby("gameid")["sog"].sum().tail(10))
         lambda_season = np.mean(df_p.groupby("gameid")["sog"].sum())
         if np.isnan(lambda_recent): lambda_recent = 0
@@ -227,7 +222,7 @@ if run_model:
         prob_hit_proj = 1 - poisson.cdf(np.floor(adj_proj) - 1, mu=lambda_blend)
         prob_hit_proj_pct = round(prob_hit_proj * 100, 1) if not pd.isna(prob_hit_proj) else np.nan
 
-        # --- Hybrid Regression (Usage + Shooting Form) ---
+        # --- Hybrid Regression (usage + shooting form) ---
         regression_flag = "Unknown"
         match = skaters_df[skaters_df[player_col].str.lower() == player.lower()]
         if not match.empty:
@@ -257,12 +252,8 @@ if run_model:
                 else:
                     regression_flag = "🟠 Mixed Signal"
 
-        # --- Odds ---
         p = min(max(prob_hit_proj, 0.001), 0.999)
-        if p >= 0.5:
-            odds_val = -100 * (p / (1 - p))
-        else:
-            odds_val = 100 * ((1 - p) / p)
+        odds_val = -100 * (p / (1 - p)) if p >= 0.5 else 100 * ((1 - p) / p)
         odds_val = round(odds_val)
         implied_odds = f"+{odds_val}" if odds_val > 0 else str(odds_val)
 
@@ -284,7 +275,7 @@ if run_model:
 
     df = pd.DataFrame(results)
 
-    # --- Trend color ---
+    # --- Trend color
     def trend_color(v):
         if pd.isna(v): return "–"
         v = max(min(v, 0.5), -0.5)
@@ -299,11 +290,8 @@ if run_model:
         return f"<div style='background:{color};color:{txt};font-weight:600;border-radius:6px;padding:4px 8px;text-align:center;'>{t}</div>"
     df["Trend"] = df["Trend Score"].apply(trend_color)
 
-    cols = [
-        "Player","Team","Trend","Final Projection","Prob ≥ Projection (%)",
-        "Playable Odds","Line Adj","Season Avg","Regression Indicator",
-        "L3 Shots","L5 Shots","L10 Shots"
-    ]
+    cols = ["Player","Team","Trend","Final Projection","Prob ≥ Projection (%)","Playable Odds",
+            "Line Adj","Season Avg","Regression Indicator","L3 Shots","L5 Shots","L10 Shots"]
     vis = df[[c for c in cols if c in df.columns]].sort_values("Final Projection",ascending=False)
     st.session_state.results = vis
 
@@ -314,3 +302,43 @@ if st.session_state.results is not None:
     st.markdown("### 📊 Player Projections + Regression Insight")
     html_table = st.session_state.results.to_html(index=False, escape=False)
     st.markdown(f"<div style='overflow-x:auto'>{html_table}</div>", unsafe_allow_html=True)
+
+    # ---------------------------------------------------------------
+    # Player Trend Visualization (5-game smoothing for betting)
+    # ---------------------------------------------------------------
+    st.markdown("### 📈 Player Regression Trend Viewer")
+    player_list = st.session_state.results["Player"].unique().tolist()
+    selected_player = st.selectbox("Select a player to view detailed trend:", player_list)
+
+    df_p = shots_df[shots_df["player"].str.lower() == selected_player.lower()].copy()
+    if df_p.empty:
+        st.warning("No shot data available for this player.")
+    else:
+        trend_df = (
+            df_p.groupby("gameid")[["sog","goal"]]
+            .sum()
+            .reset_index()
+            .sort_values("gameid")
+        )
+        trend_df["shoot_pct"] = np.where(
+            trend_df["sog"] > 0, (trend_df["goal"] / trend_df["sog"]) * 100, 0
+        )
+        trend_df["game_num"] = np.arange(1, len(trend_df) + 1)
+
+        # --- 5-game moving averages for betting responsiveness
+        trend_df["sog_ma"] = trend_df["sog"].rolling(window=5, min_periods=1).mean()
+        trend_df["shoot_pct_ma"] = trend_df["shoot_pct"].rolling(window=5, min_periods=1).mean()
+
+        st.markdown(f"**Regression Summary for {selected_player}:**")
+        player_regression = st.session_state.results.loc[
+            st.session_state.results["Player"] == selected_player, "Regression Indicator"
+        ].values[0]
+        st.markdown(f"🧭 Regression Status: **{player_regression}**")
+
+        base = alt.Chart(trend_df).encode(x=alt.X("game_num:Q", title="Game Number"))
+        shots_line = base.mark_line(color="#1f77b4").encode(
+            y=alt.Y("sog_ma:Q", title="Shots on Goal (5-Game Avg)")
+        )
+        pct_line = base.mark_line(color="#d62728", strokeDash=[4, 3]).encode(
+            y=alt.Y("shoot_pct_ma:Q", title="Shooting % (5-Game Avg)", axis=alt.Axis(titleColor="#d62728"))
+       
