@@ -1,11 +1,11 @@
 # ---------------------------------------------------------------
-# 🏒 Hockey Prop Stop — Restored Version (with working timestamp)
+# 🏒 Hockey Prop Stop — Restored Version (CST timestamp)
 # ---------------------------------------------------------------
 
 import streamlit as st
 import pandas as pd
 import numpy as np
-import os, contextlib, io, datetime
+import os, contextlib, io, datetime, pytz
 from scipy.stats import poisson
 import streamlit.components.v1 as components
 
@@ -37,7 +37,8 @@ teams_file   = st.sidebar.file_uploader("TEAMS", type=["xlsx","csv"])
 # Helper Functions
 # ---------------------------------------------------------------
 def load_file(file):
-    if not file: return pd.DataFrame()
+    if not file: 
+        return pd.DataFrame()
     try:
         return pd.read_excel(file) if file.name.lower().endswith(".xlsx") else pd.read_csv(file)
     except Exception:
@@ -45,7 +46,8 @@ def load_file(file):
 
 def safe_read(path):
     try:
-        if not os.path.exists(path): return pd.DataFrame()
+        if not os.path.exists(path):
+            return pd.DataFrame()
         return pd.read_excel(path) if path.lower().endswith(".xlsx") else pd.read_csv(path)
     except Exception:
         return pd.DataFrame()
@@ -64,7 +66,8 @@ def load_all_data(skaters_file, shots_file, goalies_file, lines_file, teams_file
     def find_file(name):
         for p in base_paths:
             full = os.path.join(p, name)
-            if os.path.exists(full): return full
+            if os.path.exists(full): 
+                return full
         return None
     with contextlib.redirect_stdout(io.StringIO()):
         skaters = load_data(skaters_file, find_file("Skaters.xlsx") or "Skaters.xlsx")
@@ -86,21 +89,26 @@ if skaters_df.empty or shots_df.empty:
 st.success("✅ Data loaded successfully.")
 
 # ---------------------------------------------------------------
-# Data Last Updated Timestamp
+# Data Last Updated Timestamp (CST/CDT)
 # ---------------------------------------------------------------
 def get_latest_update_time(files):
-    """Return the most recent modification or upload time."""
-    # If user uploaded any file, use current UTC time as update
+    """Return the most recent modification or upload time in CST/CDT."""
+    tz_cst = pytz.timezone("America/Chicago")
+
+    # If any file uploaded, use current local time
     if any(f is not None for f in files):
-        return datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
-    # Otherwise check local repo files
+        return datetime.datetime.now(tz_cst).strftime("%Y-%m-%d %I:%M %p CST")
+
+    # Otherwise check repo file modification times
     paths = ["Skaters.xlsx","SHOT DATA.xlsx","GOALTENDERS.xlsx","LINE DATA.xlsx","TEAMS.xlsx"]
     mtimes = []
     for p in paths:
         if os.path.exists(p):
-            mtimes.append(datetime.datetime.utcfromtimestamp(os.path.getmtime(p)))
+            t_utc = datetime.datetime.utcfromtimestamp(os.path.getmtime(p)).replace(tzinfo=pytz.utc)
+            mtimes.append(t_utc.astimezone(tz_cst))
     if mtimes:
-        return max(mtimes).strftime("%Y-%m-%d %H:%M UTC")
+        return max(mtimes).strftime("%Y-%m-%d %I:%M %p CST")
+
     return None
 
 last_update = get_latest_update_time([skaters_file, shots_file, goalies_file, lines_file, teams_file])
@@ -163,11 +171,13 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df):
     for row in roster.itertuples(index=False):
         player, team = row.player, row.team
         df_p = grouped.get(player.lower(), pd.DataFrame())
-        if df_p.empty: continue
+        if df_p.empty: 
+            continue
 
         game_sogs = df_p.groupby(game_col)[["sog","goal"]].sum().reset_index().sort_values(game_col)
         sog_values = game_sogs["sog"].tolist()
-        if len(sog_values) == 0: continue
+        if len(sog_values) == 0: 
+            continue
 
         last3 = sog_values[-3:] if len(sog_values) >= 3 else sog_values
         last5 = sog_values[-5:] if len(sog_values) >= 5 else sog_values
@@ -186,7 +196,8 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df):
             line_factor = np.clip(line_factor, 0.7, 1.3)
 
         lam = np.mean(last5) if last5 else np.nan
-        if pd.isna(lam): continue
+        if pd.isna(lam): 
+            continue
 
         prob = 1 - poisson.cdf(np.floor(lam) - 1, mu=lam)
         p = min(max(prob, 0.001), 0.999)
@@ -242,7 +253,8 @@ if "results_raw" in st.session_state and not st.session_state.results_raw.empty:
     df = st.session_state.results_raw.copy()
 
     def trend_color(v):
-        if pd.isna(v): return "–"
+        if pd.isna(v): 
+            return "–"
         v = max(min(v,0.5),-0.5)
         n = v+0.5
         if n<0.5: r,g,b=255,int(255*(n*2)),0
