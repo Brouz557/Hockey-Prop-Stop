@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Hockey Prop Stop — Shot Night Rank + Top-5 Highlight
+# 🏒 Hockey Prop Stop — Shot Night Rank + Clean Table Formatting
 # ---------------------------------------------------------------
 
 import streamlit as st
@@ -222,27 +222,30 @@ if st.button("🚀 Run Model"):
     df.loc[df["Regression Indicator"].str.contains("Mixed", case=False, na=False), "Shot Night Score"] *= 0.9
     df["Shot Night Rank"] = df["Shot Night Score"].rank(ascending=False, method="dense").astype(int)
 
-    st.session_state.results = df
     st.session_state.results_raw = df.copy()
     st.success("✅ Model built successfully!")
 
 # ---------------------------------------------------------------
-# Persistent Table Rendering with Top-5 Highlight
+# Persistent Table Rendering (clean formatting + sticky headers)
 # ---------------------------------------------------------------
 if "results_raw" in st.session_state and not st.session_state.results_raw.empty:
     df = st.session_state.results_raw.copy()
 
+    # --- Round numeric values ---
+    for c in ["Final Projection","Prob ≥ Projection (%)","Shot Night Score","Season Avg","Line Adj"]:
+        if c in df.columns:
+            df[c] = df[c].apply(lambda x: f"{x:.2f}" if isinstance(x,(int,float,np.number)) else x)
+
+    # --- Trend color block ---
     def trend_color(v):
         if pd.isna(v): return "–"
         v = max(min(v, 0.5), -0.5)
         n = v + 0.5
-        if n < 0.5:
-            r, g, b = 255, int(255 * (n * 2)), 0
-        else:
-            r, g, b = int(255 * (1 - (n - 0.5) * 2)), 255, 0
-        color = f"rgb({r},{g},{b})"
-        t = "▲" if v > 0.05 else ("▼" if v < -0.05 else "–")
-        txt = "#000" if abs(v) < 0.2 else "#fff"
+        if n < 0.5: r, g, b = 255, int(255*(n*2)), 0
+        else: r, g, b = int(255*(1-(n-0.5)*2)), 255, 0
+        color=f"rgb({r},{g},{b})"
+        t="▲" if v>0.05 else ("▼" if v<-0.05 else "–")
+        txt="#000" if abs(v)<0.2 else "#fff"
         return f"<div style='background:{color};color:{txt};font-weight:600;border-radius:6px;padding:4px 8px;text-align:center;'>{t}</div>"
 
     df["Trend"] = df["Trend Score"].apply(trend_color)
@@ -250,17 +253,19 @@ if "results_raw" in st.session_state and not st.session_state.results_raw.empty:
     cols = ["Shot Night Rank","Player","Team","Trend","Final Projection","Prob ≥ Projection (%)",
             "Playable Odds","Shot Night Score","Season Avg","Line Adj","Regression Indicator",
             "L3 Shots","L5 Shots","L10 Shots"]
-    vis = df[[c for c in cols if c in df.columns]].sort_values("Shot Night Rank", ascending=True)
+    vis = df[[c for c in cols if c in df.columns]].sort_values("Shot Night Rank")
 
-    # --- Highlight Top 5 ---
-    top5_players = vis.nsmallest(5, "Shot Night Rank")["Player"].tolist()
-    def highlight_top5(row):
-        style = ""
-        if row["Player"] in top5_players:
-            style = "background-color:#005e26;color:white;font-weight:700;"
-        return [style] * len(row)
-
-    html_table = vis.style.apply(highlight_top5, axis=1).to_html(index=False, escape=False)
+    # --- Build HTML table manually for consistent style ---
+    top5 = vis.nsmallest(5, "Shot Night Rank")["Player"].tolist()
+    table_html = "<table><thead><tr>" + "".join(f"<th>{c}</th>" for c in vis.columns) + "</tr></thead><tbody>"
+    for _, row in vis.iterrows():
+        row_style = "background-color:#005e26;color:white;font-weight:700;" if row["Player"] in top5 else ""
+        table_html += "<tr>"
+        for col in vis.columns:
+            val = row[col]
+            table_html += f"<td style='{row_style}'>{val}</td>"
+        table_html += "</tr>"
+    table_html += "</tbody></table>"
 
     components.html(
         f"""
@@ -306,7 +311,7 @@ if "results_raw" in st.session_state and not st.session_state.results_raw.empty:
         </style>
 
         <div class='scrollable-table'>
-            {html_table}
+            {table_html}
         </div>
         """,
         height=620,
