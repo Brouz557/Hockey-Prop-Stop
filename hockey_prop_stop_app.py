@@ -174,7 +174,7 @@ if run_model:
         l["line_factor"] = (league_avg / l["sog_against_per_game"]).clip(0.7,1.3)
         line_adj = l.copy()
 
-    # --- Roster ---
+    # --- Roster setup ---
     roster = (
         skaters_df[skaters_df[team_col].isin([team_a, team_b])]
         [[player_col, team_col]]
@@ -199,7 +199,6 @@ if run_model:
             progress.progress(i / total)
             continue
 
-        # --- Shot trends ---
         game_sogs = df_p.groupby("gameid")[["sog","goal"]].sum().reset_index().sort_values("gameid")
         sog_values = game_sogs["sog"].tolist()
         last3, last5, last10 = sog_values[-3:], sog_values[-5:], sog_values[-10:]
@@ -221,7 +220,7 @@ if run_model:
         adj_proj = base_proj * (0.7 + 0.3 * goalie_factor) * (0.7 + 0.3 * line_factor)
         adj_proj = max(0, round(adj_proj, 2))
 
-        # --- Poisson probability for hitting projection ---
+        # --- Poisson probability ---
         lambda_recent = np.mean(df_p.groupby("gameid")["sog"].sum().tail(10))
         lambda_season = np.mean(df_p.groupby("gameid")["sog"].sum())
         lambda_recent = 0 if np.isnan(lambda_recent) else lambda_recent
@@ -230,12 +229,12 @@ if run_model:
         prob_hit_proj = 1 - poisson.cdf(np.floor(adj_proj) - 1, mu=lambda_blend)
         prob_hit_proj_pct = round(prob_hit_proj * 100, 1) if not pd.isna(prob_hit_proj) else np.nan
 
-        # --- Hybrid Regression (usage + shooting form) ---
+        # --- Regression indicator ---
         regression_flag = "Unknown"
         match = skaters_df[skaters_df[player_col].str.lower() == player.lower()]
         if not match.empty:
-            season_toi = pd.to_numeric(match[toi_col], errors="coerce").mean()
-            games_played = pd.to_numeric(match[gp_col], errors="coerce").mean()
+            season_toi = pd.to_numeric(match["icetime"], errors="coerce").mean()
+            games_played = pd.to_numeric(match["games"], errors="coerce").mean()
             if season_toi > 0 and games_played > 0:
                 avg_toi = (season_toi / games_played) / 60.0
                 sog_per60 = (season_avg / avg_toi) * 60
@@ -313,7 +312,7 @@ if st.session_state.results is not None:
     st.markdown(f"<div style='overflow-x:auto'>{html_table}</div>", unsafe_allow_html=True)
 
     # ---------------------------------------------------------------
-    # Player Trend Visualization (5-game smoothing for betting)
+    # Player Trend Visualization (5-game smoothing)
     # ---------------------------------------------------------------
     st.markdown("### 📈 Player Regression Trend Viewer")
     player_list = st.session_state.results["Player"].unique().tolist()
@@ -334,7 +333,7 @@ if st.session_state.results is not None:
         )
         trend_df["game_num"] = np.arange(1, len(trend_df) + 1)
 
-        # --- 5-game moving averages for betting responsiveness
+        # --- 5-game moving averages (for betting responsiveness)
         trend_df["sog_ma"] = trend_df["sog"].rolling(window=5, min_periods=1).mean()
         trend_df["shoot_pct_ma"] = trend_df["shoot_pct"].rolling(window=5, min_periods=1).mean()
 
@@ -349,4 +348,4 @@ if st.session_state.results is not None:
             y=alt.Y("sog_ma:Q", title="Shots on Goal (5-Game Avg)")
         )
         pct_line = base.mark_line(color="#d62728", strokeDash=[4, 3]).encode(
-            y=alt.Y("shoot_pct_ma:Q", title="Shooting %
+            y=alt.Y("shoot_pct_ma:Q",
