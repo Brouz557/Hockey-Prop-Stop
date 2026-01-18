@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Hockey Prop Stop — Improved Goal Projections
+# 🏒 Hockey Prop Stop — Simplified SOG Model
 # ---------------------------------------------------------------
 
 import streamlit as st
@@ -15,7 +15,7 @@ st.markdown(
     """
     <h1 style='text-align:center;color:#00B140;'>🏒 Hockey Prop Stop</h1>
     <p style='text-align:center;color:#BFC0C0;'>
-        Team-vs-Team matchup analytics with improved goal projections
+        Team-vs-Team matchup analytics focused on shot projections
     </p>
     """,
     unsafe_allow_html=True,
@@ -134,6 +134,7 @@ if run_model:
 
     # --- Goalie adjustments ---
     goalie_adj,rebound_rate={},{}
+
     if not goalies_df.empty:
         g=goalies_df.copy()
         g=g[g["situation"].str.lower()=="all"]
@@ -162,11 +163,9 @@ if run_model:
         line_adj=l.copy()
 
     # --- Roster ---
-    roster=(skaters_df[skaters_df[team_col].isin([team_a,team_b])]
-            [[player_col,team_col]]
+    roster=(skaters_df[skaters_df[team_col].isin([team_a,team_b])][[player_col,team_col]]
             .rename(columns={player_col:"player",team_col:"team"})
-            .drop_duplicates("player")
-            .reset_index(drop=True))
+            .drop_duplicates("player").reset_index(drop=True))
     shots_df=shots_df.rename(columns={
         player_col_shots:"player", game_col:"gameid", sog_col:"sog", goal_col:"goal"
     })
@@ -177,15 +176,16 @@ if run_model:
     results=[]
     progress=st.progress(0)
     total=len(roster)
-    league_avg_shooting = shots_df["goal"].sum() / shots_df["sog"].sum()
 
     for i,row in enumerate(roster.itertuples(index=False),1):
         player,team=row.player,row.team
         df_p=grouped.get(str(player).lower(),pd.DataFrame())
-        if df_p.empty: progress.progress(i/total); continue
-        game_sogs=df_p.groupby("gameid")[["sog","goal"]].sum().reset_index().sort_values("gameid")
-        sog_values=game_sogs["sog"].tolist(); goal_values=game_sogs["goal"].tolist()
+        if df_p.empty:
+            progress.progress(i/total)
+            continue
 
+        game_sogs=df_p.groupby("gameid")[["sog","goal"]].sum().reset_index().sort_values("gameid")
+        sog_values=game_sogs["sog"].tolist()
         last3,last5,last10=sog_values[-3:],sog_values[-5:],sog_values[-10:]
         last3,last5,last10=list(reversed(last3)),list(reversed(last5)),list(reversed(last10))
         l3,l5,l10=np.mean(last3),np.mean(last5),np.mean(last10)
@@ -207,36 +207,25 @@ if run_model:
         adj_proj*=(1+rebound_factor*0.1)
         adj_proj=max(0,round(adj_proj,2))
 
-        # --- Improved goal projection ---
-        total_sogs=df_p["sog"].sum()
-        total_goals=df_p["goal"].sum()
-        season_shoot_pct=(total_goals/total_sogs) if total_sogs>0 else 0
-        recent_df=df_p.tail(10)
-        recent_sogs=recent_df["sog"].sum(); recent_goals=recent_df["goal"].sum()
-        recent_shoot_pct=(recent_goals/recent_sogs) if recent_sogs>0 else season_shoot_pct
-        adj_shoot_pct = (0.7*recent_shoot_pct + 0.2*season_shoot_pct + 0.1*league_avg_shooting)
-        adj_shoot_pct = np.clip(adj_shoot_pct, 0.05, 0.22)
-        adj_shoot_pct *= (1 / goalie_factor)
-        proj_goals = adj_proj * adj_shoot_pct
-
         l10_fmt=", ".join(map(str,last10))
         results.append({
             "Player":player,"Team":team,
             "Season Avg":round(season_avg,2),
-            "L3 Shots":", ".join(map(str,last3)),"L5 Shots":", ".join(map(str,last5)),
-            "L10 Shots":l10_fmt,"Trend Score":round(trend,3),
+            "L3 Shots":", ".join(map(str,last3)),
+            "L5 Shots":", ".join(map(str,last5)),
+            "L10 Shots":l10_fmt,
+            "Trend Score":round(trend,3),
             "Base Projection":round(base_proj,2),
-            "Goalie Adj":round(goalie_factor,2),"Line Adj":round(line_factor,2),
-            "Final Projection":adj_proj,
-            "Shooting %":round(adj_shoot_pct*100,1),
-            "Projected Goals":round(proj_goals,2)
+            "Goalie Adj":round(goalie_factor,2),
+            "Line Adj":round(line_factor,2),
+            "Final Projection":adj_proj
         })
         progress.progress(i/total)
     progress.empty()
 
     df=pd.DataFrame(results)
 
-    # --- Matchup rating (unchanged) ---
+    # --- Matchup rating ---
     avg_proj,std_proj=df["Final Projection"].mean(),df["Final Projection"].std()
     def rate_proj(v):
         if v>=avg_proj+std_proj: return "Strong"
@@ -258,9 +247,8 @@ if run_model:
     df["Trend"]=df["Trend Score"].apply(trend_color)
 
     # --- Column order ---
-    cols=["Player","Team","Trend","Final Projection","Projected Goals","Shooting %",
-          "Season Avg","Matchup Rating","L3 Shots","L5 Shots","L10 Shots",
-          "Base Projection","Goalie Adj","Line Adj"]
+    cols=["Player","Team","Trend","Final Projection","Season Avg","Matchup Rating",
+          "L3 Shots","L5 Shots","L10 Shots","Base Projection","Goalie Adj","Line Adj"]
     vis=df[[c for c in cols if c in df.columns]].sort_values("Final Projection",ascending=False)
     st.session_state.results=vis
 
@@ -268,13 +256,6 @@ if run_model:
 # Display Results
 # ---------------------------------------------------------------
 if st.session_state.results is not None:
-    st.markdown("### 📊 Player Projections (Adjusted)")
+    st.markdown("### 📊 Player Projections (Simplified)")
     html_table=st.session_state.results.to_html(index=False,escape=False)
     st.markdown(f"<div style='overflow-x:auto'>{html_table}</div>",unsafe_allow_html=True)
-
-    st.markdown("### 🔁 Interactive Table (Sortable)")
-    sortable_df = st.session_state.results[
-        ["Player","Final Projection","Projected Goals","Shooting %","Matchup Rating"]
-    ]
-    st.dataframe(sortable_df, use_container_width=True, hide_index=True)
-
