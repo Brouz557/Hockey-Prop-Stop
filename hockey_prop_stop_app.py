@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Hockey Prop Stop — Final Fixed 5-Game Projection Version
+# 🏒 Hockey Prop Stop — Full 5-Game Projection + Line Adj
 # ---------------------------------------------------------------
 
 import streamlit as st
@@ -17,7 +17,7 @@ st.markdown(
     """
     <h1 style='text-align:center;color:#00B140;'>🏒 Hockey Prop Stop</h1>
     <p style='text-align:center;color:#BFC0C0;'>
-        Team-vs-Team matchup analytics with regression and 5-game projections
+        Team-vs-Team matchup analytics with regression, 5-game projections & line adjustments
     </p>
     """,
     unsafe_allow_html=True,
@@ -142,6 +142,19 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df):
     roster = skaters[[player_col, team_col]].rename(columns={player_col: "player", team_col: "team"}).drop_duplicates("player")
     grouped = {n.lower(): g.sort_values(game_col) for n, g in shots_df.groupby(shots_df["player"].str.lower())}
 
+    # --- Line Adjustments ---
+    line_adj = {}
+    if not lines_df.empty and "line pairings" in lines_df.columns:
+        l = lines_df.copy()
+        l["games"] = pd.to_numeric(l["games"], errors="coerce").fillna(0)
+        l["sog against"] = pd.to_numeric(l["sog against"], errors="coerce").fillna(0)
+        l = l.groupby(["line pairings","team"], as_index=False).agg({"games":"sum","sog against":"sum"})
+        l["sog_against_per_game"] = np.where(l["games"]>0, l["sog against"]/l["games"], np.nan)
+        team_avg = l.groupby("team")["sog_against_per_game"].mean()
+        league_avg = team_avg.mean()
+        l["line_factor"] = (league_avg / l["sog_against_per_game"]).clip(0.7, 1.3)
+        line_adj = l.copy()
+
     for row in roster.itertuples(index=False):
         player, team = row.player, row.team
         df_p = grouped.get(player.lower(), pd.DataFrame())
@@ -153,7 +166,16 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df):
         season_avg = np.mean(sog_values)
         trend = 0 if pd.isna(l10) or l10 == 0 else (l5 - l10) / l10
 
-        # 5-game Poisson λ
+        # --- Line factor per player ---
+        line_factor = 1.0
+        if not isinstance(line_adj, dict):
+            last_name = str(player).split()[-1].lower()
+            m = line_adj[line_adj["line pairings"].str.contains(last_name, case=False, na=False)]
+            if not m.empty:
+                line_factor = np.average(m["line_factor"], weights=m["games"])
+            line_factor = np.clip(line_factor, 0.7, 1.3)
+
+        # --- 5-game Poisson λ ---
         lam = np.mean(last5) if last5 else np.nan
         if pd.isna(lam): continue
         prob = 1 - poisson.cdf(np.floor(lam) - 1, mu=lam)
@@ -161,11 +183,11 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df):
         odds = -100*(p/(1-p)) if p>=0.5 else 100*((1-p)/p)
         implied_odds = f"{'+' if odds>0 else ''}{int(odds)}"
 
-        # Regression logic
+        # --- Regression logic ---
         regression_flag = "⚪ Stable"
         try:
-            season_toi = pd.to_numeric(skaters_df.loc[skaters_df[player_col].str.lower()==player.lower(), toi_col], errors="coerce").mean()
-            games_played = pd.to_numeric(skaters_df.loc[skaters_df[player_col].str.lower()==player.lower(), gp_col], errors="coerce").mean()
+            season_toi = pd.to_numeric(skaters_df.loc[skaters_df[player_col].str.lower()==player.lower(), "icetime"], errors="coerce").mean()
+            games_played = pd.to_numeric(skaters_df.loc[skaters_df[player_col].str.lower()==player.lower(), "games"], errors="coerce").mean()
             if season_toi>0 and games_played>0:
                 avg_toi = (season_toi / games_played) / 60.0
                 sog_per60 = (season_avg / avg_toi) * 60
@@ -189,6 +211,7 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df):
             "Final Projection": round(lam,2),
             "Prob ≥ Projection (%)": round(p*100,1),
             "Playable Odds": implied_odds,
+            "Line Adj": round(line_factor,2),
             "Regression Indicator": regression_flag
         })
     return pd.DataFrame(results)
@@ -211,7 +234,6 @@ if st.button("🚀 Run Model"):
 if st.session_state.results is not None and not st.session_state.results.empty:
     df = st.session_state.results
 
-    # Trend color arrows — safely handle missing Trend Score
     def trend_color(v):
         if pd.isna(v): return "–"
         v = max(min(v, 0.5), -0.5)
@@ -230,17 +252,15 @@ if st.session_state.results is not None and not st.session_state.results.empty:
         df["Trend"] = "–"
 
     cols = ["Player","Team","Trend","Final Projection","Prob ≥ Projection (%)","Playable Odds",
-            "Season Avg","Regression Indicator","L3 Shots","L5 Shots","L10 Shots"]
+            "Season Avg","Line Adj","Regression Indicator","L3 Shots","L5 Shots","L10 Shots"]
     vis = df[[c for c in cols if c in df.columns]].sort_values("Final Projection", ascending=False)
     st.session_state.results = vis
 
-    st.markdown("### 📊 Player Projections (5-Game Form)")
+    st.markdown("### 📊 Player Projections (5-Game Form + Line Adj)")
     html_table = vis.to_html(index=False, escape=False)
     st.markdown(f"<div style='overflow-x:auto'>{html_table}</div>", unsafe_allow_html=True)
 
-    # ---------------------------------------------------------------
-    # Player Trend Visualization
-    # ---------------------------------------------------------------
+    # --- Player Trend Visualization ---
     st.markdown("### 📈 Player Regression Trend Viewer")
     player_list = vis["Player"].unique().tolist()
     selected_player = st.selectbox("Select a player to view detailed trend:", player_list, key="trend_player")
