@@ -266,8 +266,7 @@ if st.session_state.results is not None and not st.session_state.results.empty:
     player_list = vis["Player"].unique().tolist()
     selected_player = st.selectbox(
         "Select a player to view detailed trend:", 
-        player_list, 
-        key=f"trend_player_select_{team_a}_{team_b}"
+        player_list
     )
 
     df_p = shots_df[shots_df["player"].str.lower() == selected_player.lower()].copy()
@@ -317,4 +316,4 @@ if st.session_state.results is not None and not st.session_state.results.empty:
             )
         )
 
-        st.altair_chart(chart, use_container_width=True, key=f"chart_{selected_player}")
+        st.altair_chart(chart, use_container_width=True)
