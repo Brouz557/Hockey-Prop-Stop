@@ -1,11 +1,12 @@
 # ---------------------------------------------------------------
-# 🏒 Hockey Prop Stop — Simplified SOG Model
+# 🏒 Hockey Prop Stop — Improved Goal Projections + Probabilities
 # ---------------------------------------------------------------
 
 import streamlit as st
 import pandas as pd
 import numpy as np
 import os, contextlib, io
+from scipy.stats import poisson  # NEW for probabilities
 
 # ---------------------------------------------------------------
 # Page Setup
@@ -15,7 +16,7 @@ st.markdown(
     """
     <h1 style='text-align:center;color:#00B140;'>🏒 Hockey Prop Stop</h1>
     <p style='text-align:center;color:#BFC0C0;'>
-        Team-vs-Team matchup analytics focused on shot projections
+        Team-vs-Team matchup analytics with improved shot projections + probabilities
     </p>
     """,
     unsafe_allow_html=True,
@@ -163,9 +164,11 @@ if run_model:
         line_adj=l.copy()
 
     # --- Roster ---
-    roster=(skaters_df[skaters_df[team_col].isin([team_a,team_b])][[player_col,team_col]]
+    roster=(skaters_df[skaters_df[team_col].isin([team_a,team_b])]
+            [[player_col,team_col]]
             .rename(columns={player_col:"player",team_col:"team"})
-            .drop_duplicates("player").reset_index(drop=True))
+            .drop_duplicates("player")
+            .reset_index(drop=True))
     shots_df=shots_df.rename(columns={
         player_col_shots:"player", game_col:"gameid", sog_col:"sog", goal_col:"goal"
     })
@@ -207,18 +210,36 @@ if run_model:
         adj_proj*=(1+rebound_factor*0.1)
         adj_proj=max(0,round(adj_proj,2))
 
+        # --- Probability of hitting projection based on last 10 games ---
+        lambda_recent = np.mean(df_p.groupby("gameid")["sog"].sum().tail(10))
+        x = adj_proj
+        if np.isnan(lambda_recent) or lambda_recent <= 0:
+            prob_hit_proj = np.nan
+        else:
+            prob_hit_proj = 1 - poisson.cdf(np.floor(x) - 1, mu=lambda_recent)
+        prob_hit_proj_pct = round(prob_hit_proj * 100, 1) if not pd.isna(prob_hit_proj) else np.nan
+
+        # --- Convert probability to implied American odds ---
+        if not pd.isna(prob_hit_proj) and prob_hit_proj > 0:
+            p = prob_hit_proj
+            if p >= 0.5:
+                implied_odds = round(-100 * (p / (1 - p)))
+            else:
+                implied_odds = round(100 * ((1 - p) / p))
+        else:
+            implied_odds = np.nan
+
         l10_fmt=", ".join(map(str,last10))
         results.append({
             "Player":player,"Team":team,
             "Season Avg":round(season_avg,2),
-            "L3 Shots":", ".join(map(str,last3)),
-            "L5 Shots":", ".join(map(str,last5)),
-            "L10 Shots":l10_fmt,
-            "Trend Score":round(trend,3),
+            "L3 Shots":", ".join(map(str,last3)),"L5 Shots":", ".join(map(str,last5)),
+            "L10 Shots":l10_fmt,"Trend Score":round(trend,3),
             "Base Projection":round(base_proj,2),
-            "Goalie Adj":round(goalie_factor,2),
-            "Line Adj":round(line_factor,2),
-            "Final Projection":adj_proj
+            "Goalie Adj":round(goalie_factor,2),"Line Adj":round(line_factor,2),
+            "Final Projection":adj_proj,
+            "Prob ≥ Projection (%)":prob_hit_proj_pct,
+            "Playable Odds":implied_odds
         })
         progress.progress(i/total)
     progress.empty()
@@ -247,8 +268,9 @@ if run_model:
     df["Trend"]=df["Trend Score"].apply(trend_color)
 
     # --- Column order ---
-    cols=["Player","Team","Trend","Final Projection","Season Avg","Matchup Rating",
-          "L3 Shots","L5 Shots","L10 Shots","Base Projection","Goalie Adj","Line Adj"]
+    cols=["Player","Team","Trend","Final Projection","Prob ≥ Projection (%)","Playable Odds",
+          "Season Avg","Matchup Rating","L3 Shots","L5 Shots","L10 Shots",
+          "Base Projection","Goalie Adj","Line Adj"]
     vis=df[[c for c in cols if c in df.columns]].sort_values("Final Projection",ascending=False)
     st.session_state.results=vis
 
@@ -256,6 +278,6 @@ if run_model:
 # Display Results
 # ---------------------------------------------------------------
 if st.session_state.results is not None:
-    st.markdown("### 📊 Player Projections (Simplified)")
+    st.markdown("### 📊 Player Projections (with Probabilities + Implied Odds)")
     html_table=st.session_state.results.to_html(index=False,escape=False)
     st.markdown(f"<div style='overflow-x:auto'>{html_table}</div>",unsafe_allow_html=True)
