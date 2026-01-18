@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Hockey Prop Stop — Blended Regression + Persistent Trend Table
+# 🏒 Hockey Prop Stop — Blended Regression + Sticky Header Table
 # ---------------------------------------------------------------
 
 import streamlit as st
@@ -221,7 +221,7 @@ if st.button("🚀 Run Model"):
     st.success("✅ Model built successfully!")
 
 # ---------------------------------------------------------------
-# Persistent Trend Table Rendering
+# Persistent Trend Table Rendering (Sticky Headers)
 # ---------------------------------------------------------------
 if "results_raw" in st.session_state and not st.session_state.results_raw.empty:
     df = st.session_state.results_raw.copy()
@@ -251,6 +251,12 @@ if "results_raw" in st.session_state and not st.session_state.results_raw.empty:
     components.html(
         f"""
         <style>
+        div.scrollable-table {{
+            overflow-x: auto;
+            overflow-y: auto;
+            height: 600px;
+            position: relative;
+        }}
         table {{
             width: 100%;
             border-collapse: collapse;
@@ -262,6 +268,9 @@ if "results_raw" in st.session_state and not st.session_state.results_raw.empty:
             color: white;
             padding: 6px;
             text-align: center;
+            position: sticky;
+            top: 0;
+            z-index: 2;
         }}
         td {{
             background-color: #1e1e1e;
@@ -274,7 +283,7 @@ if "results_raw" in st.session_state and not st.session_state.results_raw.empty:
         }}
         </style>
 
-        <div style='overflow-x:auto;height:600px'>
+        <div class='scrollable-table'>
             {html_table}
         </div>
         """,
