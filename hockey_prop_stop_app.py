@@ -1,11 +1,11 @@
 # ---------------------------------------------------------------
-# 🏒 Hockey Prop Stop — Full App (Repo Timestamp Fix + Sort by Projection)
+# 🏒 Hockey Prop Stop — Full App (True Repo Timestamp + Sorted Output)
 # ---------------------------------------------------------------
 
 import streamlit as st
 import pandas as pd
 import numpy as np
-import os, contextlib, io, datetime, pytz
+import os, contextlib, io, datetime, pytz, subprocess
 from scipy.stats import poisson
 import streamlit.components.v1 as components
 
@@ -89,16 +89,27 @@ if skaters_df.empty or shots_df.empty:
 st.success("✅ Data loaded successfully.")
 
 # ---------------------------------------------------------------
-# Data Last Updated Timestamp (CST/CDT - True Repo Mod Time)
+# 🕒 Data Last Updated (True Repo Commit Time, CST/CDT)
 # ---------------------------------------------------------------
 def get_latest_update_time(files):
-    """Return true last modification or upload time in CST/CDT."""
+    """Return last repo commit or file upload time in CST/CDT."""
     tz_cst = pytz.timezone("America/Chicago")
 
-    # Look first in repo data directory
+    # 1️⃣ Try Git commit timestamp first
+    try:
+        git_time_str = subprocess.check_output(
+            ["git", "log", "-1", "--format=%cd", "--date=iso"],
+            stderr=subprocess.DEVNULL
+        ).decode().strip()
+        if git_time_str:
+            git_time = datetime.datetime.fromisoformat(git_time_str.replace("Z","+00:00"))
+            return git_time.astimezone(tz_cst).strftime("%Y-%m-%d %I:%M %p CST")
+    except Exception:
+        pass
+
+    # 2️⃣ Fallback to repo file modification times
     base_paths = ["/mount/src/hockey-prop-stop/data", "data", "."]
     filenames = ["Skaters.xlsx","SHOT DATA.xlsx","GOALTENDERS.xlsx","LINE DATA.xlsx","TEAMS.xlsx"]
-
     mtimes = []
     for base in base_paths:
         for fname in filenames:
@@ -110,17 +121,16 @@ def get_latest_update_time(files):
                 except Exception:
                     pass
 
-    # Uploaded files fallback
-    upload_times = []
+    # 3️⃣ Uploaded files fallback
     for f in files:
         if f is not None:
-            upload_times.append(datetime.datetime.now(tz_cst))
+            return datetime.datetime.now(tz_cst).strftime("%Y-%m-%d %I:%M %p CST")
 
-    all_times = mtimes + upload_times
-    if all_times:
-        return max(all_times).strftime("%Y-%m-%d %I:%M %p CST")
+    if mtimes:
+        return max(mtimes).strftime("%Y-%m-%d %I:%M %p CST")
     return None
 
+# Display timestamp
 last_update = get_latest_update_time([skaters_file, shots_file, goalies_file, lines_file, teams_file])
 if last_update:
     st.markdown(f"🕒 **Data last updated:** {last_update}")
@@ -252,7 +262,7 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df):
 # ---------------------------------------------------------------
 if st.button("🚀 Run Model"):
     st.info(f"Building model for matchup: **{team_a} vs {team_b}** ...")
-    df = build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df)
+    df = build_model(team_a, team_b, skaters_df, shots_df, goalies_df, goalies_df, lines_df)
     df = df.sort_values("Final Projection", ascending=False).reset_index(drop=True)
     st.session_state.results_raw = df.copy()
     st.success("✅ Model built successfully!")
