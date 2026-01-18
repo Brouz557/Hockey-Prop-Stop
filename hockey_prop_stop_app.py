@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Hockey Prop Stop — Full App (True Repo Timestamp in CST)
+# 🏒 Hockey Prop Stop — Full App (True Repo Timestamp, CST/CDT)
 # ---------------------------------------------------------------
 
 import streamlit as st
@@ -37,7 +37,7 @@ teams_file   = st.sidebar.file_uploader("TEAMS", type=["xlsx","csv"])
 # Helper Functions
 # ---------------------------------------------------------------
 def load_file(file):
-    if not file: 
+    if not file:
         return pd.DataFrame()
     try:
         return pd.read_excel(file) if file.name.lower().endswith(".xlsx") else pd.read_csv(file)
@@ -66,7 +66,7 @@ def load_all_data(skaters_file, shots_file, goalies_file, lines_file, teams_file
     def find_file(name):
         for p in base_paths:
             full = os.path.join(p, name)
-            if os.path.exists(full): 
+            if os.path.exists(full):
                 return full
         return None
     with contextlib.redirect_stdout(io.StringIO()):
@@ -95,25 +95,28 @@ def get_latest_update_time(files):
     """Return true last modification or upload time in CST/CDT."""
     tz_cst = pytz.timezone("America/Chicago")
 
-    # Check repo file modification times
-    repo_paths = ["Skaters.xlsx","SHOT DATA.xlsx","GOALTENDERS.xlsx","LINE DATA.xlsx","TEAMS.xlsx"]
+    # Check multiple repo locations for file timestamps
+    base_paths = [".", "data", "/mount/src/hockey-prop-stop/data"]
+    filenames = ["Skaters.xlsx","SHOT DATA.xlsx","GOALTENDERS.xlsx","LINE DATA.xlsx","TEAMS.xlsx"]
     mtimes = []
-    for p in repo_paths:
-        if os.path.exists(p):
-            t_utc = datetime.datetime.utcfromtimestamp(os.path.getmtime(p)).replace(tzinfo=pytz.utc)
-            mtimes.append(t_utc.astimezone(tz_cst))
 
-    # If any uploaded files, prefer those times (most recent)
+    for base in base_paths:
+        for fname in filenames:
+            path = os.path.join(base, fname)
+            if os.path.exists(path):
+                t_utc = datetime.datetime.utcfromtimestamp(os.path.getmtime(path)).replace(tzinfo=pytz.utc)
+                mtimes.append(t_utc.astimezone(tz_cst))
+
+    # Uploaded files fallback
     upload_times = []
     for f in files:
         if f is not None:
             upload_times.append(datetime.datetime.now(tz_cst))
 
-    # Pick the most recent between repo and uploads
+    # Choose most recent timestamp overall
     all_times = mtimes + upload_times
     if all_times:
         return max(all_times).strftime("%Y-%m-%d %I:%M %p CST")
-
     return None
 
 last_update = get_latest_update_time([skaters_file, shots_file, goalies_file, lines_file, teams_file])
