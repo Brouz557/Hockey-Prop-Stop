@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Hockey Prop Stop — Final Version (True SHOT DATA Git Timestamp)
+# 🏒 Hockey Prop Stop — L5 Probability Update
 # ---------------------------------------------------------------
 
 import streamlit as st
@@ -17,7 +17,7 @@ st.markdown(
     """
     <h1 style='text-align:center;color:#00B140;'>🏒 Hockey Prop Stop</h1>
     <p style='text-align:center;color:#BFC0C0;'>
-        Team-vs-Team matchup analytics with blended regression and probability modeling
+        Team-vs-Team matchup analytics with blended regression and L5-based probabilities
     </p>
     """,
     unsafe_allow_html=True,
@@ -189,10 +189,11 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df):
                 line_factor = np.average(m["line_factor"],weights=m["games"])
             line_factor = np.clip(line_factor,0.7,1.3)
 
-        lam = np.mean(last5) if last5 else np.nan
-        if pd.isna(lam): continue
+        lam = l5  # λ = last 5-game average
+        line = round(lam, 2)  # projected threshold = Final Projection
 
-        prob = 1 - poisson.cdf(np.floor(lam) - 1, mu=lam)
+        # Probability of at least Final Projection
+        prob = 1 - poisson.cdf(np.floor(line) - 1, mu=lam)
         p = min(max(prob, 0.001), 0.999)
         odds = -100*(p/(1-p)) if p>=0.5 else 100*((1-p)/p)
         implied_odds = f"{'+' if odds>0 else ''}{int(odds)}"
@@ -220,8 +221,8 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df):
             "L5 Shots":", ".join(map(str,last5)),
             "L10 Shots":", ".join(map(str,last10)),
             "Trend Score":round(trend,3),
-            "Final Projection":round(lam,2),
-            "Prob ≥ Projection (%)":round(p*100,1),
+            "Final Projection":round(line,2),
+            "Prob ≥ Projection (%) L5":round(p*100,1),
             "Playable Odds":implied_odds,
             "Line Adj":round(line_factor,2),
             "Regression Indicator":regression_flag
@@ -257,7 +258,7 @@ if "results_raw" in st.session_state and not st.session_state.results_raw.empty:
 
     df["Trend"] = df["Trend Score"].apply(trend_color)
 
-    cols = ["Player","Team","Trend","Final Projection","Prob ≥ Projection (%)","Playable Odds",
+    cols = ["Player","Team","Trend","Final Projection","Prob ≥ Projection (%) L5","Playable Odds",
             "Season Avg","Line Adj","Regression Indicator","L3 Shots","L5 Shots","L10 Shots"]
     vis = df[[c for c in cols if c in df.columns]]
 
