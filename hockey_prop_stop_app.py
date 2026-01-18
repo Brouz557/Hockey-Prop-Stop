@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Hockey Prop Stop — Full App (True Repo Timestamp, CST/CDT)
+# 🏒 Hockey Prop Stop — Full App (Repo Timestamp Fix + Sort by Projection)
 # ---------------------------------------------------------------
 
 import streamlit as st
@@ -95,17 +95,20 @@ def get_latest_update_time(files):
     """Return true last modification or upload time in CST/CDT."""
     tz_cst = pytz.timezone("America/Chicago")
 
-    # Check multiple repo locations for file timestamps
-    base_paths = [".", "data", "/mount/src/hockey-prop-stop/data"]
+    # Look first in repo data directory
+    base_paths = ["/mount/src/hockey-prop-stop/data", "data", "."]
     filenames = ["Skaters.xlsx","SHOT DATA.xlsx","GOALTENDERS.xlsx","LINE DATA.xlsx","TEAMS.xlsx"]
-    mtimes = []
 
+    mtimes = []
     for base in base_paths:
         for fname in filenames:
             path = os.path.join(base, fname)
             if os.path.exists(path):
-                t_utc = datetime.datetime.utcfromtimestamp(os.path.getmtime(path)).replace(tzinfo=pytz.utc)
-                mtimes.append(t_utc.astimezone(tz_cst))
+                try:
+                    t_utc = datetime.datetime.utcfromtimestamp(os.path.getmtime(path)).replace(tzinfo=pytz.utc)
+                    mtimes.append(t_utc.astimezone(tz_cst))
+                except Exception:
+                    pass
 
     # Uploaded files fallback
     upload_times = []
@@ -113,7 +116,6 @@ def get_latest_update_time(files):
         if f is not None:
             upload_times.append(datetime.datetime.now(tz_cst))
 
-    # Choose most recent timestamp overall
     all_times = mtimes + upload_times
     if all_times:
         return max(all_times).strftime("%Y-%m-%d %I:%M %p CST")
@@ -179,12 +181,12 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df):
     for row in roster.itertuples(index=False):
         player, team = row.player, row.team
         df_p = grouped.get(player.lower(), pd.DataFrame())
-        if df_p.empty: 
+        if df_p.empty:
             continue
 
         game_sogs = df_p.groupby(game_col)[["sog","goal"]].sum().reset_index().sort_values(game_col)
         sog_values = game_sogs["sog"].tolist()
-        if len(sog_values) == 0: 
+        if len(sog_values) == 0:
             continue
 
         last3 = sog_values[-3:] if len(sog_values) >= 3 else sog_values
@@ -204,7 +206,7 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df):
             line_factor = np.clip(line_factor, 0.7, 1.3)
 
         lam = np.mean(last5) if last5 else np.nan
-        if pd.isna(lam): 
+        if pd.isna(lam):
             continue
 
         prob = 1 - poisson.cdf(np.floor(lam) - 1, mu=lam)
@@ -251,6 +253,7 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df):
 if st.button("🚀 Run Model"):
     st.info(f"Building model for matchup: **{team_a} vs {team_b}** ...")
     df = build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df)
+    df = df.sort_values("Final Projection", ascending=False).reset_index(drop=True)
     st.session_state.results_raw = df.copy()
     st.success("✅ Model built successfully!")
 
@@ -261,7 +264,7 @@ if "results_raw" in st.session_state and not st.session_state.results_raw.empty:
     df = st.session_state.results_raw.copy()
 
     def trend_color(v):
-        if pd.isna(v): 
+        if pd.isna(v):
             return "–"
         v = max(min(v,0.5),-0.5)
         n = v+0.5
