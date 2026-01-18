@@ -1,12 +1,12 @@
 # ---------------------------------------------------------------
-# 🏒 Hockey Prop Stop — Shot Projection Probabilities + Odds
+# 🏒 Hockey Prop Stop — Smart Probability Blending
 # ---------------------------------------------------------------
 
 import streamlit as st
 import pandas as pd
 import numpy as np
 import os, contextlib, io
-from scipy.stats import poisson  # for probabilities
+from scipy.stats import poisson
 
 # ---------------------------------------------------------------
 # Page Setup
@@ -16,14 +16,14 @@ st.markdown(
     """
     <h1 style='text-align:center;color:#00B140;'>🏒 Hockey Prop Stop</h1>
     <p style='text-align:center;color:#BFC0C0;'>
-        Team-vs-Team matchup analytics with improved shot projections + probabilities
+        Team-vs-Team matchup analytics with regression-to-mean probabilities
     </p>
     """,
     unsafe_allow_html=True,
 )
 
 # ---------------------------------------------------------------
-# Custom CSS (original style)
+# Custom CSS (original clean look)
 # ---------------------------------------------------------------
 st.markdown(
     """
@@ -77,7 +77,7 @@ def load_data(file_uploader, default_path):
 # ---------------------------------------------------------------
 @st.cache_data(show_spinner=False)
 def load_all_data(skaters_file, shots_file, goalies_file, lines_file, teams_file):
-    base_paths = [".", "data", "/mount/src/hockey-prop-stop/data"]
+    base_paths = [".","data","/mount/src/hockey-prop-stop/data"]
     def find_file(filename):
         for p in base_paths:
             full = os.path.join(p, filename)
@@ -172,7 +172,7 @@ if run_model:
         l["line_factor"] = (league_avg / l["sog_against_per_game"]).clip(0.7, 1.3)
         line_adj = l.copy()
 
-    # --- Roster ---
+    # --- Roster setup ---
     roster = (
         skaters_df[skaters_df[team_col].isin([team_a, team_b])]
         [[player_col, team_col]]
@@ -187,9 +187,8 @@ if run_model:
     roster["player"] = roster["player"].astype(str).str.strip()
     grouped = {n.lower(): g.sort_values("gameid") for n, g in shots_df.groupby(shots_df["player"].str.lower())}
 
-    results = []
+    results, total = [], len(roster)
     progress = st.progress(0)
-    total = len(roster)
 
     for i, row in enumerate(roster.itertuples(index=False), 1):
         player, team = row.player, row.team
@@ -198,6 +197,7 @@ if run_model:
             progress.progress(i / total)
             continue
 
+        # --- SOG trends ---
         game_sogs = df_p.groupby("gameid")[["sog", "goal"]].sum().reset_index().sort_values("gameid")
         sog_values = game_sogs["sog"].tolist()
         last3, last5, last10 = sog_values[-3:], sog_values[-5:], sog_values[-10:]
@@ -222,16 +222,29 @@ if run_model:
         adj_proj *= (1 + rebound_factor * 0.1)
         adj_proj = max(0, round(adj_proj, 2))
 
-        # --- Probability of hitting projection based on last 10 games ---
-        lambda_recent = np.mean(df_p.groupby("gameid")["sog"].sum().tail(10))
+        # --- Smart blended λ for regression-to-mean ---
+        season_lambda = np.mean(df_p.groupby("gameid")["sog"].sum())
+        recent_sogs = df_p.groupby("gameid")["sog"].sum().tail(10)
+        lambda_recent = np.mean(recent_sogs)
+
+        if np.isnan(lambda_recent): lambda_recent = 0
+        if np.isnan(season_lambda): season_lambda = 0
+
+        var_recent = np.var(recent_sogs)
+        var_ratio = var_recent / (lambda_recent + 1e-6)
+        consistency = 1 / (1 + var_ratio)
+        w = np.clip(0.6 + 0.4 * consistency, 0.5, 0.9)
+        lambda_blend = w * lambda_recent + (1 - w) * season_lambda
+
         x = adj_proj
-        if np.isnan(lambda_recent) or lambda_recent <= 0:
+        if lambda_blend <= 0:
             prob_hit_proj = np.nan
         else:
-            prob_hit_proj = 1 - poisson.cdf(np.floor(x) - 1, mu=lambda_recent)
+            prob_hit_proj = 1 - poisson.cdf(np.floor(x) - 1, mu=lambda_blend)
+
         prob_hit_proj_pct = round(prob_hit_proj * 100, 1) if not pd.isna(prob_hit_proj) else np.nan
 
-        # --- Convert probability to implied American odds (safe + formatted) ---
+        # --- Convert probability to implied American odds ---
         if not pd.isna(prob_hit_proj) and prob_hit_proj > 0:
             p = min(max(prob_hit_proj, 0.001), 0.999)
             if p >= 0.5:
@@ -247,10 +260,12 @@ if run_model:
         results.append({
             "Player": player, "Team": team,
             "Season Avg": round(season_avg, 2),
-            "L3 Shots": ", ".join(map(str, last3)), "L5 Shots": ", ".join(map(str, last5)),
+            "L3 Shots": ", ".join(map(str, last3)),
+            "L5 Shots": ", ".join(map(str, last5)),
             "L10 Shots": l10_fmt, "Trend Score": round(trend, 3),
             "Base Projection": round(base_proj, 2),
-            "Goalie Adj": round(goalie_factor, 2), "Line Adj": round(line_factor, 2),
+            "Goalie Adj": round(goalie_factor, 2),
+            "Line Adj": round(line_factor, 2),
             "Final Projection": adj_proj,
             "Prob ≥ Projection (%)": prob_hit_proj_pct,
             "Playable Odds": implied_odds
@@ -278,10 +293,11 @@ if run_model:
         color = f"rgb({r},{g},{b})"
         t = "▲" if v > 0.05 else ("▼" if v < -0.05 else "–")
         txt = "#000" if abs(v) < 0.2 else "#fff"
-        return f"<div style='background:{color};color:{txt};font-weight:600;border-radius:6px;padding:4px 8px;text-align:center;'>{t}</div>"
+        return f"<div style='background:{color};color:{txt};font-weight:600;border-radius:6px;"
+        f"padding:4px 8px;text-align:center;'>{t}</div>"
     df["Trend"] = df["Trend Score"].apply(trend_color)
 
-    # --- Column order (hide Base Projection + Goalie Adj) ---
+    # --- Column order (Base Projection + Goalie Adj hidden) ---
     cols = [
         "Player","Team","Trend","Final Projection","Prob ≥ Projection (%)","Playable Odds",
         "Season Avg","Matchup Rating","L3 Shots","L5 Shots","L10 Shots","Line Adj"
@@ -293,7 +309,6 @@ if run_model:
 # Display Results
 # ---------------------------------------------------------------
 if st.session_state.results is not None:
-    st.markdown("### 📊 Player Projections (with Probabilities + Implied Odds)")
+    st.markdown("### 📊 Player Projections (Smart Regression-to-Mean)")
     html_table = st.session_state.results.to_html(index=False, escape=False)
     st.markdown(f"<div style='overflow-x:auto'>{html_table}</div>", unsafe_allow_html=True)
-
