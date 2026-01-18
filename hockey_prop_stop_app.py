@@ -1,11 +1,11 @@
 # ---------------------------------------------------------------
-# 🏒 Hockey Prop Stop — Restored Original Version (with timestamp)
+# 🏒 Hockey Prop Stop — Restored Version (with working timestamp)
 # ---------------------------------------------------------------
 
 import streamlit as st
 import pandas as pd
 import numpy as np
-import os, contextlib, io
+import os, contextlib, io, datetime
 from scipy.stats import poisson
 import streamlit.components.v1 as components
 
@@ -89,20 +89,25 @@ st.success("✅ Data loaded successfully.")
 # Data Last Updated Timestamp
 # ---------------------------------------------------------------
 def get_latest_update_time(files):
-    times = []
-    for f in files:
-        if f is not None and hasattr(f, "name"):
-            # Uploaded file (in-memory)
-            times.append(pd.Timestamp.utcnow())
-        else:
-            path = f if isinstance(f, str) else None
-            if path and os.path.exists(path):
-                times.append(pd.to_datetime(os.path.getmtime(path), unit="s", utc=True))
-    return max(times).strftime("%Y-%m-%d %H:%M UTC") if times else None
+    """Return the most recent modification or upload time."""
+    # If user uploaded any file, use current UTC time as update
+    if any(f is not None for f in files):
+        return datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+    # Otherwise check local repo files
+    paths = ["Skaters.xlsx","SHOT DATA.xlsx","GOALTENDERS.xlsx","LINE DATA.xlsx","TEAMS.xlsx"]
+    mtimes = []
+    for p in paths:
+        if os.path.exists(p):
+            mtimes.append(datetime.datetime.utcfromtimestamp(os.path.getmtime(p)))
+    if mtimes:
+        return max(mtimes).strftime("%Y-%m-%d %H:%M UTC")
+    return None
 
 last_update = get_latest_update_time([skaters_file, shots_file, goalies_file, lines_file, teams_file])
 if last_update:
     st.markdown(f"🕒 **Data last updated:** {last_update}")
+else:
+    st.markdown("🕒 **Data last updated:** Unknown")
 
 # ---------------------------------------------------------------
 # Normalize Columns
