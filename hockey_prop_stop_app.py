@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Hockey Prop Stop — Improved Goal Projections
+# 🏒 Hockey Prop Stop — Improved Goal Projections + Scoring Tiers
 # ---------------------------------------------------------------
 
 import streamlit as st
@@ -244,6 +244,13 @@ if run_model:
         return "Weak"
     df["Matchup Rating"]=df["Final Projection"].apply(rate_proj)
 
+    # --- Add Scoring Signal & Tier ---
+    df["Goal Signal"] = (
+        (df["Projected Goals"] / df["Projected Goals"].max()) * 0.6 +
+        (df["Shooting %"] / df["Shooting %"].max()) * 0.4
+    )
+    df["Scoring Tier"] = pd.qcut(df["Goal Signal"], 4, labels=["Low", "Medium", "High", "Elite"])
+
     # --- Trend color ---
     def trend_color(v):
         if pd.isna(v): return "–"
@@ -259,8 +266,8 @@ if run_model:
 
     # --- Column order ---
     cols=["Player","Team","Trend","Final Projection","Projected Goals","Shooting %",
-          "Season Avg","Matchup Rating","L3 Shots","L5 Shots","L10 Shots",
-          "Base Projection","Goalie Adj","Line Adj"]
+          "Scoring Tier","Goal Signal","Season Avg","Matchup Rating",
+          "L3 Shots","L5 Shots","L10 Shots","Base Projection","Goalie Adj","Line Adj"]
     vis=df[[c for c in cols if c in df.columns]].sort_values("Final Projection",ascending=False)
     st.session_state.results=vis
 
@@ -274,6 +281,19 @@ if st.session_state.results is not None:
 
     st.markdown("### 🔁 Interactive Table (Sortable)")
     sortable_df = st.session_state.results[
-        ["Player","Final Projection","Projected Goals","Shooting %","Matchup Rating"]
+        ["Player","Final Projection","Projected Goals","Shooting %","Matchup Rating","Scoring Tier"]
     ]
     st.dataframe(sortable_df, use_container_width=True, hide_index=True)
+
+    # --- Visual Separation Chart ---
+    import altair as alt
+    st.markdown("### 🎯 Shot vs Goal Visualization")
+
+    chart = alt.Chart(st.session_state.results).mark_circle(size=80).encode(
+        x=alt.X("Final Projection", title="Shots Projection"),
+        y=alt.Y("Projected Goals", title="Goal Projection"),
+        color=alt.Color("Shooting %", scale=alt.Scale(scheme="viridis")),
+        tooltip=["Player","Team","Projected Goals","Shooting %","Scoring Tier","Final Projection"]
+    ).interactive()
+
+    st.altair_chart(chart, use_container_width=True)
