@@ -55,7 +55,8 @@ teams_file   = st.sidebar.file_uploader("TEAMS", type=["xlsx","csv"])
 # Helper functions
 # ---------------------------------------------------------------
 def load_file(file):
-    if not file: return pd.DataFrame()
+    if not file:
+        return pd.DataFrame()
     try:
         return pd.read_excel(file) if file.name.lower().endswith(".xlsx") else pd.read_csv(file)
     except Exception:
@@ -63,7 +64,8 @@ def load_file(file):
 
 def safe_read(path):
     try:
-        if not os.path.exists(path): return pd.DataFrame()
+        if not os.path.exists(path):
+            return pd.DataFrame()
         return pd.read_excel(path) if path.lower().endswith(".xlsx") else pd.read_csv(path)
     except Exception:
         return pd.DataFrame()
@@ -82,7 +84,8 @@ def load_all_data(skaters_file, shots_file, goalies_file, lines_file, teams_file
     def find_file(filename):
         for p in base_paths:
             full = os.path.join(p, filename)
-            if os.path.exists(full): return full
+            if os.path.exists(full):
+                return full
         return None
     with contextlib.redirect_stdout(io.StringIO()):
         skaters = load_data(skaters_file, find_file("Skaters.xlsx") or "Skaters.xlsx")
@@ -108,14 +111,15 @@ st.success("✅ Data loaded successfully.")
 # ---------------------------------------------------------------
 skaters_df.columns = skaters_df.columns.str.lower().str.strip()
 shots_df.columns   = shots_df.columns.str.lower().str.strip()
-if not goalies_df.empty: goalies_df.columns = goalies_df.columns.str.lower().str.strip()
-if not lines_df.empty:   lines_df.columns   = lines_df.columns.str.lower().str.strip()
+if not goalies_df.empty:
+    goalies_df.columns = goalies_df.columns.str.lower().str.strip()
+if not lines_df.empty:
+    lines_df.columns   = lines_df.columns.str.lower().str.strip()
 
 team_col   = next((c for c in skaters_df.columns if "team" in c), None)
 player_col = "name" if "name" in skaters_df.columns else None
 toi_col    = "icetime"   # seconds
 gp_col     = "games"     # games played
-
 sog_col    = next((c for c in shots_df.columns if "sog" in c), None)
 goal_col   = next((c for c in shots_df.columns if "goal" in c), None)
 game_col   = next((c for c in shots_df.columns if "game" in c and "id" in c), None)
@@ -126,11 +130,14 @@ player_col_shots = next((c for c in shots_df.columns if "player" in c or "name" 
 # ---------------------------------------------------------------
 all_teams = sorted(skaters_df[team_col].dropna().unique().tolist())
 col1, col2 = st.columns(2)
-with col1: team_a = st.selectbox("Select Team A", all_teams)
-with col2: team_b = st.selectbox("Select Team B", [t for t in all_teams if t != team_a])
+with col1:
+    team_a = st.selectbox("Select Team A", all_teams)
+with col2:
+    team_b = st.selectbox("Select Team B", [t for t in all_teams if t != team_a])
 st.markdown("---")
 
-if "results" not in st.session_state: st.session_state.results = None
+if "results" not in st.session_state:
+    st.session_state.results = None
 run_model = st.button("🚀 Run Model")
 
 # ---------------------------------------------------------------
@@ -192,6 +199,7 @@ if run_model:
             progress.progress(i / total)
             continue
 
+        # --- Shot trends ---
         game_sogs = df_p.groupby("gameid")[["sog","goal"]].sum().reset_index().sort_values("gameid")
         sog_values = game_sogs["sog"].tolist()
         last3, last5, last10 = sog_values[-3:], sog_values[-5:], sog_values[-10:]
@@ -216,8 +224,8 @@ if run_model:
         # --- Poisson probability for hitting projection ---
         lambda_recent = np.mean(df_p.groupby("gameid")["sog"].sum().tail(10))
         lambda_season = np.mean(df_p.groupby("gameid")["sog"].sum())
-        if np.isnan(lambda_recent): lambda_recent = 0
-        if np.isnan(lambda_season): lambda_season = 0
+        lambda_recent = 0 if np.isnan(lambda_recent) else lambda_recent
+        lambda_season = 0 if np.isnan(lambda_season) else lambda_season
         lambda_blend = 0.7*lambda_recent + 0.3*lambda_season
         prob_hit_proj = 1 - poisson.cdf(np.floor(adj_proj) - 1, mu=lambda_blend)
         prob_hit_proj_pct = round(prob_hit_proj * 100, 1) if not pd.isna(prob_hit_proj) else np.nan
@@ -275,9 +283,10 @@ if run_model:
 
     df = pd.DataFrame(results)
 
-    # --- Trend color
+    # --- Trend color ---
     def trend_color(v):
-        if pd.isna(v): return "–"
+        if pd.isna(v):
+            return "–"
         v = max(min(v, 0.5), -0.5)
         n = v + 0.5
         if n < 0.5:
@@ -288,15 +297,15 @@ if run_model:
         t = "▲" if v > 0.05 else ("▼" if v < -0.05 else "–")
         txt = "#000" if abs(v) < 0.2 else "#fff"
         return f"<div style='background:{color};color:{txt};font-weight:600;border-radius:6px;padding:4px 8px;text-align:center;'>{t}</div>"
-    df["Trend"] = df["Trend Score"].apply(trend_color)
 
+    df["Trend"] = df["Trend Score"].apply(trend_color)
     cols = ["Player","Team","Trend","Final Projection","Prob ≥ Projection (%)","Playable Odds",
             "Line Adj","Season Avg","Regression Indicator","L3 Shots","L5 Shots","L10 Shots"]
     vis = df[[c for c in cols if c in df.columns]].sort_values("Final Projection",ascending=False)
     st.session_state.results = vis
 
 # ---------------------------------------------------------------
-# Display Results
+# Display Results + Visualization
 # ---------------------------------------------------------------
 if st.session_state.results is not None:
     st.markdown("### 📊 Player Projections + Regression Insight")
@@ -340,5 +349,4 @@ if st.session_state.results is not None:
             y=alt.Y("sog_ma:Q", title="Shots on Goal (5-Game Avg)")
         )
         pct_line = base.mark_line(color="#d62728", strokeDash=[4, 3]).encode(
-            y=alt.Y("shoot_pct_ma:Q", title="Shooting % (5-Game Avg)", axis=alt.Axis(titleColor="#d62728"))
-       
+            y=alt.Y("shoot_pct_ma:Q", title="Shooting %
