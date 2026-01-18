@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Hockey Prop Stop — L5 Probability Update
+# 🏒 Hockey Prop Stop — L5 Probability Update (Form Indicator)
 # ---------------------------------------------------------------
 
 import streamlit as st
@@ -40,16 +40,19 @@ def load_file(file):
     if not file: return pd.DataFrame()
     try:
         return pd.read_excel(file) if file.name.lower().endswith(".xlsx") else pd.read_csv(file)
-    except Exception: return pd.DataFrame()
+    except Exception:
+        return pd.DataFrame()
 
 def safe_read(path):
     try:
         if not os.path.exists(path): return pd.DataFrame()
         return pd.read_excel(path) if path.lower().endswith(".xlsx") else pd.read_csv(path)
-    except Exception: return pd.DataFrame()
+    except Exception:
+        return pd.DataFrame()
 
 def load_data(file_uploader, default_path):
-    if file_uploader is not None: return load_file(file_uploader)
+    if file_uploader is not None:
+        return load_file(file_uploader)
     return safe_read(default_path)
 
 # ---------------------------------------------------------------
@@ -57,7 +60,7 @@ def load_data(file_uploader, default_path):
 # ---------------------------------------------------------------
 @st.cache_data(show_spinner=False)
 def load_all_data(skaters_file, shots_file, goalies_file, lines_file, teams_file):
-    base_paths = [".","data","/mount/src/hockey-prop-stop/data"]
+    base_paths = [".", "data", "/mount/src/hockey-prop-stop/data"]
     def find_file(name):
         for p in base_paths:
             full = os.path.join(p, name)
@@ -86,7 +89,6 @@ st.success("✅ Data loaded successfully.")
 # 🕒 Data Last Updated — True Git Commit Timestamp for SHOT DATA
 # ---------------------------------------------------------------
 def get_shots_file_git_time():
-    """Return last Git commit time for SHOT DATA file (CST/CDT)."""
     tz_cst = pytz.timezone("America/Chicago")
     file_candidates = [
         "data/SHOT DATA.xlsx",
@@ -116,7 +118,7 @@ else:
 # ---------------------------------------------------------------
 # Normalize Columns
 # ---------------------------------------------------------------
-for df in [skaters_df, shots_df, goalies_df, lines_df]:
+for df in [skaters_df, shots_df, goalies_df, lines_df, teams_df]:
     if not df.empty: df.columns = df.columns.str.lower().str.strip()
 
 team_col = next((c for c in skaters_df.columns if "team" in c), None)
@@ -144,7 +146,7 @@ st.markdown("---")
 # Cached Model Build
 # ---------------------------------------------------------------
 @st.cache_data(show_spinner=True)
-def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df):
+def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, teams_df):
     results = []
     skaters = skaters_df[skaters_df[team_col].isin([team_a, team_b])]
     roster = skaters[[player_col, team_col]].rename(columns={player_col:"player", team_col:"team"}).drop_duplicates("player")
@@ -181,50 +183,73 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df):
         trend = (l5 - l10)/l10 if l10>0 else 0
 
         line_factor = 1.0
-        if not isinstance(line_adj,dict):
+        if not isinstance(line_adj, dict):
             last_name = str(player).split()[-1].lower()
-            m = line_adj[line_adj["line pairings"].str.contains(last_name,case=False,na=False)]
+            m = line_adj[line_adj["line pairings"].str.contains(last_name, case=False, na=False)]
             if not m.empty:
-                line_factor = np.average(m["line_factor"],weights=m["games"])
-            line_factor = np.clip(line_factor,0.7,1.3)
+                line_factor = np.average(m["line_factor"], weights=m["games"])
+            line_factor = np.clip(line_factor, 0.7, 1.3)
 
-        lam = l5  # λ = last 5-game average
-        line = round(lam, 2)  # projected threshold = Final Projection
-
-        # Probability of at least Final Projection
+        lam = l5
+        line = round(lam, 2)
         prob = 1 - poisson.cdf(np.floor(line) - 1, mu=lam)
         p = min(max(prob, 0.001), 0.999)
         odds = -100*(p/(1-p)) if p>=0.5 else 100*((1-p)/p)
         implied_odds = f"{'+' if odds>0 else ''}{int(odds)}"
 
-        regression_flag = "⚪ Stable"
+        # --- Opponent-adjusted Form Indicator ---
+        form_flag = "⚪ Neutral Form"
         try:
-            season_toi = pd.to_numeric(skaters_df.loc[skaters_df[player_col].str.lower()==player.lower(),"icetime"],errors="coerce").mean()
-            games_played = pd.to_numeric(skaters_df.loc[skaters_df[player_col].str.lower()==player.lower(),"games"],errors="coerce").mean()
-            if season_toi>0 and games_played>0:
+            season_toi = pd.to_numeric(
+                skaters_df.loc[skaters_df[player_col].str.lower() == player.lower(), "icetime"],
+                errors="coerce"
+            ).mean()
+            games_played = pd.to_numeric(
+                skaters_df.loc[skaters_df[player_col].str.lower() == player.lower(), "games"],
+                errors="coerce"
+            ).mean()
+
+            if season_toi > 0 and games_played >= 10:
                 avg_toi = (season_toi / games_played) / 60.0
                 sog_per60 = (season_avg / avg_toi) * 60
-                blended_recent = 0.7*l5 + 0.3*l10
-                recent_per60 = (blended_recent / avg_toi)*60 if avg_toi>0 else 0
-                usage_delta = (recent_per60 - sog_per60)/sog_per60 if sog_per60>0 else 0
-                if usage_delta > 0.15: regression_flag = "🟢 Breakout Candidate"
-                elif usage_delta < -0.15: regression_flag = "🔴 Regression Risk"
-                elif abs(usage_delta)<=0.05: regression_flag = "⚪ Stable"
-                else: regression_flag = "🟠 Mixed Signal"
-        except Exception: pass
+                blended_recent = 0.7 * l5 + 0.3 * l10
+                recent_per60 = (blended_recent / avg_toi) * 60 if avg_toi > 0 else 0
+
+                opponent = team_b if team == team_a else team_a
+                if not teams_df.empty and "shots_against_per_game" in teams_df.columns:
+                    opp_rate = teams_df.loc[
+                        teams_df["team"].str.lower() == opponent.lower(), "shots_against_per_game"
+                    ]
+                    league_avg = teams_df["shots_against_per_game"].mean()
+                    opp_factor = float(league_avg / opp_rate.mean()) if not opp_rate.empty else 1.0
+                else:
+                    opp_factor = 1.0
+
+                recent_adj = recent_per60 * opp_factor
+                usage_delta = (recent_adj - sog_per60) / sog_per60 if sog_per60 > 0 else 0
+
+                if usage_delta > 0.10:
+                    form_flag = "🟢 Above-Baseline Form"
+                elif usage_delta < -0.10:
+                    form_flag = "🔴 Below-Baseline Form"
+                else:
+                    form_flag = "⚪ Neutral Form"
+        except Exception:
+            pass
 
         results.append({
-            "Player":player,"Team":team,
-            "Season Avg":round(season_avg,2),
-            "L3 Shots":", ".join(map(str,last3)),
-            "L5 Shots":", ".join(map(str,last5)),
-            "L10 Shots":", ".join(map(str,last10)),
-            "Trend Score":round(trend,3),
-            "Final Projection":round(line,2),
-            "Prob ≥ Projection (%) L5":round(p*100,1),
-            "Playable Odds":implied_odds,
-            "Line Adj":round(line_factor,2),
-            "Regression Indicator":regression_flag
+            "Player": player,
+            "Team": team,
+            "Season Avg": round(season_avg, 2),
+            "L3 Shots": ", ".join(map(str, last3)),
+            "L5 Shots": ", ".join(map(str, last5)),
+            "L10 Shots": ", ".join(map(str, last10)),
+            "Trend Score": round(trend, 3),
+            "Final Projection": round(line, 2),
+            "Prob ≥ Projection (%) L5": round(p * 100, 1),
+            "Playable Odds": implied_odds,
+            "Line Adj": round(line_factor, 2),
+            "Form Indicator": form_flag
         })
     return pd.DataFrame(results)
 
@@ -233,7 +258,7 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df):
 # ---------------------------------------------------------------
 if st.button("🚀 Run Model"):
     st.info(f"Building model for matchup: **{team_a} vs {team_b}** …")
-    df = build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df)
+    df = build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, teams_df)
     df = df.sort_values("Final Projection", ascending=False).reset_index(drop=True)
     st.session_state.results_raw = df.copy()
     st.success("✅ Model built successfully!")
@@ -246,10 +271,10 @@ if "results_raw" in st.session_state and not st.session_state.results_raw.empty:
 
     def trend_color(v):
         if pd.isna(v): return "–"
-        v=max(min(v,0.5),-0.5)
-        n=v+0.5
-        if n<0.5: r,g,b=255,int(255*(n*2)),0
-        else: r,g,b=int(255*(1-(n-0.5)*2)),255,0
+        v = max(min(v, 0.5), -0.5)
+        n = v + 0.5
+        if n < 0.5: r,g,b = 255,int(255*(n*2)),0
+        else: r,g,b = int(255*(1-(n-0.5)*2)),255,0
         color=f"rgb({r},{g},{b})"
         t="▲" if v>0.05 else ("▼" if v<-0.05 else "–")
         txt="#000" if abs(v)<0.2 else "#fff"
@@ -257,8 +282,12 @@ if "results_raw" in st.session_state and not st.session_state.results_raw.empty:
 
     df["Trend"] = df["Trend Score"].apply(trend_color)
 
-    cols = ["Player","Team","Trend","Final Projection","Prob ≥ Projection (%) L5","Playable Odds",
-            "Season Avg","Line Adj","Regression Indicator","L3 Shots","L5 Shots","L10 Shots"]
+    cols = [
+        "Player","Team","Trend","Final Projection",
+        "Prob ≥ Projection (%) L5","Playable Odds",
+        "Season Avg","Line Adj","Form Indicator",
+        "L3 Shots","L5 Shots","L10 Shots"
+    ]
     vis = df[[c for c in cols if c in df.columns]]
 
     html_table = vis.to_html(index=False, escape=False)
