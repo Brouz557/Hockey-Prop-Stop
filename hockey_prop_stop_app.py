@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Hockey Prop Stop — Shot Projection Probabilities + Odds
+# 🏒 Hockey Prop Stop — Shot Projection Probabilities + Odds (Compact View)
 # ---------------------------------------------------------------
 
 import streamlit as st
@@ -23,18 +23,44 @@ st.markdown(
 )
 
 # ---------------------------------------------------------------
-# Custom CSS
+# Custom CSS (compact + optimized Trend column)
 # ---------------------------------------------------------------
 st.markdown(
     """
     <style>
-    .dataframe td {
-        white-space: normal !important;
-        word-wrap: break-word !important;
-        text-align: center !important;
-        line-height: 1.3em !important;
+    table.dataframe {
+        font-size: 12px !important;
+        width: 100%;
+        border-collapse: collapse;
     }
-    .stDataFrame { overflow-x: auto; }
+    .dataframe th, .dataframe td {
+        padding: 3px 5px !important;
+        line-height: 1.1em !important;
+        text-align: center !important;
+        vertical-align: middle !important;
+        white-space: nowrap !important;
+    }
+    .dataframe thead th {
+        background-color: #f2f2f2;
+        font-weight: 600;
+    }
+    .trend-box {
+        display: inline-block;
+        min-width: 28px;
+        padding: 2px 4px;
+        border-radius: 4px;
+        font-size: 11px;
+        font-weight: 600;
+        text-align: center;
+        vertical-align: middle;
+    }
+    .stMarkdown {
+        margin: 0 !important;
+        padding: 0 !important;
+    }
+    .stDataFrame {
+        overflow-x: auto;
+    }
     </style>
     """,
     unsafe_allow_html=True,
@@ -227,10 +253,7 @@ if run_model:
             else:
                 odds_val = 100 * ((1 - p) / p)
             odds_val = round(odds_val)
-            if odds_val > 0:
-                implied_odds = f"+{odds_val}"
-            else:
-                implied_odds = str(odds_val)
+            implied_odds = f"+{odds_val}" if odds_val > 0 else str(odds_val)
         else:
             implied_odds = "–"
 
@@ -269,7 +292,7 @@ if run_model:
         color=f"rgb({r},{g},{b})"
         t="▲" if v>0.05 else ("▼" if v<-0.05 else "–")
         txt="#000" if abs(v)<0.2 else "#fff"
-        return f"<div style='background:{color};color:{txt};font-weight:600;border-radius:6px;padding:4px 8px;text-align:center;'>{t}</div>"
+        return f"<div class='trend-box' style='background:{color};color:{txt};'>{t}</div>"
     df["Trend"]=df["Trend Score"].apply(trend_color)
 
     # --- Column order ---
