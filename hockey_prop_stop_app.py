@@ -247,10 +247,35 @@ if "results_raw" in st.session_state and not st.session_state.results_raw.empty:
     vis = df[[c for c in cols if c in df.columns]].sort_values("Final Projection", ascending=False)
 
     html_table = vis.to_html(index=False, escape=False)
+
     components.html(
         f"""
+        <style>
+        table {{
+            width: 100%;
+            border-collapse: collapse;
+            font-family: 'Source Sans Pro', sans-serif;
+            color: #f0f0f0;
+        }}
+        th {{
+            background-color: #00B140;
+            color: white;
+            padding: 6px;
+            text-align: center;
+        }}
+        td {{
+            background-color: #1e1e1e;
+            color: #f0f0f0;
+            padding: 4px;
+            text-align: center;
+        }}
+        tr:nth-child(even) td {{
+            background-color: #2a2a2a;
+        }}
+        </style>
+
         <div style='overflow-x:auto;height:600px'>
-        {html_table}
+            {html_table}
         </div>
         """,
         height=620,
