@@ -295,7 +295,7 @@ if st.session_state.results is not None and not st.session_state.results.empty:
         st.markdown(f"**Regression Summary for {selected_player}:**")
         st.markdown(f"🧭 Regression Status: **{player_regression}**")
 
-        base = alt.Chart(trend_df).encode(x=alt.X("game_num:Q", title="Most Recent 5 Games"))
+        base = alt.Chart(trend_df).encode(x=alt.X("game_num:O", title="Most Recent 5 Games"))
         shots_line = base.mark_line(color="#1f77b4").encode(
             y=alt.Y("sog_ma:Q", title="Shots on Goal (5-Game Avg)")
         )
@@ -317,3 +317,4 @@ if st.session_state.results is not None and not st.session_state.results.empty:
         )
 
         st.altair_chart(chart, use_container_width=True)
+
