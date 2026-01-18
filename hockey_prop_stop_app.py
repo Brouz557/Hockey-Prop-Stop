@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Hockey Prop Stop — Restored Version (CST timestamp)
+# 🏒 Hockey Prop Stop — Full App (True Repo Timestamp in CST)
 # ---------------------------------------------------------------
 
 import streamlit as st
@@ -89,25 +89,30 @@ if skaters_df.empty or shots_df.empty:
 st.success("✅ Data loaded successfully.")
 
 # ---------------------------------------------------------------
-# Data Last Updated Timestamp (CST/CDT)
+# Data Last Updated Timestamp (CST/CDT - True Repo Mod Time)
 # ---------------------------------------------------------------
 def get_latest_update_time(files):
-    """Return the most recent modification or upload time in CST/CDT."""
+    """Return true last modification or upload time in CST/CDT."""
     tz_cst = pytz.timezone("America/Chicago")
 
-    # If any file uploaded, use current local time
-    if any(f is not None for f in files):
-        return datetime.datetime.now(tz_cst).strftime("%Y-%m-%d %I:%M %p CST")
-
-    # Otherwise check repo file modification times
-    paths = ["Skaters.xlsx","SHOT DATA.xlsx","GOALTENDERS.xlsx","LINE DATA.xlsx","TEAMS.xlsx"]
+    # Check repo file modification times
+    repo_paths = ["Skaters.xlsx","SHOT DATA.xlsx","GOALTENDERS.xlsx","LINE DATA.xlsx","TEAMS.xlsx"]
     mtimes = []
-    for p in paths:
+    for p in repo_paths:
         if os.path.exists(p):
             t_utc = datetime.datetime.utcfromtimestamp(os.path.getmtime(p)).replace(tzinfo=pytz.utc)
             mtimes.append(t_utc.astimezone(tz_cst))
-    if mtimes:
-        return max(mtimes).strftime("%Y-%m-%d %I:%M %p CST")
+
+    # If any uploaded files, prefer those times (most recent)
+    upload_times = []
+    for f in files:
+        if f is not None:
+            upload_times.append(datetime.datetime.now(tz_cst))
+
+    # Pick the most recent between repo and uploads
+    all_times = mtimes + upload_times
+    if all_times:
+        return max(all_times).strftime("%Y-%m-%d %I:%M %p CST")
 
     return None
 
