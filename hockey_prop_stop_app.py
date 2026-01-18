@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Hockey Prop Stop — Defensive Rating Integration (NAME fix)
+# 🏒 Hockey Prop Stop — Defensive Rating Integration (Opponent fix)
 # ---------------------------------------------------------------
 
 import streamlit as st
@@ -130,10 +130,15 @@ else:
     st.error("❌ Could not find a player column in SHOT DATA file.")
     st.stop()
 
-# Make sure opponent and sog columns exist
-if "opponent" not in shots_df.columns:
-    st.error("❌ Could not find an 'Opponent' column in SHOT DATA file.")
+# --- Normalize and detect Opponent column ---
+opp_col = next((c for c in shots_df.columns if "opp" in c.lower()), None)
+if not opp_col:
+    st.error("❌ Could not find an Opponent column in SHOT DATA file.")
     st.stop()
+else:
+    shots_df.rename(columns={opp_col: "opponent"}, inplace=True)
+
+# --- Detect and standardize SOG column ---
 sog_col = next((c for c in shots_df.columns if "sog" in c), None)
 if not sog_col:
     st.error("❌ Could not find a shots-on-goal (SOG) column in SHOT DATA file.")
