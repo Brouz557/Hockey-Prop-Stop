@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Hockey Prop Stop — Final Version (True Data Timestamp)
+# 🏒 Hockey Prop Stop — Final Version (SHOT DATA Timestamp Only)
 # ---------------------------------------------------------------
 
 import streamlit as st
@@ -89,15 +89,21 @@ if skaters_df.empty or shots_df.empty:
 st.success("✅ Data loaded successfully.")
 
 # ---------------------------------------------------------------
-# 🕒 Data Last Updated — Based on Data File Mod Times
+# 🕒 Data Last Updated — SHOT DATA File Only (CST/CDT)
 # ---------------------------------------------------------------
-def get_data_update_time():
-    """Return last modification time of any data file (CST/CDT)."""
+def get_shots_file_update_time(shots_file):
+    """Return last modification time of the SHOT DATA file in CST/CDT."""
     tz_cst = pytz.timezone("America/Chicago")
+
+    # If user uploaded a SHOT DATA file, show upload time
+    if shots_file is not None:
+        return datetime.datetime.now(tz_cst).strftime("%Y-%m-%d %I:%M %p CST (uploaded)")
+
+    # Otherwise check repo or local data folders
     base_paths = ["/mount/src/hockey-prop-stop/data", "data", "."]
-    filenames = ["Skaters.xlsx","SHOT DATA.xlsx","GOALTENDERS.xlsx","LINE DATA.xlsx","TEAMS.xlsx"]
-    
+    filenames = ["SHOT DATA.xlsx", "SHOT DATA.csv"]
     mtimes = []
+
     for base in base_paths:
         for fname in filenames:
             path = os.path.join(base, fname)
@@ -107,14 +113,15 @@ def get_data_update_time():
                     mtimes.append(t_utc.astimezone(tz_cst))
                 except Exception:
                     pass
-    
+
     if mtimes:
-        return max(mtimes).strftime("%Y-%m-%d %I:%M %p CST")
+        most_recent = max(mtimes)
+        return most_recent.strftime("%Y-%m-%d %I:%M %p CST")
     else:
         return None
 
 # Display timestamp
-last_update = get_data_update_time()
+last_update = get_shots_file_update_time(shots_file)
 if last_update:
     st.markdown(f"🕒 **Data last updated:** {last_update}")
 else:
