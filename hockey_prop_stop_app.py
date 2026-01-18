@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Hockey Prop Stop — Defensive Rating Integration (Opponent fix v2)
+# 🏒 Hockey Prop Stop — Defensive Rating + Cache Refresh (v3)
 # ---------------------------------------------------------------
 
 import streamlit as st
@@ -24,7 +24,7 @@ st.markdown(
 )
 
 # ---------------------------------------------------------------
-# Sidebar Uploaders
+# Sidebar Uploaders + Cache Reset Button
 # ---------------------------------------------------------------
 st.sidebar.header("📂 Upload Data Files (.xlsx or .csv)")
 skaters_file = st.sidebar.file_uploader("Skaters", type=["xlsx","csv"])
@@ -32,6 +32,11 @@ shots_file   = st.sidebar.file_uploader("SHOT DATA", type=["xlsx","csv"])
 goalies_file = st.sidebar.file_uploader("GOALTENDERS", type=["xlsx","csv"])
 lines_file   = st.sidebar.file_uploader("LINE DATA", type=["xlsx","csv"])
 teams_file   = st.sidebar.file_uploader("TEAMS", type=["xlsx","csv"])
+
+# Add force reload button
+if st.sidebar.button("🔄 Force Reload Data Cache"):
+    st.cache_data.clear()
+    st.experimental_rerun()
 
 # ---------------------------------------------------------------
 # Helper Functions
@@ -115,17 +120,17 @@ else:
     st.markdown("🕒 **Data last updated:** Unknown")
 
 # ---------------------------------------------------------------
-# Normalize Columns and Detect Key Fields
+# Normalize Columns (to lowercase)
 # ---------------------------------------------------------------
 for df in [skaters_df, shots_df, goalies_df, lines_df]:
     if not df.empty:
-        df.columns = df.columns.str.strip()
+        df.columns = df.columns.str.lower().str.strip()
 
-team_col = next((c for c in skaters_df.columns if "team" in c.lower()), None)
+team_col = next((c for c in skaters_df.columns if "team" in c), None)
 player_col = "name" if "name" in skaters_df.columns else None
 
 # Detect key shot data columns dynamically
-player_col_shots = next((c for c in shots_df.columns if "player" in c.lower() or "name" in c.lower()), None)
+player_col_shots = next((c for c in shots_df.columns if "player" in c or "name" in c), None)
 if player_col_shots:
     shots_df.rename(columns={player_col_shots: "player"}, inplace=True)
 else:
@@ -135,7 +140,7 @@ else:
 # --- Robust Opponent column detection ---
 possible_opp_cols = [
     c for c in shots_df.columns
-    if c.strip().lower() in ["opponent", "opp", "opponent_team", "opp team"] or "opp" in c.lower()
+    if c in ["opponent", "opp", "opponent_team", "opp team"] or "opp" in c
 ]
 if not possible_opp_cols:
     st.error(f"❌ Could not find an Opponent column in SHOT DATA file. Found columns: {list(shots_df.columns)}")
@@ -144,7 +149,7 @@ else:
     shots_df.rename(columns={possible_opp_cols[0]: "opponent"}, inplace=True)
 
 # --- Detect and standardize SOG column ---
-sog_col = next((c for c in shots_df.columns if "sog" in c.lower()), None)
+sog_col = next((c for c in shots_df.columns if "sog" in c), None)
 if not sog_col:
     st.error("❌ Could not find a shots-on-goal (SOG) column in SHOT DATA file.")
     st.stop()
@@ -188,7 +193,7 @@ def build_model(team_a, team_b, skaters_df, shots_df):
         season_avg = np.mean(sog_values)
         trend = (l5 - season_avg) / season_avg if season_avg > 0 else 0
 
-        lam = l5  # λ = L5 average
+        lam = l5
         line = round(lam, 2)
         prob = 1 - poisson.cdf(np.floor(line) - 1, mu=lam)
         p = min(max(prob, 0.001), 0.999)
