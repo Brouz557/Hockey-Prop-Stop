@@ -277,7 +277,6 @@ if "results" in st.session_state and st.session_state.results is not None and no
         index=player_list.index(st.session_state.get("selected_player", player_list[0]))
         if st.session_state.get("selected_player") in player_list else 0
     )
-    st.session_state.selected_player = selected_player
 
     df_p = shots_df[shots_df["player"].str.lower() == selected_player.lower()].copy()
 
