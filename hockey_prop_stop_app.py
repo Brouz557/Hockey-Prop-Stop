@@ -58,13 +58,15 @@ def load_file(file):
     if not file: return pd.DataFrame()
     try:
         return pd.read_excel(file) if file.name.lower().endswith(".xlsx") else pd.read_csv(file)
-    except Exception: return pd.DataFrame()
+    except Exception:
+        return pd.DataFrame()
 
 def safe_read(path):
     try:
         if not os.path.exists(path): return pd.DataFrame()
         return pd.read_excel(path) if path.lower().endswith(".xlsx") else pd.read_csv(path)
-    except Exception: return pd.DataFrame()
+    except Exception:
+        return pd.DataFrame()
 
 def load_data(file_uploader, default_path):
     if file_uploader is not None: return load_file(file_uploader)
@@ -245,6 +247,10 @@ if st.session_state.results is not None and not st.session_state.results.empty:
         t="▲" if v>0.05 else ("▼" if v<-0.05 else "–")
         txt="#000" if abs(v)<0.2 else "#fff"
         return f"<div style='background:{color};color:{txt};font-weight:600;border-radius:6px;padding:4px 8px;text-align:center;'>{t}</div>"
+
+    # --- Safety fix: ensure column exists ---
+    if "Trend Score" not in df.columns:
+        df["Trend Score"] = np.nan
 
     df["Trend"] = df["Trend Score"].apply(trend_color)
 
