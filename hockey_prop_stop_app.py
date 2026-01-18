@@ -281,10 +281,11 @@ if run_model:
         return f"<div style='background:{color};color:{txt};font-weight:600;border-radius:6px;padding:4px 8px;text-align:center;'>{t}</div>"
     df["Trend"] = df["Trend Score"].apply(trend_color)
 
-    # --- Column order ---
-    cols = ["Player", "Team", "Trend", "Final Projection", "Prob ≥ Projection (%)", "Playable Odds",
-            "Season Avg", "Matchup Rating", "L3 Shots", "L5 Shots", "L10 Shots",
-            "Base Projection", "Goalie Adj", "Line Adj"]
+    # --- Column order (hide Base Projection + Goalie Adj) ---
+    cols = [
+        "Player","Team","Trend","Final Projection","Prob ≥ Projection (%)","Playable Odds",
+        "Season Avg","Matchup Rating","L3 Shots","L5 Shots","L10 Shots","Line Adj"
+    ]
     vis = df[[c for c in cols if c in df.columns]].sort_values("Final Projection", ascending=False)
     st.session_state.results = vis
 
@@ -295,3 +296,4 @@ if st.session_state.results is not None:
     st.markdown("### 📊 Player Projections (with Probabilities + Implied Odds)")
     html_table = st.session_state.results.to_html(index=False, escape=False)
     st.markdown(f"<div style='overflow-x:auto'>{html_table}</div>", unsafe_allow_html=True)
+
