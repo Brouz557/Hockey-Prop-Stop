@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Hockey Prop Stop — Usage-Adjusted Regression Detection (Fixed)
+# 🏒 Hockey Prop Stop — Regression + Line Adjustment Restored
 # ---------------------------------------------------------------
 
 import streamlit as st
@@ -138,6 +138,7 @@ run_model = st.button("🚀 Run Model")
 if run_model:
     st.info(f"Building model for matchup: **{team_a} vs {team_b}** ...")
 
+    # --- Goalie adjustments ---
     goalie_adj, rebound_rate = {}, {}
     if not goalies_df.empty:
         g = goalies_df.copy()
@@ -152,6 +153,23 @@ if run_model:
         goalie_adj = (league_avg / team_avg).to_dict()
         rebound_rate = g.groupby("team")["rebound_rate"].mean().to_dict()
 
+    # --- Line adjustments ---
+    line_adj = {}
+    if not lines_df.empty:
+        l = lines_df.copy()
+        l["games"] = pd.to_numeric(l["games"], errors="coerce").fillna(0)
+        l["sog against"] = pd.to_numeric(l["sog against"], errors="coerce").fillna(0)
+        l = (
+            l.groupby(["line pairings","team"],as_index=False)
+             .agg({"games":"sum","sog against":"sum"})
+        )
+        l["sog_against_per_game"] = np.where(l["games"]>0,l["sog against"]/l["games"],np.nan)
+        team_avg = l.groupby("team")["sog_against_per_game"].mean()
+        league_avg = team_avg.mean()
+        l["line_factor"] = (league_avg / l["sog_against_per_game"]).clip(0.7,1.3)
+        line_adj = l.copy()
+
+    # --- Roster setup ---
     roster = (
         skaters_df[skaters_df[team_col].isin([team_a, team_b])]
         [[player_col, team_col]]
@@ -187,7 +205,17 @@ if run_model:
 
         opp = team_b if team == team_a else team_a
         goalie_factor = np.clip(goalie_adj.get(opp, 1.0), 0.7, 1.3)
-        adj_proj = base_proj * (0.7 + 0.3 * goalie_factor)
+
+        # --- Line factor per player ---
+        line_factor = 1.0
+        if not isinstance(line_adj, dict):
+            last_name = str(player).split()[-1].lower()
+            m = line_adj[line_adj["line pairings"].str.contains(last_name, case=False, na=False)]
+            if not m.empty:
+                line_factor = np.average(m["line_factor"], weights=m["games"])
+            line_factor = np.clip(line_factor, 0.7, 1.3)
+
+        adj_proj = base_proj * (0.7 + 0.3 * goalie_factor) * (0.7 + 0.3 * line_factor)
         adj_proj = max(0, round(adj_proj, 2))
 
         # --- Poisson probability ---
@@ -237,6 +265,7 @@ if run_model:
             "Final Projection": adj_proj,
             "Prob ≥ Projection (%)": prob_hit_proj_pct,
             "Playable Odds": implied_odds,
+            "Line Adj": round(line_factor, 2),
             "Regression Indicator": regression_flag
         })
         progress.progress(i / total)
@@ -261,7 +290,7 @@ if run_model:
 
     cols = [
         "Player","Team","Trend","Final Projection","Prob ≥ Projection (%)",
-        "Playable Odds","Season Avg","Regression Indicator",
+        "Playable Odds","Line Adj","Season Avg","Regression Indicator",
         "L3 Shots","L5 Shots","L10 Shots"
     ]
     vis = df[[c for c in cols if c in df.columns]].sort_values("Final Projection",ascending=False)
