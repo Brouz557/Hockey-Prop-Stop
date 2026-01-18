@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Hockey Prop Stop — Regression + Line Adjustment Restored
+# 🏒 Hockey Prop Stop — Regression + Line Adj + TOI Fix (Seconds → Minutes)
 # ---------------------------------------------------------------
 
 import streamlit as st
@@ -110,14 +110,14 @@ shots_df.columns   = shots_df.columns.str.lower().str.strip()
 if not goalies_df.empty: goalies_df.columns = goalies_df.columns.str.lower().str.strip()
 if not lines_df.empty:   lines_df.columns   = lines_df.columns.str.lower().str.strip()
 
-team_col = next((c for c in skaters_df.columns if "team" in c), None)
+team_col   = next((c for c in skaters_df.columns if "team" in c), None)
 player_col = "name" if "name" in skaters_df.columns else None
-toi_col = next((c for c in skaters_df.columns if "toi" in c), None)
-gp_col = next((c for c in skaters_df.columns if "gp" in c or "games" in c), None)
+toi_col    = "icetime"   # your TOI column (in seconds)
+gp_col     = "games"     # your Games Played column
 
-sog_col = next((c for c in shots_df.columns if "sog" in c), None)
-goal_col = next((c for c in shots_df.columns if "goal" in c), None)
-game_col = next((c for c in shots_df.columns if "game" in c and "id" in c), None)
+sog_col    = next((c for c in shots_df.columns if "sog" in c), None)
+goal_col   = next((c for c in shots_df.columns if "goal" in c), None)
+game_col   = next((c for c in shots_df.columns if "game" in c and "id" in c), None)
 player_col_shots = next((c for c in shots_df.columns if "player" in c or "name" in c), None)
 
 # ---------------------------------------------------------------
@@ -229,22 +229,22 @@ if run_model:
 
         # --- Regression Indicator (TOI + GP) ---
         regression_flag = "Unknown"
-        if toi_col and gp_col:
-            match = skaters_df[skaters_df[player_col].str.lower() == player.lower()]
-            if not match.empty:
-                season_toi = pd.to_numeric(match[toi_col], errors="coerce").mean()
-                games_played = pd.to_numeric(match[gp_col], errors="coerce").mean()
-                if season_toi > 0 and games_played > 0:
-                    avg_toi = season_toi / games_played
-                    sog_per60 = (season_avg / avg_toi) * 60
-                    recent_per60 = (lambda_recent / avg_toi) * 60
-                    rate_change = (recent_per60 - sog_per60) / sog_per60 if sog_per60 > 0 else 0
-                    if rate_change > 0.15:
-                        regression_flag = "Usage-Driven Breakout"
-                    elif rate_change < -0.15:
-                        regression_flag = "Usage Drop"
-                    else:
-                        regression_flag = "Stable"
+        match = skaters_df[skaters_df[player_col].str.lower() == player.lower()]
+        if not match.empty:
+            season_toi = pd.to_numeric(match[toi_col], errors="coerce").mean()
+            games_played = pd.to_numeric(match[gp_col], errors="coerce").mean()
+            if season_toi > 0 and games_played > 0:
+                # Convert seconds → minutes
+                avg_toi = (season_toi / games_played) / 60.0
+                sog_per60 = (season_avg / avg_toi) * 60
+                recent_per60 = (lambda_recent / avg_toi) * 60
+                rate_change = (recent_per60 - sog_per60) / sog_per60 if sog_per60 > 0 else 0
+                if rate_change > 0.15:
+                    regression_flag = "Usage-Driven Breakout"
+                elif rate_change < -0.15:
+                    regression_flag = "Usage Drop"
+                else:
+                    regression_flag = "Stable"
 
         # --- Odds ---
         p = min(max(prob_hit_proj, 0.001), 0.999)
