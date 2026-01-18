@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Hockey Prop Stop — Usage-Adjusted Regression Detection
+# 🏒 Hockey Prop Stop — Usage-Adjusted Regression Detection (Fixed)
 # ---------------------------------------------------------------
 
 import streamlit as st
@@ -152,7 +152,6 @@ if run_model:
         goalie_adj = (league_avg / team_avg).to_dict()
         rebound_rate = g.groupby("team")["rebound_rate"].mean().to_dict()
 
-    # --- Roster setup ---
     roster = (
         skaters_df[skaters_df[team_col].isin([team_a, team_b])]
         [[player_col, team_col]]
@@ -177,6 +176,7 @@ if run_model:
             progress.progress(i / total)
             continue
 
+        # --- Shot trends ---
         game_sogs = df_p.groupby("gameid")[["sog","goal"]].sum().reset_index().sort_values("gameid")
         sog_values = game_sogs["sog"].tolist()
         last3, last5, last10 = sog_values[-3:], sog_values[-5:], sog_values[-10:]
@@ -199,25 +199,26 @@ if run_model:
         prob_hit_proj = 1 - poisson.cdf(np.floor(adj_proj) - 1, mu=lambda_blend)
         prob_hit_proj_pct = round(prob_hit_proj * 100, 1) if not pd.isna(prob_hit_proj) else np.nan
 
-        # --- Usage-Adjusted Regression Indicator ---
+        # --- Regression Indicator (TOI + GP) ---
         regression_flag = "Unknown"
-        if toi_col and gp_col and player.lower() in skaters_df[player_col].str.lower().values:
-            row_skat = skaters_df[skaters_df[player_col].str.lower() == player.lower()]
-            season_toi = pd.to_numeric(row_skat[toi_col], errors="coerce").mean()
-            games_played = pd.to_numeric(row_skat[gp_col], errors="coerce").mean()
-            if season_toi > 0 and games_played > 0:
-                avg_toi = season_toi / games_played
-                sog_per60 = (season_avg / avg_toi) * 60
-                recent_per60 = (lambda_recent / avg_toi) * 60
-                rate_change = (recent_per60 - sog_per60) / sog_per60 if sog_per60 > 0 else 0
-                if rate_change > 0.15:
-                    regression_flag = "Usage-Driven Breakout"
-                elif rate_change < -0.15:
-                    regression_flag = "Usage Drop"
-                else:
-                    regression_flag = "Stable"
+        if toi_col and gp_col:
+            match = skaters_df[skaters_df[player_col].str.lower() == player.lower()]
+            if not match.empty:
+                season_toi = pd.to_numeric(match[toi_col], errors="coerce").mean()
+                games_played = pd.to_numeric(match[gp_col], errors="coerce").mean()
+                if season_toi > 0 and games_played > 0:
+                    avg_toi = season_toi / games_played
+                    sog_per60 = (season_avg / avg_toi) * 60
+                    recent_per60 = (lambda_recent / avg_toi) * 60
+                    rate_change = (recent_per60 - sog_per60) / sog_per60 if sog_per60 > 0 else 0
+                    if rate_change > 0.15:
+                        regression_flag = "Usage-Driven Breakout"
+                    elif rate_change < -0.15:
+                        regression_flag = "Usage Drop"
+                    else:
+                        regression_flag = "Stable"
 
-        # --- American odds conversion ---
+        # --- Odds ---
         p = min(max(prob_hit_proj, 0.001), 0.999)
         if p >= 0.5:
             odds_val = -100 * (p / (1 - p))
@@ -229,6 +230,9 @@ if run_model:
         results.append({
             "Player": player, "Team": team,
             "Season Avg": round(season_avg, 2),
+            "L3 Shots": ", ".join(map(str, last3)),
+            "L5 Shots": ", ".join(map(str, last5)),
+            "L10 Shots": ", ".join(map(str, last10)),
             "Trend Score": round(trend, 3),
             "Final Projection": adj_proj,
             "Prob ≥ Projection (%)": prob_hit_proj_pct,
@@ -255,8 +259,11 @@ if run_model:
         return f"<div style='background:{color};color:{txt};font-weight:600;border-radius:6px;padding:4px 8px;text-align:center;'>{t}</div>"
     df["Trend"] = df["Trend Score"].apply(trend_color)
 
-    cols = ["Player","Team","Trend","Final Projection","Prob ≥ Projection (%)",
-            "Playable Odds","Season Avg","Regression Indicator"]
+    cols = [
+        "Player","Team","Trend","Final Projection","Prob ≥ Projection (%)",
+        "Playable Odds","Season Avg","Regression Indicator",
+        "L3 Shots","L5 Shots","L10 Shots"
+    ]
     vis = df[[c for c in cols if c in df.columns]].sort_values("Final Projection",ascending=False)
     st.session_state.results = vis
 
