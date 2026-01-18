@@ -161,12 +161,27 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df):
         player, team = row.player, row.team
         df_p = grouped.get(player.lower(), pd.DataFrame())
         if df_p.empty: continue
+
+        # --- Make sure SOG is numeric ---
         game_sogs = df_p.groupby(game_col)[["sog","goal"]].sum().reset_index().sort_values(game_col)
+        game_sogs["sog"] = pd.to_numeric(game_sogs["sog"], errors="coerce").fillna(0)
+
         sog_values = game_sogs["sog"].tolist()
-        last3, last5, last10 = sog_values[-3:], sog_values[-5:], sog_values[-10:]
+        if len(sog_values) == 0:
+            continue
+
+        last3 = sog_values[-3:] if len(sog_values) >= 3 else sog_values
+        last5 = sog_values[-5:] if len(sog_values) >= 5 else sog_values
+        last10 = sog_values[-10:] if len(sog_values) >= 10 else sog_values
+
         l3, l5, l10 = np.mean(last3), np.mean(last5), np.mean(last10)
         season_avg = np.mean(sog_values)
-        trend = 0 if pd.isna(l10) or l10 == 0 else (l5 - l10) / l10
+
+        # --- Fixed Trend Calculation ---
+        if l10 > 0 and not pd.isna(l5):
+            trend = (l5 - l10) / l10
+        else:
+            trend = 0
 
         # --- Line factor ---
         line_factor = 1.0
@@ -263,7 +278,7 @@ if st.session_state.results is not None and not st.session_state.results.empty:
     st.markdown(f"<div style='overflow-x:auto'>{html_table}</div>", unsafe_allow_html=True)
 
 # ---------------------------------------------------------------
-# Player Trend Visualization (Reactive + Persistent Dropdown)
+# Player Trend Visualization (Reactive Dropdown)
 # ---------------------------------------------------------------
 if "results" in st.session_state and st.session_state.results is not None and not st.session_state.results.empty:
     st.markdown("### 📈 Player Regression Trend Viewer")
