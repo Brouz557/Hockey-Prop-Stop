@@ -291,7 +291,12 @@ if st.session_state.results is not None and not st.session_state.results.empty:
             x=alt.X(
                 "game_num:O",
                 title="Most Recent 5 Games",
-                axis=alt.Axis(labelAngle=-90)   # vertical tick labels
+                axis=alt.Axis(
+                    labelAngle=0,
+                    labelAlign="center",
+                    labelBaseline="top",
+                    tickMinStep=1
+                )
             )
         )
         shots_line = base.mark_line(color="#1f77b4").encode(
