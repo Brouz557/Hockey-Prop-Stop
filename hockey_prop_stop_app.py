@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Hockey Prop Stop — Final Projection + Goal Predictions
+# 🏒 Hockey Prop Stop — Final Projection + Sortable Goals Table
 # ---------------------------------------------------------------
 
 import streamlit as st
@@ -7,6 +7,7 @@ import pandas as pd
 import numpy as np
 import os, contextlib, io, datetime
 from datetime import timezone, timedelta
+import plotly.graph_objects as go
 
 # ---------------------------------------------------------------
 # Page Setup
@@ -213,7 +214,7 @@ if run_model:
         shoot_pct=(total_goals/total_sogs) if total_sogs>0 else 0
         proj_goals=adj_proj*shoot_pct
 
-        l10_fmt="<br>".join([", ".join(map(str,last10[:5])),", ".join(map(str,last10[5:]))]) if len(last10)>5 else ", ".join(map(str,last10))
+        l10_fmt=", ".join(map(str,last10))
 
         results.append({
             "Player":player,"Team":team,
@@ -229,28 +230,17 @@ if run_model:
         progress.progress(i/total)
     progress.empty()
 
-    if not results: st.warning("⚠️ No players found."); st.stop()
     df=pd.DataFrame(results)
 
-    # --- Matchup Rating logic (combined) ---
+    # --- Matchup Rating ---
     avg_proj,std_proj=df["Final Projection"].mean(),df["Final Projection"].std()
     def rate_proj(v):
         if v>=avg_proj+std_proj: return "Strong"
         elif v>=avg_proj: return "Moderate"
         return "Weak"
-    df["Proj Rating"]=df["Final Projection"].apply(rate_proj)
-    def rate_line(v):
-        if v>1.0: return "Strong"
-        elif 0.95<=v<=0.99: return "Moderate"
-        return "Weak"
-    df["Line Qualifier"]=df["Line Adj"].apply(rate_line)
-    def combine(r):
-        if "Strong" in (r["Proj Rating"],r["Line Qualifier"]): return "Strong"
-        if "Moderate" in (r["Proj Rating"],r["Line Qualifier"]): return "Moderate"
-        return "Weak"
-    df["Matchup Rating"]=df.apply(combine,axis=1)
+    df["Matchup Rating"]=df["Final Projection"].apply(rate_proj)
 
-    # --- Trend color boxes ---
+    # --- Trend color ---
     def trend_color(v):
         if pd.isna(v): return "–"
         v=max(min(v,0.5),-0.5)
@@ -263,21 +253,6 @@ if run_model:
         return f"<div style='background:{color};color:{txt};font-weight:600;border-radius:6px;padding:4px 8px;text-align:center;'>{t}</div>"
     df["Trend"]=df["Trend Score"].apply(trend_color)
 
-    # --- Logos ---
-    team_logos={"Toronto Maple Leafs":"TOR","Vancouver Canucks":"VAN","Edmonton Oilers":"EDM",
-        "Calgary Flames":"CGY","Montreal Canadiens":"MTL","Ottawa Senators":"OTT","Boston Bruins":"BOS",
-        "New York Rangers":"NYR","New York Islanders":"NYI","Philadelphia Flyers":"PHI","Pittsburgh Penguins":"PIT",
-        "Chicago Blackhawks":"CHI","Colorado Avalanche":"COL","Dallas Stars":"DAL","Vegas Golden Knights":"VGK",
-        "Los Angeles Kings":"LAK","San Jose Sharks":"SJS","Seattle Kraken":"SEA","Detroit Red Wings":"DET",
-        "Tampa Bay Lightning":"TBL","Florida Panthers":"FLA","Nashville Predators":"NSH","Washington Capitals":"WSH",
-        "Buffalo Sabres":"BUF","St. Louis Blues":"STL","Winnipeg Jets":"WPG","Minnesota Wild":"MIN",
-        "Anaheim Ducks":"ANA","Arizona Coyotes":"ARI","Columbus Blue Jackets":"CBJ","New Jersey Devils":"NJD"}
-    def get_logo_html(team):
-        abbr=team_logos.get(team)
-        if not abbr: return team
-        return f"<img src='https://assets.nhle.com/logos/nhl/svg/{abbr}_light.svg' width='26' style='vertical-align:middle;margin-right:6px;'> {team}"
-    df["Team"]=df["Team"].apply(get_logo_html)
-
     # --- Display order ---
     cols=["Player","Team","Trend","Final Projection","Projected Goals","Shooting %",
           "Season Avg","Matchup Rating","L3 Shots","L5 Shots","L10 Shots",
@@ -285,7 +260,23 @@ if run_model:
     vis=df[[c for c in cols if c in df.columns]].sort_values("Final Projection",ascending=False)
     st.session_state.results=vis
 
+# ---------------------------------------------------------------
+# Display Results
+# ---------------------------------------------------------------
 if st.session_state.results is not None:
-    st.markdown(f"### 📊 {team_a} vs {team_b} — Player Projections (Adjusted)")
+    st.markdown("### 📊 Player Projections (Adjusted)")
     html_table=st.session_state.results.to_html(index=False,escape=False)
     st.markdown(f"<div style='overflow-x:auto'>{html_table}</div>",unsafe_allow_html=True)
+
+    # --- Interactive (Sortable) Table ---
+    st.markdown("### 🔁 Interactive Table (Sortable)")
+
+    table_df = st.session_state.results[["Player","Final Projection","Projected Goals","Shooting %"]].copy()
+    fig = go.Figure(
+        data=[go.Table(
+            header=dict(values=list(table_df.columns), fill_color="#00B140", align="center", font=dict(color="white", size=14)),
+            cells=dict(values=[table_df[c] for c in table_df.columns], align="center")
+        )]
+    )
+    fig.update_layout(height=400, margin=dict(l=0,r=0,b=0,t=30))
+    st.plotly_chart(fig, use_container_width=True)
