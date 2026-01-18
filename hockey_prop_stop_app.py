@@ -1,13 +1,11 @@
 # ---------------------------------------------------------------
-# 🏒 Hockey Prop Stop — Final Projection + Sortable Goals Table
+# 🏒 Hockey Prop Stop — Final Projection + Sortable Table
 # ---------------------------------------------------------------
 
 import streamlit as st
 import pandas as pd
 import numpy as np
-import os, contextlib, io, datetime
-from datetime import timezone, timedelta
-import plotly.graph_objects as go
+import os, contextlib, io
 
 # ---------------------------------------------------------------
 # Page Setup
@@ -270,13 +268,7 @@ if st.session_state.results is not None:
 
     # --- Interactive (Sortable) Table ---
     st.markdown("### 🔁 Interactive Table (Sortable)")
-
-    table_df = st.session_state.results[["Player","Final Projection","Projected Goals","Shooting %"]].copy()
-    fig = go.Figure(
-        data=[go.Table(
-            header=dict(values=list(table_df.columns), fill_color="#00B140", align="center", font=dict(color="white", size=14)),
-            cells=dict(values=[table_df[c] for c in table_df.columns], align="center")
-        )]
-    )
-    fig.update_layout(height=400, margin=dict(l=0,r=0,b=0,t=30))
-    st.plotly_chart(fig, use_container_width=True)
+    sortable_df = st.session_state.results[
+        ["Player","Final Projection","Projected Goals","Shooting %","Matchup Rating"]
+    ]
+    st.dataframe(sortable_df, use_container_width=True, hide_index=True)
