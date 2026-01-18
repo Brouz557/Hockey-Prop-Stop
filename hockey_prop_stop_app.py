@@ -1,11 +1,11 @@
 # ---------------------------------------------------------------
-# 🏒 Hockey Prop Stop — Final Version (SHOT DATA Timestamp Only)
+# 🏒 Hockey Prop Stop — Final Version (True SHOT DATA Git Timestamp)
 # ---------------------------------------------------------------
 
 import streamlit as st
 import pandas as pd
 import numpy as np
-import os, contextlib, io, datetime, pytz
+import os, contextlib, io, datetime, pytz, subprocess
 from scipy.stats import poisson
 import streamlit.components.v1 as components
 
@@ -37,24 +37,19 @@ teams_file   = st.sidebar.file_uploader("TEAMS", type=["xlsx","csv"])
 # Helper Functions
 # ---------------------------------------------------------------
 def load_file(file):
-    if not file:
-        return pd.DataFrame()
+    if not file: return pd.DataFrame()
     try:
         return pd.read_excel(file) if file.name.lower().endswith(".xlsx") else pd.read_csv(file)
-    except Exception:
-        return pd.DataFrame()
+    except Exception: return pd.DataFrame()
 
 def safe_read(path):
     try:
-        if not os.path.exists(path):
-            return pd.DataFrame()
+        if not os.path.exists(path): return pd.DataFrame()
         return pd.read_excel(path) if path.lower().endswith(".xlsx") else pd.read_csv(path)
-    except Exception:
-        return pd.DataFrame()
+    except Exception: return pd.DataFrame()
 
 def load_data(file_uploader, default_path):
-    if file_uploader is not None:
-        return load_file(file_uploader)
+    if file_uploader is not None: return load_file(file_uploader)
     return safe_read(default_path)
 
 # ---------------------------------------------------------------
@@ -66,8 +61,7 @@ def load_all_data(skaters_file, shots_file, goalies_file, lines_file, teams_file
     def find_file(name):
         for p in base_paths:
             full = os.path.join(p, name)
-            if os.path.exists(full):
-                return full
+            if os.path.exists(full): return full
         return None
     with contextlib.redirect_stdout(io.StringIO()):
         skaters = load_data(skaters_file, find_file("Skaters.xlsx") or "Skaters.xlsx")
@@ -89,39 +83,32 @@ if skaters_df.empty or shots_df.empty:
 st.success("✅ Data loaded successfully.")
 
 # ---------------------------------------------------------------
-# 🕒 Data Last Updated — SHOT DATA File Only (CST/CDT)
+# 🕒 Data Last Updated — True Git Commit Timestamp for SHOT DATA
 # ---------------------------------------------------------------
-def get_shots_file_update_time(shots_file):
-    """Return last modification time of the SHOT DATA file in CST/CDT."""
+def get_shots_file_git_time():
+    """Return last Git commit time for SHOT DATA file (CST/CDT)."""
     tz_cst = pytz.timezone("America/Chicago")
+    file_candidates = [
+        "data/SHOT DATA.xlsx",
+        "/mount/src/hockey-prop-stop/data/SHOT DATA.xlsx",
+        "SHOT DATA.xlsx"
+    ]
 
-    # If user uploaded a SHOT DATA file, show upload time
-    if shots_file is not None:
-        return datetime.datetime.now(tz_cst).strftime("%Y-%m-%d %I:%M %p CST (uploaded)")
+    for f in file_candidates:
+        if os.path.exists(f):
+            try:
+                git_time_str = subprocess.check_output(
+                    ["git", "log", "-1", "--format=%cd", "--date=iso", f],
+                    stderr=subprocess.DEVNULL
+                ).decode().strip()
+                if git_time_str:
+                    git_time = datetime.datetime.fromisoformat(git_time_str.replace("Z","+00:00"))
+                    return git_time.astimezone(tz_cst).strftime("%Y-%m-%d %I:%M %p CST")
+            except Exception:
+                continue
+    return None
 
-    # Otherwise check repo or local data folders
-    base_paths = ["/mount/src/hockey-prop-stop/data", "data", "."]
-    filenames = ["SHOT DATA.xlsx", "SHOT DATA.csv"]
-    mtimes = []
-
-    for base in base_paths:
-        for fname in filenames:
-            path = os.path.join(base, fname)
-            if os.path.exists(path):
-                try:
-                    t_utc = datetime.datetime.utcfromtimestamp(os.path.getmtime(path)).replace(tzinfo=pytz.utc)
-                    mtimes.append(t_utc.astimezone(tz_cst))
-                except Exception:
-                    pass
-
-    if mtimes:
-        most_recent = max(mtimes)
-        return most_recent.strftime("%Y-%m-%d %I:%M %p CST")
-    else:
-        return None
-
-# Display timestamp
-last_update = get_shots_file_update_time(shots_file)
+last_update = get_shots_file_git_time()
 if last_update:
     st.markdown(f"🕒 **Data last updated:** {last_update}")
 else:
@@ -131,10 +118,9 @@ else:
 # Normalize Columns
 # ---------------------------------------------------------------
 for df in [skaters_df, shots_df, goalies_df, lines_df]:
-    if not df.empty:
-        df.columns = df.columns.str.lower().str.strip()
+    if not df.empty: df.columns = df.columns.str.lower().str.strip()
 
-team_col   = next((c for c in skaters_df.columns if "team" in c), None)
+team_col = next((c for c in skaters_df.columns if "team" in c), None)
 player_col = "name" if "name" in skaters_df.columns else None
 toi_col, gp_col = "icetime", "games"
 
@@ -162,8 +148,8 @@ st.markdown("---")
 def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df):
     results = []
     skaters = skaters_df[skaters_df[team_col].isin([team_a, team_b])]
-    roster = skaters[[player_col, team_col]].rename(columns={player_col: "player", team_col: "team"}).drop_duplicates("player")
-    grouped = {n.lower(): g.sort_values(game_col) for n, g in shots_df.groupby(shots_df["player"].str.lower())}
+    roster = skaters[[player_col, team_col]].rename(columns={player_col:"player", team_col:"team"}).drop_duplicates("player")
+    grouped = {n.lower():g.sort_values(game_col) for n,g in shots_df.groupby(shots_df["player"].str.lower())}
 
     # --- Line Adjustments ---
     line_adj = {}
@@ -175,39 +161,36 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df):
         l["sog_against_per_game"] = np.where(l["games"]>0, l["sog against"]/l["games"], np.nan)
         team_avg = l.groupby("team")["sog_against_per_game"].mean()
         league_avg = team_avg.mean()
-        l["line_factor"] = (league_avg / l["sog_against_per_game"]).clip(0.7, 1.3)
+        l["line_factor"] = (league_avg / l["sog_against_per_game"]).clip(0.7,1.3)
         line_adj = l.copy()
 
     for row in roster.itertuples(index=False):
         player, team = row.player, row.team
         df_p = grouped.get(player.lower(), pd.DataFrame())
-        if df_p.empty:
-            continue
+        if df_p.empty: continue
 
         game_sogs = df_p.groupby(game_col)[["sog","goal"]].sum().reset_index().sort_values(game_col)
         sog_values = game_sogs["sog"].tolist()
-        if len(sog_values) == 0:
-            continue
+        if not sog_values: continue
 
-        last3 = sog_values[-3:] if len(sog_values) >= 3 else sog_values
-        last5 = sog_values[-5:] if len(sog_values) >= 5 else sog_values
-        last10 = sog_values[-10:] if len(sog_values) >= 10 else sog_values
+        last3 = sog_values[-3:] if len(sog_values)>=3 else sog_values
+        last5 = sog_values[-5:] if len(sog_values)>=5 else sog_values
+        last10 = sog_values[-10:] if len(sog_values)>=10 else sog_values
 
         l3, l5, l10 = np.mean(last3), np.mean(last5), np.mean(last10)
         season_avg = np.mean(sog_values)
-        trend = (l5 - l10) / l10 if l10 > 0 else 0
+        trend = (l5 - l10)/l10 if l10>0 else 0
 
         line_factor = 1.0
-        if not isinstance(line_adj, dict):
+        if not isinstance(line_adj,dict):
             last_name = str(player).split()[-1].lower()
-            m = line_adj[line_adj["line pairings"].str.contains(last_name, case=False, na=False)]
+            m = line_adj[line_adj["line pairings"].str.contains(last_name,case=False,na=False)]
             if not m.empty:
-                line_factor = np.average(m["line_factor"], weights=m["games"])
-            line_factor = np.clip(line_factor, 0.7, 1.3)
+                line_factor = np.average(m["line_factor"],weights=m["games"])
+            line_factor = np.clip(line_factor,0.7,1.3)
 
         lam = np.mean(last5) if last5 else np.nan
-        if pd.isna(lam):
-            continue
+        if pd.isna(lam): continue
 
         prob = 1 - poisson.cdf(np.floor(lam) - 1, mu=lam)
         p = min(max(prob, 0.001), 0.999)
@@ -216,33 +199,32 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df):
 
         regression_flag = "⚪ Stable"
         try:
-            season_toi = pd.to_numeric(skaters_df.loc[skaters_df[player_col].str.lower()==player.lower(), "icetime"], errors="coerce").mean()
-            games_played = pd.to_numeric(skaters_df.loc[skaters_df[player_col].str.lower()==player.lower(), "games"], errors="coerce").mean()
+            season_toi = pd.to_numeric(skaters_df.loc[skaters_df[player_col].str.lower()==player.lower(),"icetime"],errors="coerce").mean()
+            games_played = pd.to_numeric(skaters_df.loc[skaters_df[player_col].str.lower()==player.lower(),"games"],errors="coerce").mean()
             if season_toi>0 and games_played>0:
                 avg_toi = (season_toi / games_played) / 60.0
                 sog_per60 = (season_avg / avg_toi) * 60
-                blended_recent = 0.7 * l5 + 0.3 * l10
-                recent_per60 = (blended_recent / avg_toi) * 60 if avg_toi > 0 else 0
-                usage_delta = (recent_per60 - sog_per60) / sog_per60 if sog_per60 > 0 else 0
+                blended_recent = 0.7*l5 + 0.3*l10
+                recent_per60 = (blended_recent / avg_toi)*60 if avg_toi>0 else 0
+                usage_delta = (recent_per60 - sog_per60)/sog_per60 if sog_per60>0 else 0
                 if usage_delta > 0.15: regression_flag = "🟢 Breakout Candidate"
                 elif usage_delta < -0.15: regression_flag = "🔴 Regression Risk"
-                elif abs(usage_delta) <= 0.05: regression_flag = "⚪ Stable"
+                elif abs(usage_delta)<=0.05: regression_flag = "⚪ Stable"
                 else: regression_flag = "🟠 Mixed Signal"
-        except Exception:
-            pass
+        except Exception: pass
 
         results.append({
-            "Player": player,"Team": team,
-            "Season Avg": round(season_avg,2),
-            "L3 Shots": ", ".join(map(str,last3)),
-            "L5 Shots": ", ".join(map(str,last5)),
-            "L10 Shots": ", ".join(map(str,last10)),
-            "Trend Score": round(trend,3),
-            "Final Projection": round(lam,2),
-            "Prob ≥ Projection (%)": round(p*100,1),
-            "Playable Odds": implied_odds,
-            "Line Adj": round(line_factor,2),
-            "Regression Indicator": regression_flag
+            "Player":player,"Team":team,
+            "Season Avg":round(season_avg,2),
+            "L3 Shots":", ".join(map(str,last3)),
+            "L5 Shots":", ".join(map(str,last5)),
+            "L10 Shots":", ".join(map(str,last10)),
+            "Trend Score":round(trend,3),
+            "Final Projection":round(lam,2),
+            "Prob ≥ Projection (%)":round(p*100,1),
+            "Playable Odds":implied_odds,
+            "Line Adj":round(line_factor,2),
+            "Regression Indicator":regression_flag
         })
     return pd.DataFrame(results)
 
@@ -250,7 +232,7 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df):
 # Run Model
 # ---------------------------------------------------------------
 if st.button("🚀 Run Model"):
-    st.info(f"Building model for matchup: **{team_a} vs {team_b}** ...")
+    st.info(f"Building model for matchup: **{team_a} vs {team_b}** …")
     df = build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df)
     df = df.sort_values("Final Projection", ascending=False).reset_index(drop=True)
     st.session_state.results_raw = df.copy()
@@ -263,10 +245,9 @@ if "results_raw" in st.session_state and not st.session_state.results_raw.empty:
     df = st.session_state.results_raw.copy()
 
     def trend_color(v):
-        if pd.isna(v):
-            return "–"
-        v = max(min(v,0.5),-0.5)
-        n = v+0.5
+        if pd.isna(v): return "–"
+        v=max(min(v,0.5),-0.5)
+        n=v+0.5
         if n<0.5: r,g,b=255,int(255*(n*2)),0
         else: r,g,b=int(255*(1-(n-0.5)*2)),255,0
         color=f"rgb({r},{g},{b})"
@@ -276,9 +257,8 @@ if "results_raw" in st.session_state and not st.session_state.results_raw.empty:
 
     df["Trend"] = df["Trend Score"].apply(trend_color)
 
-    cols = ["Player","Team","Trend","Final Projection","Prob ≥ Projection (%)",
-            "Playable Odds","Season Avg","Line Adj","Regression Indicator",
-            "L3 Shots","L5 Shots","L10 Shots"]
+    cols = ["Player","Team","Trend","Final Projection","Prob ≥ Projection (%)","Playable Odds",
+            "Season Avg","Line Adj","Regression Indicator","L3 Shots","L5 Shots","L10 Shots"]
     vis = df[[c for c in cols if c in df.columns]]
 
     html_table = vis.to_html(index=False, escape=False)
@@ -320,14 +300,9 @@ if "results_raw" in st.session_state and not st.session_state.results_raw.empty:
             padding: 4px;
             text-align: center;
         }}
-        tr:nth-child(even) td {{
-            background-color: #2a2a2a;
-        }}
+        tr:nth-child(even) td {{ background-color: #2a2a2a; }}
         </style>
-
-        <div class='scrollable-table'>
-            {html_table}
-        </div>
+        <div class='scrollable-table'>{html_table}</div>
         """,
         height=620,
         scrolling=True,
