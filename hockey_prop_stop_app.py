@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Hockey Prop Stop — Smart Probability Blending
+# 🏒 Hockey Prop Stop — Smart Regression-to-Mean Probabilities
 # ---------------------------------------------------------------
 
 import streamlit as st
@@ -226,10 +226,8 @@ if run_model:
         season_lambda = np.mean(df_p.groupby("gameid")["sog"].sum())
         recent_sogs = df_p.groupby("gameid")["sog"].sum().tail(10)
         lambda_recent = np.mean(recent_sogs)
-
         if np.isnan(lambda_recent): lambda_recent = 0
         if np.isnan(season_lambda): season_lambda = 0
-
         var_recent = np.var(recent_sogs)
         var_ratio = var_recent / (lambda_recent + 1e-6)
         consistency = 1 / (1 + var_ratio)
@@ -241,7 +239,6 @@ if run_model:
             prob_hit_proj = np.nan
         else:
             prob_hit_proj = 1 - poisson.cdf(np.floor(x) - 1, mu=lambda_blend)
-
         prob_hit_proj_pct = round(prob_hit_proj * 100, 1) if not pd.isna(prob_hit_proj) else np.nan
 
         # --- Convert probability to implied American odds ---
@@ -262,13 +259,12 @@ if run_model:
             "Season Avg": round(season_avg, 2),
             "L3 Shots": ", ".join(map(str, last3)),
             "L5 Shots": ", ".join(map(str, last5)),
-            "L10 Shots": l10_fmt, "Trend Score": round(trend, 3),
-            "Base Projection": round(base_proj, 2),
-            "Goalie Adj": round(goalie_factor, 2),
-            "Line Adj": round(line_factor, 2),
+            "L10 Shots": l10_fmt,
+            "Trend Score": round(trend, 3),
             "Final Projection": adj_proj,
             "Prob ≥ Projection (%)": prob_hit_proj_pct,
-            "Playable Odds": implied_odds
+            "Playable Odds": implied_odds,
+            "Line Adj": round(line_factor, 2)
         })
         progress.progress(i / total)
     progress.empty()
@@ -288,18 +284,20 @@ if run_model:
         if pd.isna(v): return "–"
         v = max(min(v, 0.5), -0.5)
         n = v + 0.5
-        if n < 0.5: r, g, b = 255, int(255 * (n * 2)), 0
-        else: r, g, b = int(255 * (1 - (n - 0.5) * 2)), 255, 0
+        if n < 0.5:
+            r, g, b = 255, int(255 * (n * 2)), 0
+        else:
+            r, g, b = int(255 * (1 - (n - 0.5) * 2)), 255, 0
         color = f"rgb({r},{g},{b})"
         t = "▲" if v > 0.05 else ("▼" if v < -0.05 else "–")
         txt = "#000" if abs(v) < 0.2 else "#fff"
-        return f"<div style='background:{color};color:{txt};font-weight:600;border-radius:6px;"
-        f"padding:4px 8px;text-align:center;'>{t}</div>"
+        return f"<div style='background:{color};color:{txt};font-weight:600;border-radius:6px;padding:4px 8px;text-align:center;'>{t}</div>"
     df["Trend"] = df["Trend Score"].apply(trend_color)
 
-    # --- Column order (Base Projection + Goalie Adj hidden) ---
+    # --- Final display table ---
     cols = [
-        "Player","Team","Trend","Final Projection","Prob ≥ Projection (%)","Playable Odds",
+        "Player","Team","Trend","Final Projection",
+        "Prob ≥ Projection (%)","Playable Odds",
         "Season Avg","Matchup Rating","L3 Shots","L5 Shots","L10 Shots","Line Adj"
     ]
     vis = df[[c for c in cols if c in df.columns]].sort_values("Final Projection", ascending=False)
