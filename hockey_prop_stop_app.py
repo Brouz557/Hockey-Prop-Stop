@@ -287,6 +287,9 @@ if st.session_state.results is not None and not st.session_state.results.empty:
         st.markdown(f"**Regression Summary for {selected_player}:**")
         st.markdown(f"🧭 Regression Status: **{player_regression}**")
 
+        # --- Dynamic Y-axis scaling with 30% buffer ---
+        sog_max = max(trend_df["sog_ma"].max() * 1.3, 6)
+
         base = alt.Chart(trend_df).encode(
             x=alt.X(
                 "game_num:O",
@@ -300,11 +303,18 @@ if st.session_state.results is not None and not st.session_state.results.empty:
             )
         )
         shots_line = base.mark_line(color="#1f77b4").encode(
-            y=alt.Y("sog_ma:Q", title="Shots on Goal (5-Game Avg)")
+            y=alt.Y(
+                "sog_ma:Q",
+                title="Shots on Goal (5-Game Avg)",
+                scale=alt.Scale(domain=[0, sog_max])
+            )
         )
         pct_line = base.mark_line(color="#d62728", strokeDash=[4,3]).encode(
-            y=alt.Y("shoot_pct_ma:Q", title="Shooting % (5-Game Avg)",
-                    axis=alt.Axis(titleColor="#d62728"))
+            y=alt.Y(
+                "shoot_pct_ma:Q",
+                title="Shooting % (5-Game Avg)",
+                axis=alt.Axis(titleColor="#d62728")
+            )
         )
         chart = (
             alt.layer(shots_line, pct_line)
@@ -313,4 +323,3 @@ if st.session_state.results is not None and not st.session_state.results.empty:
                         title=f"{selected_player} — Shots vs Shooting% (Last 5 Games)")
         )
         st.altair_chart(chart, use_container_width=True)
-
