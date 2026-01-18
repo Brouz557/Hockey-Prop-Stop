@@ -1,5 +1,5 @@
- # ---------------------------------------------------------------
-# 🏒 Hockey Prop Stop — L5 Probability Update + Secure Login
+# ---------------------------------------------------------------
+# 🏒 Hockey Prop Stop — L5 Probability Update
 # ---------------------------------------------------------------
 
 import streamlit as st
@@ -8,38 +8,6 @@ import numpy as np
 import os, contextlib, io, datetime, pytz, subprocess
 from scipy.stats import poisson
 import streamlit.components.v1 as components
-import streamlit_authenticator as stauth
-
-# ---------------------------------------------------------------
-# 🔐 Authentication (new API, login in sidebar)
-# ---------------------------------------------------------------
-credentials = {
-    "usernames": {
-        "admin":   {"name": "Admin",   "password": stauth.Hasher(["hockey123"]).generate()[0]},
-        "analyst": {"name": "Analyst", "password": stauth.Hasher(["analytics456"]).generate()[0]},
-        "scout":   {"name": "Scout",   "password": stauth.Hasher(["skate789"]).generate()[0]},
-    }
-}
-
-authenticator = stauth.Authenticate(
-    credentials,
-    "hockeyprop_cookie",  # cookie name
-    "abcdef",             # signature key
-    cookie_expiry_days=30
-)
-
-# 🔑 Login form appears in sidebar
-name, authentication_status, username = authenticator.login("Login", location="sidebar")
-
-if authentication_status is False:
-    st.error("❌ Username/password is incorrect")
-    st.stop()
-elif authentication_status is None:
-    st.warning("Please enter your username and password to continue ⛸️")
-    st.stop()
-else:
-    authenticator.logout("Logout", "sidebar")
-    st.sidebar.success(f"✅ Logged in as {name}")
 
 # ---------------------------------------------------------------
 # Page Setup
@@ -72,15 +40,13 @@ def load_file(file):
     if not file: return pd.DataFrame()
     try:
         return pd.read_excel(file) if file.name.lower().endswith(".xlsx") else pd.read_csv(file)
-    except Exception:
-        return pd.DataFrame()
+    except Exception: return pd.DataFrame()
 
 def safe_read(path):
     try:
         if not os.path.exists(path): return pd.DataFrame()
         return pd.read_excel(path) if path.lower().endswith(".xlsx") else pd.read_csv(path)
-    except Exception:
-        return pd.DataFrame()
+    except Exception: return pd.DataFrame()
 
 def load_data(file_uploader, default_path):
     if file_uploader is not None: return load_file(file_uploader)
@@ -120,6 +86,7 @@ st.success("✅ Data loaded successfully.")
 # 🕒 Data Last Updated — True Git Commit Timestamp for SHOT DATA
 # ---------------------------------------------------------------
 def get_shots_file_git_time():
+    """Return last Git commit time for SHOT DATA file (CST/CDT)."""
     tz_cst = pytz.timezone("America/Chicago")
     file_candidates = [
         "data/SHOT DATA.xlsx",
@@ -141,7 +108,10 @@ def get_shots_file_git_time():
     return None
 
 last_update = get_shots_file_git_time()
-st.markdown(f"🕒 **Data last updated:** {last_update or 'Unknown'}")
+if last_update:
+    st.markdown(f"🕒 **Data last updated:** {last_update}")
+else:
+    st.markdown("🕒 **Data last updated:** Unknown")
 
 # ---------------------------------------------------------------
 # Normalize Columns
@@ -180,6 +150,7 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df):
     roster = skaters[[player_col, team_col]].rename(columns={player_col:"player", team_col:"team"}).drop_duplicates("player")
     grouped = {n.lower():g.sort_values(game_col) for n,g in shots_df.groupby(shots_df["player"].str.lower())}
 
+    # --- Line Adjustments ---
     line_adj = {}
     if not lines_df.empty and "line pairings" in lines_df.columns:
         l = lines_df.copy()
@@ -217,8 +188,10 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df):
                 line_factor = np.average(m["line_factor"],weights=m["games"])
             line_factor = np.clip(line_factor,0.7,1.3)
 
-        lam = l5
-        line = round(lam, 2)
+        lam = l5  # λ = last 5-game average
+        line = round(lam, 2)  # projected threshold = Final Projection
+
+        # Probability of at least Final Projection
         prob = 1 - poisson.cdf(np.floor(line) - 1, mu=lam)
         p = min(max(prob, 0.001), 0.999)
         odds = -100*(p/(1-p)) if p>=0.5 else 100*((1-p)/p)
@@ -238,8 +211,7 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df):
                 elif usage_delta < -0.15: regression_flag = "🔴 Regression Risk"
                 elif abs(usage_delta)<=0.05: regression_flag = "⚪ Stable"
                 else: regression_flag = "🟠 Mixed Signal"
-        except Exception:
-            pass
+        except Exception: pass
 
         results.append({
             "Player":player,"Team":team,
@@ -294,41 +266,41 @@ if "results_raw" in st.session_state and not st.session_state.results_raw.empty:
         f"""
         <style>
         div.scrollable-table {{
-            overflow-x:auto;
-            overflow-y:auto;
-            height:600px;
-            position:relative;
+            overflow-x: auto;
+            overflow-y: auto;
+            height: 600px;
+            position: relative;
         }}
         table {{
-            width:100%;
-            border-collapse:collapse;
-            font-family:'Source Sans Pro',sans-serif;
-            color:#f0f0f0;
+            width: 100%;
+            border-collapse: collapse;
+            font-family: 'Source Sans Pro', sans-serif;
+            color: #f0f0f0;
         }}
         th {{
-            background-color:#00B140;
-            color:white;
-            padding:6px;
-            text-align:center;
-            position:sticky;
-            top:0;
-            z-index:3;
+            background-color: #00B140;
+            color: white;
+            padding: 6px;
+            text-align: center;
+            position: sticky;
+            top: 0;
+            z-index: 3;
         }}
-        td:first-child,th:first-child {{
-            position:sticky;
-            left:0;
-            z-index:4;
-            background-color:#00B140;
-            color:white;
-            font-weight:bold;
+        td:first-child, th:first-child {{
+            position: sticky;
+            left: 0;
+            z-index: 4;
+            background-color: #00B140;
+            color: white;
+            font-weight: bold;
         }}
         td {{
-            background-color:#1e1e1e;
-            color:#f0f0f0;
-            padding:4px;
-            text-align:center;
+            background-color: #1e1e1e;
+            color: #f0f0f0;
+            padding: 4px;
+            text-align: center;
         }}
-        tr:nth-child(even) td {{background-color:#2a2a2a;}}
+        tr:nth-child(even) td {{ background-color: #2a2a2a; }}
         </style>
         <div class='scrollable-table'>{html_table}</div>
         """,
