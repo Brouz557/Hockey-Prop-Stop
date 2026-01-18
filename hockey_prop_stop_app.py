@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Hockey Prop Stop — Full 5-Game Projection + Line Adj
+# 🏒 Hockey Prop Stop — 5-Game Visual + Blended Regression
 # ---------------------------------------------------------------
 
 import streamlit as st
@@ -17,7 +17,7 @@ st.markdown(
     """
     <h1 style='text-align:center;color:#00B140;'>🏒 Hockey Prop Stop</h1>
     <p style='text-align:center;color:#BFC0C0;'>
-        Team-vs-Team matchup analytics with regression, 5-game projections & line adjustments
+        Team-vs-Team matchup analytics with 5-game projections and blended regression
     </p>
     """,
     unsafe_allow_html=True,
@@ -133,7 +133,7 @@ with col2: team_b = st.selectbox("Select Team B", [t for t in teams if t != team
 st.markdown("---")
 
 # ---------------------------------------------------------------
-# Cached model (5-game window)
+# Cached model (5-game window, blended regression)
 # ---------------------------------------------------------------
 @st.cache_data(show_spinner=True)
 def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df):
@@ -183,7 +183,7 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df):
         odds = -100*(p/(1-p)) if p>=0.5 else 100*((1-p)/p)
         implied_odds = f"{'+' if odds>0 else ''}{int(odds)}"
 
-        # --- Regression logic ---
+        # --- Regression logic (blended L5 + L10) ---
         regression_flag = "⚪ Stable"
         try:
             season_toi = pd.to_numeric(skaters_df.loc[skaters_df[player_col].str.lower()==player.lower(), "icetime"], errors="coerce").mean()
@@ -191,8 +191,12 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df):
             if season_toi>0 and games_played>0:
                 avg_toi = (season_toi / games_played) / 60.0
                 sog_per60 = (season_avg / avg_toi) * 60
-                recent_per60 = (l5 / avg_toi) * 60
+
+                # --- blended version here ---
+                blended_recent = np.nanmean([0.7 * l5 + 0.3 * l10])
+                recent_per60 = (blended_recent / avg_toi) * 60 if avg_toi > 0 else 0
                 usage_delta = (recent_per60 - sog_per60) / sog_per60 if sog_per60 > 0 else 0
+
                 if usage_delta > 0.15: regression_flag = "🟢 Breakout Candidate"
                 elif usage_delta < -0.15: regression_flag = "🔴 Regression Risk"
                 elif abs(usage_delta) <= 0.05: regression_flag = "⚪ Stable"
@@ -256,7 +260,7 @@ if st.session_state.results is not None and not st.session_state.results.empty:
     vis = df[[c for c in cols if c in df.columns]].sort_values("Final Projection", ascending=False)
     st.session_state.results = vis
 
-    st.markdown("### 📊 Player Projections (5-Game Form + Line Adj)")
+    st.markdown("### 📊 Player Projections (Blended Regression + 5-Game Form)")
     html_table = vis.to_html(index=False, escape=False)
     st.markdown(f"<div style='overflow-x:auto'>{html_table}</div>", unsafe_allow_html=True)
 
