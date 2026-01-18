@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Hockey Prop Stop — Regression + Line Adj + TOI Fix (Seconds → Minutes)
+# 🏒 Hockey Prop Stop — Hybrid Regression Model
 # ---------------------------------------------------------------
 
 import streamlit as st
@@ -16,7 +16,7 @@ st.markdown(
     """
     <h1 style='text-align:center;color:#00B140;'>🏒 Hockey Prop Stop</h1>
     <p style='text-align:center;color:#BFC0C0;'>
-        Team-vs-Team matchup analytics with regression-to-mean and usage insights
+        Team-vs-Team matchup analytics with hybrid regression and goal probability modeling
     </p>
     """,
     unsafe_allow_html=True,
@@ -227,24 +227,35 @@ if run_model:
         prob_hit_proj = 1 - poisson.cdf(np.floor(adj_proj) - 1, mu=lambda_blend)
         prob_hit_proj_pct = round(prob_hit_proj * 100, 1) if not pd.isna(prob_hit_proj) else np.nan
 
-        # --- Regression Indicator (TOI + GP) ---
+        # --- Hybrid Regression (Usage + Shooting Form) ---
         regression_flag = "Unknown"
         match = skaters_df[skaters_df[player_col].str.lower() == player.lower()]
         if not match.empty:
             season_toi = pd.to_numeric(match[toi_col], errors="coerce").mean()
             games_played = pd.to_numeric(match[gp_col], errors="coerce").mean()
             if season_toi > 0 and games_played > 0:
-                # Convert seconds → minutes
                 avg_toi = (season_toi / games_played) / 60.0
                 sog_per60 = (season_avg / avg_toi) * 60
                 recent_per60 = (lambda_recent / avg_toi) * 60
-                rate_change = (recent_per60 - sog_per60) / sog_per60 if sog_per60 > 0 else 0
-                if rate_change > 0.15:
-                    regression_flag = "Usage-Driven Breakout"
-                elif rate_change < -0.15:
-                    regression_flag = "Usage Drop"
+                usage_delta = (recent_per60 - sog_per60) / sog_per60 if sog_per60 > 0 else 0
+
+                total_sogs = df_p["sog"].sum()
+                total_goals = df_p["goal"].sum()
+                season_shoot_pct = (total_goals / total_sogs) if total_sogs > 0 else 0
+                recent_df = df_p.tail(10)
+                recent_sogs = recent_df["sog"].sum()
+                recent_goals = recent_df["goal"].sum()
+                recent_shoot_pct = (recent_goals / recent_sogs) if recent_sogs > 0 else season_shoot_pct
+                form_delta = (recent_shoot_pct - season_shoot_pct) / season_shoot_pct if season_shoot_pct > 0 else 0
+
+                if usage_delta > 0.15 and form_delta < -0.15:
+                    regression_flag = "🟢 Breakout Candidate"
+                elif usage_delta < -0.15 and form_delta > 0.15:
+                    regression_flag = "🔴 Regression Risk"
+                elif abs(usage_delta) < 0.15 and abs(form_delta) < 0.15:
+                    regression_flag = "⚪ Stable"
                 else:
-                    regression_flag = "Stable"
+                    regression_flag = "🟠 Mixed Signal"
 
         # --- Odds ---
         p = min(max(prob_hit_proj, 0.001), 0.999)
