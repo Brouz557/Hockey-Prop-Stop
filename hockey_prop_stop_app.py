@@ -1,4 +1,4 @@
-# ---------------------------------------------------------------
+ # ---------------------------------------------------------------
 # 🏒 Hockey Prop Stop — L5 Probability Update + Secure Login
 # ---------------------------------------------------------------
 
@@ -11,7 +11,7 @@ import streamlit.components.v1 as components
 import streamlit_authenticator as stauth
 
 # ---------------------------------------------------------------
-# 🔐 Authentication (new streamlit-authenticator API)
+# 🔐 Authentication (new API, login in sidebar)
 # ---------------------------------------------------------------
 credentials = {
     "usernames": {
@@ -28,7 +28,8 @@ authenticator = stauth.Authenticate(
     cookie_expiry_days=30
 )
 
-name, authentication_status, username = authenticator.login("Login", "main")
+# 🔑 Login form appears in sidebar
+name, authentication_status, username = authenticator.login("Login", location="sidebar")
 
 if authentication_status is False:
     st.error("❌ Username/password is incorrect")
@@ -334,4 +335,3 @@ if "results_raw" in st.session_state and not st.session_state.results_raw.empty:
         height=620,
         scrolling=True,
     )
-
