@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Hockey Prop Stop — Sticky Headers + Sticky Player Column
+# 🏒 Hockey Prop Stop — Shot Night Rank + Top-5 Highlight
 # ---------------------------------------------------------------
 
 import streamlit as st
@@ -18,7 +18,7 @@ st.markdown(
     """
     <h1 style='text-align:center;color:#00B140;'>🏒 Hockey Prop Stop</h1>
     <p style='text-align:center;color:#BFC0C0;'>
-        Team-vs-Team matchup analytics with blended regression and persistent trend visuals
+        Team-vs-Team matchup analytics with blended regression and shot-night ranking
     </p>
     """,
     unsafe_allow_html=True,
@@ -145,10 +145,8 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df):
         df_p = grouped.get(player.lower(), pd.DataFrame())
         if df_p.empty: continue
 
-        # --- Make sure SOG is numeric ---
         game_sogs = df_p.groupby(game_col)[["sog","goal"]].sum().reset_index().sort_values(game_col)
         game_sogs["sog"] = pd.to_numeric(game_sogs["sog"], errors="coerce").fillna(0)
-
         sog_values = game_sogs["sog"].tolist()
         if len(sog_values) == 0: continue
 
@@ -160,7 +158,6 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df):
         season_avg = np.mean(sog_values)
         trend = (l5 - l10) / l10 if l10 > 0 else 0
 
-        # --- Line factor ---
         line_factor = 1.0
         if not isinstance(line_adj, dict):
             last_name = str(player).split()[-1].lower()
@@ -169,7 +166,6 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df):
                 line_factor = np.average(m["line_factor"], weights=m["games"])
             line_factor = np.clip(line_factor, 0.7, 1.3)
 
-        # --- Poisson λ ---
         lam = np.mean(last5) if last5 else np.nan
         if pd.isna(lam): continue
         prob = 1 - poisson.cdf(np.floor(lam) - 1, mu=lam)
@@ -177,7 +173,6 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df):
         odds = -100*(p/(1-p)) if p>=0.5 else 100*((1-p)/p)
         implied_odds = f"{'+' if odds>0 else ''}{int(odds)}"
 
-        # --- Regression Flag ---
         regression_flag = "⚪ Stable"
         try:
             season_toi = pd.to_numeric(skaters_df.loc[skaters_df[player_col].str.lower()==player.lower(), "icetime"], errors="coerce").mean()
@@ -216,12 +211,23 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df):
 if st.button("🚀 Run Model"):
     st.info(f"Building model for matchup: **{team_a} vs {team_b}** ...")
     df = build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df)
+
+    # --- Shot Night Ranking ---
+    df["Shot Night Score"] = (
+        0.4 * (df["Trend Score"].clip(-0.5, 0.5) + 0.5) * 100 +
+        0.4 * df["Prob ≥ Projection (%)"] +
+        0.2 * df["Final Projection"] * 10
+    )
+    df.loc[df["Regression Indicator"].str.contains("Regression Risk", case=False, na=False), "Shot Night Score"] *= 0.8
+    df.loc[df["Regression Indicator"].str.contains("Mixed", case=False, na=False), "Shot Night Score"] *= 0.9
+    df["Shot Night Rank"] = df["Shot Night Score"].rank(ascending=False, method="dense").astype(int)
+
     st.session_state.results = df
     st.session_state.results_raw = df.copy()
     st.success("✅ Model built successfully!")
 
 # ---------------------------------------------------------------
-# Persistent Trend Table Rendering (Sticky Headers + Sticky Player)
+# Persistent Table Rendering with Top-5 Highlight
 # ---------------------------------------------------------------
 if "results_raw" in st.session_state and not st.session_state.results_raw.empty:
     df = st.session_state.results_raw.copy()
@@ -241,12 +247,20 @@ if "results_raw" in st.session_state and not st.session_state.results_raw.empty:
 
     df["Trend"] = df["Trend Score"].apply(trend_color)
 
-    cols = ["Player","Team","Trend","Final Projection","Prob ≥ Projection (%)",
-            "Playable Odds","Season Avg","Line Adj","Regression Indicator",
+    cols = ["Shot Night Rank","Player","Team","Trend","Final Projection","Prob ≥ Projection (%)",
+            "Playable Odds","Shot Night Score","Season Avg","Line Adj","Regression Indicator",
             "L3 Shots","L5 Shots","L10 Shots"]
-    vis = df[[c for c in cols if c in df.columns]].sort_values("Final Projection", ascending=False)
+    vis = df[[c for c in cols if c in df.columns]].sort_values("Shot Night Rank", ascending=True)
 
-    html_table = vis.to_html(index=False, escape=False)
+    # --- Highlight Top 5 ---
+    top5_players = vis.nsmallest(5, "Shot Night Rank")["Player"].tolist()
+    def highlight_top5(row):
+        style = ""
+        if row["Player"] in top5_players:
+            style = "background-color:#005e26;color:white;font-weight:700;"
+        return [style] * len(row)
+
+    html_table = vis.style.apply(highlight_top5, axis=1).to_html(index=False, escape=False)
 
     components.html(
         f"""
@@ -298,57 +312,3 @@ if "results_raw" in st.session_state and not st.session_state.results_raw.empty:
         height=620,
         scrolling=True,
     )
-
-# ---------------------------------------------------------------
-# Player Trend Visualization
-# ---------------------------------------------------------------
-if "results_raw" in st.session_state and not st.session_state.results_raw.empty:
-    st.markdown("### 📈 Player Regression Trend Viewer")
-    player_list = st.session_state.results_raw["Player"].unique().tolist()
-
-    selected_player = st.selectbox(
-        "Select a player to view detailed trend:",
-        player_list,
-        key="selected_player",
-        index=player_list.index(st.session_state.get("selected_player", player_list[0]))
-        if st.session_state.get("selected_player") in player_list else 0
-    )
-
-    df_p = shots_df[shots_df["player"].str.lower() == selected_player.lower()].copy()
-    if df_p.empty:
-        st.warning(f"No shot data available for {selected_player}.")
-    else:
-        trend_df = (
-            df_p.groupby(game_col)[["sog","goal"]]
-            .sum()
-            .reset_index()
-            .sort_values(game_col)
-            .tail(5)
-        )
-        trend_df["shoot_pct"] = np.where(trend_df["sog"] > 0, (trend_df["goal"]/trend_df["sog"]) * 100, 0)
-        trend_df["game_num"] = np.arange(1, len(trend_df)+1)
-        trend_df["sog_ma"] = trend_df["sog"].rolling(window=5, min_periods=1).mean()
-        trend_df["shoot_pct_ma"] = trend_df["shoot_pct"].rolling(window=5, min_periods=1).mean()
-
-        player_regression = st.session_state.results_raw.loc[
-            st.session_state.results_raw["Player"] == selected_player, "Regression Indicator"
-        ].values[0]
-        st.markdown(f"**Regression Summary for {selected_player}:**")
-        st.markdown(f"🧭 Regression Status: **{player_regression}**")
-
-        sog_max = max(trend_df["sog_ma"].max()*1.3, 6)
-        base = alt.Chart(trend_df).encode(
-            x=alt.X("game_num:O", title="Most Recent 5 Games", axis=alt.Axis(labelAngle=0))
-        )
-        shots_line = base.mark_line(color="#1f77b4").encode(
-            y=alt.Y("sog_ma:Q", title="Shots on Goal (5-Game Avg)", scale=alt.Scale(domain=[0, sog_max]))
-        )
-        pct_line = base.mark_line(color="#d62728", strokeDash=[4,3]).encode(
-            y=alt.Y("shoot_pct_ma:Q", title="Shooting % (5-Game Avg)", axis=alt.Axis(titleColor="#d62728"))
-        )
-        chart = (
-            alt.layer(shots_line, pct_line)
-            .resolve_scale(y="independent")
-            .properties(width=700, height=400, title=f"{selected_player} — Shots vs Shooting% (Last 5 Games)")
-        )
-        st.altair_chart(chart, use_container_width=True)
