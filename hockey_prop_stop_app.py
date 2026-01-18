@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Hockey Prop Stop — Shot Projection Probabilities + Odds (Compact View)
+# 🏒 Hockey Prop Stop — Shot Projection Probabilities + Odds (Sticky Headers)
 # ---------------------------------------------------------------
 
 import streamlit as st
@@ -23,43 +23,65 @@ st.markdown(
 )
 
 # ---------------------------------------------------------------
-# Custom CSS (compact + optimized Trend column)
+# Custom CSS (compact, readable, sticky headers)
 # ---------------------------------------------------------------
 st.markdown(
     """
     <style>
+    /* Base table layout */
     table.dataframe {
-        font-size: 12px !important;
-        width: 100%;
+        font-size: 13px !important;
         border-collapse: collapse;
+        width: 100%;
+        table-layout: auto;              /* columns auto-fit content */
     }
+
+    /* Cell styling */
     .dataframe th, .dataframe td {
-        padding: 3px 5px !important;
-        line-height: 1.1em !important;
+        padding: 6px 8px !important;
+        line-height: 1.25em !important;
         text-align: center !important;
         vertical-align: middle !important;
         white-space: nowrap !important;
     }
+
+    /* Header styling - sticky on scroll */
     .dataframe thead th {
-        background-color: #f2f2f2;
-        font-weight: 600;
+        background-color: #E9ECEF !important;
+        font-weight: 700 !important;
+        position: sticky;                /* keeps header visible */
+        top: 0;
+        z-index: 2;
+        color: #000;
+        border-bottom: 2px solid #ccc;
     }
+
+    /* Trend column style */
     .trend-box {
         display: inline-block;
-        min-width: 28px;
-        padding: 2px 4px;
+        min-width: 30px;
+        padding: 3px 5px;
         border-radius: 4px;
-        font-size: 11px;
+        font-size: 12px;
         font-weight: 600;
         text-align: center;
         vertical-align: middle;
     }
+
+    /* Layout scroll handling */
     .stMarkdown {
         margin: 0 !important;
         padding: 0 !important;
     }
-    .stDataFrame {
+    .stDataFrame, div[data-testid="stMarkdownContainer"] {
         overflow-x: auto;
+        overflow-y: auto;
+        max-height: 80vh;                /* vertical scroll area */
+    }
+
+    /* Slight hover highlight for readability */
+    tr:hover td {
+        background-color: #F8F9FA !important;
     }
     </style>
     """,
@@ -308,4 +330,4 @@ if run_model:
 if st.session_state.results is not None:
     st.markdown("### 📊 Player Projections (with Probabilities + Implied Odds)")
     html_table=st.session_state.results.to_html(index=False,escape=False)
-    st.markdown(f"<div style='overflow-x:auto'>{html_table}</div>",unsafe_allow_html=True)
+    st.markdown(f"<div style='overflow-x:auto;max-height:80vh'>{html_table}</div>",unsafe_allow_html=True)
