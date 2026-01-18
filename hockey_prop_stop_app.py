@@ -313,3 +313,4 @@ if st.session_state.results is not None and not st.session_state.results.empty:
                         title=f"{selected_player} — Shots vs Shooting% (Last 5 Games)")
         )
         st.altair_chart(chart, use_container_width=True)
+
