@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Hockey Prop Stop — L5 Probability Update
+# 🏒 Hockey Prop Stop — L5 Probability Update + Secure Login
 # ---------------------------------------------------------------
 
 import streamlit as st
@@ -8,6 +8,36 @@ import numpy as np
 import os, contextlib, io, datetime, pytz, subprocess
 from scipy.stats import poisson
 import streamlit.components.v1 as components
+import streamlit_authenticator as stauth
+
+# ---------------------------------------------------------------
+# 🔐 Authentication
+# ---------------------------------------------------------------
+names = ["Admin", "Analyst", "Scout"]
+usernames = ["admin", "analyst", "scout"]
+passwords = ["hockey123", "analytics456", "skate789"]
+
+hashed_pw = stauth.Hasher(passwords).generate()
+
+authenticator = stauth.Authenticate(
+    names,
+    usernames,
+    hashed_pw,
+    "hockeyprop_cookie",  # Cookie name
+    "abcdef",             # Signature key
+    cookie_expiry_days=30
+)
+
+name, authentication_status, username = authenticator.login("Login", "main")
+
+if authentication_status is False:
+    st.error("❌ Username/password is incorrect")
+    st.stop()
+elif authentication_status is None:
+    st.warning("Please enter your username and password to continue ⛸️")
+    st.stop()
+else:
+    st.sidebar.success(f"✅ Logged in as {name}")
 
 # ---------------------------------------------------------------
 # Page Setup
