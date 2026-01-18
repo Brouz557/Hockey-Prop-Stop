@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Hockey Prop Stop — Defensive Rating Integration (Opponent fix)
+# 🏒 Hockey Prop Stop — Defensive Rating Integration (Opponent fix v2)
 # ---------------------------------------------------------------
 
 import streamlit as st
@@ -40,13 +40,15 @@ def load_file(file):
     if not file: return pd.DataFrame()
     try:
         return pd.read_excel(file) if file.name.lower().endswith(".xlsx") else pd.read_csv(file)
-    except Exception: return pd.DataFrame()
+    except Exception:
+        return pd.DataFrame()
 
 def safe_read(path):
     try:
         if not os.path.exists(path): return pd.DataFrame()
         return pd.read_excel(path) if path.lower().endswith(".xlsx") else pd.read_csv(path)
-    except Exception: return pd.DataFrame()
+    except Exception:
+        return pd.DataFrame()
 
 def load_data(file_uploader, default_path):
     if file_uploader is not None: return load_file(file_uploader)
@@ -117,29 +119,32 @@ else:
 # ---------------------------------------------------------------
 for df in [skaters_df, shots_df, goalies_df, lines_df]:
     if not df.empty:
-        df.columns = df.columns.str.lower().str.strip()
+        df.columns = df.columns.str.strip()
 
-team_col = next((c for c in skaters_df.columns if "team" in c), None)
+team_col = next((c for c in skaters_df.columns if "team" in c.lower()), None)
 player_col = "name" if "name" in skaters_df.columns else None
 
 # Detect key shot data columns dynamically
-player_col_shots = next((c for c in shots_df.columns if "player" in c or "name" in c), None)
+player_col_shots = next((c for c in shots_df.columns if "player" in c.lower() or "name" in c.lower()), None)
 if player_col_shots:
-    shots_df = shots_df.rename(columns={player_col_shots: "player"})
+    shots_df.rename(columns={player_col_shots: "player"}, inplace=True)
 else:
     st.error("❌ Could not find a player column in SHOT DATA file.")
     st.stop()
 
-# --- Normalize and detect Opponent column ---
-opp_col = next((c for c in shots_df.columns if "opp" in c.lower()), None)
-if not opp_col:
-    st.error("❌ Could not find an Opponent column in SHOT DATA file.")
+# --- Robust Opponent column detection ---
+possible_opp_cols = [
+    c for c in shots_df.columns
+    if c.strip().lower() in ["opponent", "opp", "opponent_team", "opp team"] or "opp" in c.lower()
+]
+if not possible_opp_cols:
+    st.error(f"❌ Could not find an Opponent column in SHOT DATA file. Found columns: {list(shots_df.columns)}")
     st.stop()
 else:
-    shots_df.rename(columns={opp_col: "opponent"}, inplace=True)
+    shots_df.rename(columns={possible_opp_cols[0]: "opponent"}, inplace=True)
 
 # --- Detect and standardize SOG column ---
-sog_col = next((c for c in shots_df.columns if "sog" in c), None)
+sog_col = next((c for c in shots_df.columns if "sog" in c.lower()), None)
 if not sog_col:
     st.error("❌ Could not find a shots-on-goal (SOG) column in SHOT DATA file.")
     st.stop()
@@ -153,8 +158,10 @@ shots_df["opponent"] = shots_df["opponent"].astype(str).str.strip()
 # ---------------------------------------------------------------
 teams = sorted(skaters_df[team_col].dropna().unique().tolist())
 col1, col2 = st.columns(2)
-with col1: team_a = st.selectbox("Select Team A", teams)
-with col2: team_b = st.selectbox("Select Team B", [t for t in teams if t != team_a])
+with col1:
+    team_a = st.selectbox("Select Team A", teams)
+with col2:
+    team_b = st.selectbox("Select Team B", [t for t in teams if t != team_a])
 st.markdown("---")
 
 # ---------------------------------------------------------------
@@ -164,38 +171,40 @@ st.markdown("---")
 def build_model(team_a, team_b, skaters_df, shots_df):
     results = []
     roster = skaters_df[skaters_df[team_col].isin([team_a, team_b])][[player_col, team_col, "position"]]
-    roster = roster.rename(columns={player_col:"player", team_col:"team"}).drop_duplicates("player")
-    grouped = {n.lower():g for n,g in shots_df.groupby(shots_df["player"].str.lower())}
+    roster = roster.rename(columns={player_col: "player", team_col: "team"}).drop_duplicates("player")
+    grouped = {n.lower(): g for n, g in shots_df.groupby(shots_df["player"].str.lower())}
 
     for row in roster.itertuples(index=False):
         player, team = row.player, row.team
         df_p = grouped.get(player.lower(), pd.DataFrame())
-        if df_p.empty: continue
+        if df_p.empty:
+            continue
         sog_values = df_p["sog"].tolist()
-        if not sog_values: continue
+        if not sog_values:
+            continue
 
-        last5 = sog_values[-5:] if len(sog_values)>=5 else sog_values
+        last5 = sog_values[-5:] if len(sog_values) >= 5 else sog_values
         l5 = np.mean(last5)
         season_avg = np.mean(sog_values)
-        trend = (l5 - season_avg)/season_avg if season_avg>0 else 0
+        trend = (l5 - season_avg) / season_avg if season_avg > 0 else 0
 
         lam = l5  # λ = L5 average
         line = round(lam, 2)
         prob = 1 - poisson.cdf(np.floor(line) - 1, mu=lam)
         p = min(max(prob, 0.001), 0.999)
-        odds = -100*(p/(1-p)) if p>=0.5 else 100*((1-p)/p)
-        implied_odds = f"{'+' if odds>0 else ''}{int(odds)}"
+        odds = -100 * (p / (1 - p)) if p >= 0.5 else 100 * ((1 - p) / p)
+        implied_odds = f"{'+' if odds > 0 else ''}{int(odds)}"
 
         results.append({
-            "Player":player,
-            "Team":team,
-            "Position":row.position,
-            "Season Avg":round(season_avg,2),
-            "L5 Avg":round(l5,2),
-            "Final Projection":round(line,2),
-            "Prob ≥ Projection (%) L5":round(p*100,1),
-            "Playable Odds":implied_odds,
-            "Trend Score":round(trend,3)
+            "Player": player,
+            "Team": team,
+            "Position": row.position,
+            "Season Avg": round(season_avg, 2),
+            "L5 Avg": round(l5, 2),
+            "Final Projection": round(line, 2),
+            "Prob ≥ Projection (%) L5": round(p * 100, 1),
+            "Playable Odds": implied_odds,
+            "Trend Score": round(trend, 3)
         })
     return pd.DataFrame(results)
 
@@ -214,20 +223,28 @@ if st.button("🚀 Run Model"):
 # ---------------------------------------------------------------
 if "results_raw" in st.session_state and not st.session_state.results_raw.empty:
     df = st.session_state.results_raw.copy()
+
     def trend_color(v):
-        if pd.isna(v): return "–"
-        v = max(min(v,0.5),-0.5)
-        n = v+0.5
-        if n<0.5: r,g,b=255,int(255*(n*2)),0
-        else: r,g,b=int(255*(1-(n-0.5)*2)),255,0
-        color=f"rgb({r},{g},{b})"
-        t="▲" if v>0.05 else ("▼" if v<-0.05 else "–")
-        txt="#000" if abs(v)<0.2 else "#fff"
+        if pd.isna(v):
+            return "–"
+        v = max(min(v, 0.5), -0.5)
+        n = v + 0.5
+        if n < 0.5:
+            r, g, b = 255, int(255 * (n * 2)), 0
+        else:
+            r, g, b = int(255 * (1 - (n - 0.5) * 2)), 255, 0
+        color = f"rgb({r},{g},{b})"
+        t = "▲" if v > 0.05 else ("▼" if v < -0.05 else "–")
+        txt = "#000" if abs(v) < 0.2 else "#fff"
         return f"<div style='background:{color};color:{txt};font-weight:600;border-radius:6px;padding:4px 8px;text-align:center;'>{t}</div>"
+
     df["Trend"] = df["Trend Score"].apply(trend_color)
 
-    cols = ["Player","Team","Position","Trend","Final Projection","Prob ≥ Projection (%) L5",
-            "Playable Odds","Season Avg","L5 Avg"]
+    cols = [
+        "Player", "Team", "Position", "Trend",
+        "Final Projection", "Prob ≥ Projection (%) L5",
+        "Playable Odds", "Season Avg", "L5 Avg"
+    ]
     vis = df[[c for c in cols if c in df.columns]]
 
     html_table = vis.to_html(index=False, escape=False)
@@ -278,7 +295,7 @@ if "results_raw" in st.session_state and not st.session_state.results_raw.empty:
     )
 
 # ---------------------------------------------------------------
-# Defensive Rating Table (New Section)
+# Defensive Rating Table
 # ---------------------------------------------------------------
 st.markdown("---")
 st.markdown("### 🧱 Team Defensive Ratings (by Position)")
@@ -288,23 +305,23 @@ try:
         skaters_df[[player_col, "position"]],
         left_on="player", right_on=player_col, how="left"
     )
-    merged = merged.dropna(subset=["opponent","position","sog"])
+    merged = merged.dropna(subset=["opponent", "position", "sog"])
     merged["sog"] = pd.to_numeric(merged["sog"], errors="coerce").fillna(0)
 
-    team_pos = merged.groupby(["opponent","position"])["sog"].mean().reset_index()
-    team_pos.rename(columns={"opponent":"Team","sog":"Avg SOG Allowed"}, inplace=True)
+    team_pos = merged.groupby(["opponent", "position"])["sog"].mean().reset_index()
+    team_pos.rename(columns={"opponent": "Team", "sog": "Avg SOG Allowed"}, inplace=True)
 
     league_avg = team_pos.groupby("position")["Avg SOG Allowed"].transform("mean")
-    team_pos["Rel to Avg"] = team_pos["Avg SOG Allowed"]/league_avg
+    team_pos["Rel to Avg"] = team_pos["Avg SOG Allowed"] / league_avg
 
     team_pos["Percentile"] = team_pos.groupby("position")["Avg SOG Allowed"].rank(pct=True)
     team_pos["Def Rating (1=Best,5=Worst)"] = pd.cut(
         team_pos["Percentile"],
-        bins=[0,0.2,0.4,0.6,0.8,1.0],
-        labels=[1,2,3,4,5]
+        bins=[0, 0.2, 0.4, 0.6, 0.8, 1.0],
+        labels=[1, 2, 3, 4, 5]
     ).astype(int)
 
-    team_pos = team_pos.sort_values(["position","Def Rating (1=Best,5=Worst)"])
+    team_pos = team_pos.sort_values(["position", "Def Rating (1=Best,5=Worst)"])
     st.dataframe(team_pos, use_container_width=True, hide_index=True)
 
 except Exception as e:
