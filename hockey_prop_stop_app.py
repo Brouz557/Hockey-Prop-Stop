@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Hockey Prop Stop — Full 5-Game Projection Version
+# 🏒 Hockey Prop Stop — Final Fixed 5-Game Projection Version
 # ---------------------------------------------------------------
 
 import streamlit as st
@@ -161,7 +161,7 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df):
         odds = -100*(p/(1-p)) if p>=0.5 else 100*((1-p)/p)
         implied_odds = f"{'+' if odds>0 else ''}{int(odds)}"
 
-        # Regression logic (simplified but intact)
+        # Regression logic
         regression_flag = "⚪ Stable"
         try:
             season_toi = pd.to_numeric(skaters_df.loc[skaters_df[player_col].str.lower()==player.lower(), toi_col], errors="coerce").mean()
@@ -173,6 +173,8 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df):
                 usage_delta = (recent_per60 - sog_per60) / sog_per60 if sog_per60 > 0 else 0
                 if usage_delta > 0.15: regression_flag = "🟢 Breakout Candidate"
                 elif usage_delta < -0.15: regression_flag = "🔴 Regression Risk"
+                elif abs(usage_delta) <= 0.05: regression_flag = "⚪ Stable"
+                else: regression_flag = "🟠 Mixed Signal"
         except Exception:
             pass
 
@@ -209,7 +211,7 @@ if st.button("🚀 Run Model"):
 if st.session_state.results is not None and not st.session_state.results.empty:
     df = st.session_state.results
 
-    # Trend color arrows
+    # Trend color arrows — safely handle missing Trend Score
     def trend_color(v):
         if pd.isna(v): return "–"
         v = max(min(v, 0.5), -0.5)
@@ -221,7 +223,11 @@ if st.session_state.results is not None and not st.session_state.results.empty:
         txt="#000" if abs(v)<0.2 else "#fff"
         return f"<div style='background:{color};color:{txt};font-weight:600;border-radius:6px;padding:4px 8px;text-align:center;'>{t}</div>"
 
-    df["Trend"] = df["Trend Score"].apply(trend_color)
+    if "Trend Score" in df.columns:
+        df["Trend"] = df["Trend Score"].apply(trend_color)
+    else:
+        df["Trend Score"] = np.nan
+        df["Trend"] = "–"
 
     cols = ["Player","Team","Trend","Final Projection","Prob ≥ Projection (%)","Playable Odds",
             "Season Avg","Regression Indicator","L3 Shots","L5 Shots","L10 Shots"]
