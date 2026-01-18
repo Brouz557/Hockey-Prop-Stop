@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Hockey Prop Stop — Defensive Rating Integration
+# 🏒 Hockey Prop Stop — Defensive Rating Integration (NAME fix)
 # ---------------------------------------------------------------
 
 import streamlit as st
@@ -113,13 +113,35 @@ else:
     st.markdown("🕒 **Data last updated:** Unknown")
 
 # ---------------------------------------------------------------
-# Normalize Columns
+# Normalize Columns and Detect Key Fields
 # ---------------------------------------------------------------
 for df in [skaters_df, shots_df, goalies_df, lines_df]:
-    if not df.empty: df.columns = df.columns.str.lower().str.strip()
+    if not df.empty:
+        df.columns = df.columns.str.lower().str.strip()
 
 team_col = next((c for c in skaters_df.columns if "team" in c), None)
 player_col = "name" if "name" in skaters_df.columns else None
+
+# Detect key shot data columns dynamically
+player_col_shots = next((c for c in shots_df.columns if "player" in c or "name" in c), None)
+if player_col_shots:
+    shots_df = shots_df.rename(columns={player_col_shots: "player"})
+else:
+    st.error("❌ Could not find a player column in SHOT DATA file.")
+    st.stop()
+
+# Make sure opponent and sog columns exist
+if "opponent" not in shots_df.columns:
+    st.error("❌ Could not find an 'Opponent' column in SHOT DATA file.")
+    st.stop()
+sog_col = next((c for c in shots_df.columns if "sog" in c), None)
+if not sog_col:
+    st.error("❌ Could not find a shots-on-goal (SOG) column in SHOT DATA file.")
+    st.stop()
+shots_df.rename(columns={sog_col: "sog"}, inplace=True)
+
+shots_df["player"] = shots_df["player"].astype(str).str.strip()
+shots_df["opponent"] = shots_df["opponent"].astype(str).str.strip()
 
 # ---------------------------------------------------------------
 # Team Selection
@@ -131,14 +153,14 @@ with col2: team_b = st.selectbox("Select Team B", [t for t in teams if t != team
 st.markdown("---")
 
 # ---------------------------------------------------------------
-# Core Model (unchanged)
+# Core Model
 # ---------------------------------------------------------------
 @st.cache_data(show_spinner=True)
-def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df):
+def build_model(team_a, team_b, skaters_df, shots_df):
     results = []
     roster = skaters_df[skaters_df[team_col].isin([team_a, team_b])][[player_col, team_col, "position"]]
     roster = roster.rename(columns={player_col:"player", team_col:"team"}).drop_duplicates("player")
-    grouped = {n.lower():g.sort_values("gameid") for n,g in shots_df.groupby(shots_df["player"].str.lower())}
+    grouped = {n.lower():g for n,g in shots_df.groupby(shots_df["player"].str.lower())}
 
     for row in roster.itertuples(index=False):
         player, team = row.player, row.team
@@ -177,7 +199,7 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df):
 # ---------------------------------------------------------------
 if st.button("🚀 Run Model"):
     st.info(f"Building model for matchup: **{team_a} vs {team_b}** …")
-    df = build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df)
+    df = build_model(team_a, team_b, skaters_df, shots_df)
     df = df.sort_values("Final Projection", ascending=False).reset_index(drop=True)
     st.session_state.results_raw = df.copy()
     st.success("✅ Model built successfully!")
@@ -257,7 +279,6 @@ st.markdown("---")
 st.markdown("### 🧱 Team Defensive Ratings (by Position)")
 
 try:
-    # Merge shots and skaters
     merged = shots_df.merge(
         skaters_df[[player_col, "position"]],
         left_on="player", right_on=player_col, how="left"
@@ -265,15 +286,12 @@ try:
     merged = merged.dropna(subset=["opponent","position","sog"])
     merged["sog"] = pd.to_numeric(merged["sog"], errors="coerce").fillna(0)
 
-    # Compute avg shots allowed per game per position
     team_pos = merged.groupby(["opponent","position"])["sog"].mean().reset_index()
     team_pos.rename(columns={"opponent":"Team","sog":"Avg SOG Allowed"}, inplace=True)
 
-    # Normalize by league average for each position
     league_avg = team_pos.groupby("position")["Avg SOG Allowed"].transform("mean")
     team_pos["Rel to Avg"] = team_pos["Avg SOG Allowed"]/league_avg
 
-    # Assign 1–5 rating
     team_pos["Percentile"] = team_pos.groupby("position")["Avg SOG Allowed"].rank(pct=True)
     team_pos["Def Rating (1=Best,5=Worst)"] = pd.cut(
         team_pos["Percentile"],
@@ -282,7 +300,6 @@ try:
     ).astype(int)
 
     team_pos = team_pos.sort_values(["position","Def Rating (1=Best,5=Worst)"])
-
     st.dataframe(team_pos, use_container_width=True, hide_index=True)
 
 except Exception as e:
