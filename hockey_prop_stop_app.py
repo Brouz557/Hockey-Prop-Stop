@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Hockey Prop Stop — 5-Game Visual + Blended Regression
+# 🏒 Hockey Prop Stop — Blended Regression + 5-Game Visualization
 # ---------------------------------------------------------------
 
 import streamlit as st
@@ -17,7 +17,7 @@ st.markdown(
     """
     <h1 style='text-align:center;color:#00B140;'>🏒 Hockey Prop Stop</h1>
     <p style='text-align:center;color:#BFC0C0;'>
-        Team-vs-Team matchup analytics with 5-game projections and blended regression
+        Team-vs-Team matchup analytics with blended regression and 5-game trends
     </p>
     """,
     unsafe_allow_html=True,
@@ -52,7 +52,7 @@ lines_file   = st.sidebar.file_uploader("LINE DATA", type=["xlsx","csv"])
 teams_file   = st.sidebar.file_uploader("TEAMS", type=["xlsx","csv"])
 
 # ---------------------------------------------------------------
-# Helper functions
+# Helpers
 # ---------------------------------------------------------------
 def load_file(file):
     if not file: return pd.DataFrame()
@@ -71,7 +71,7 @@ def load_data(file_uploader, default_path):
     return safe_read(default_path)
 
 # ---------------------------------------------------------------
-# Cached data load
+# Cached Data Load
 # ---------------------------------------------------------------
 @st.cache_data(show_spinner=False)
 def load_all_data(skaters_file, shots_file, goalies_file, lines_file, teams_file):
@@ -133,7 +133,7 @@ with col2: team_b = st.selectbox("Select Team B", [t for t in teams if t != team
 st.markdown("---")
 
 # ---------------------------------------------------------------
-# Cached model (5-game window, blended regression)
+# Cached Model Build
 # ---------------------------------------------------------------
 @st.cache_data(show_spinner=True)
 def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df):
@@ -159,14 +159,14 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df):
         player, team = row.player, row.team
         df_p = grouped.get(player.lower(), pd.DataFrame())
         if df_p.empty: continue
-        game_sogs = df_p.groupby(game_col)[["sog", "goal"]].sum().reset_index().sort_values(game_col)
+        game_sogs = df_p.groupby(game_col)[["sog","goal"]].sum().reset_index().sort_values(game_col)
         sog_values = game_sogs["sog"].tolist()
         last3, last5, last10 = sog_values[-3:], sog_values[-5:], sog_values[-10:]
         l3, l5, l10 = np.mean(last3), np.mean(last5), np.mean(last10)
         season_avg = np.mean(sog_values)
         trend = 0 if pd.isna(l10) or l10 == 0 else (l5 - l10) / l10
 
-        # --- Line factor per player ---
+        # --- Line factor ---
         line_factor = 1.0
         if not isinstance(line_adj, dict):
             last_name = str(player).split()[-1].lower()
@@ -175,7 +175,7 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df):
                 line_factor = np.average(m["line_factor"], weights=m["games"])
             line_factor = np.clip(line_factor, 0.7, 1.3)
 
-        # --- 5-game Poisson λ ---
+        # --- Poisson λ (5-game)
         lam = np.mean(last5) if last5 else np.nan
         if pd.isna(lam): continue
         prob = 1 - poisson.cdf(np.floor(lam) - 1, mu=lam)
@@ -183,7 +183,7 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df):
         odds = -100*(p/(1-p)) if p>=0.5 else 100*((1-p)/p)
         implied_odds = f"{'+' if odds>0 else ''}{int(odds)}"
 
-        # --- Regression logic (blended L5 + L10) ---
+        # --- Regression (TOI + blended shots)
         regression_flag = "⚪ Stable"
         try:
             season_toi = pd.to_numeric(skaters_df.loc[skaters_df[player_col].str.lower()==player.lower(), "icetime"], errors="coerce").mean()
@@ -191,12 +191,9 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df):
             if season_toi>0 and games_played>0:
                 avg_toi = (season_toi / games_played) / 60.0
                 sog_per60 = (season_avg / avg_toi) * 60
-
-                # --- blended version here ---
-                blended_recent = np.nanmean([0.7 * l5 + 0.3 * l10])
+                blended_recent = 0.7 * l5 + 0.3 * l10
                 recent_per60 = (blended_recent / avg_toi) * 60 if avg_toi > 0 else 0
                 usage_delta = (recent_per60 - sog_per60) / sog_per60 if sog_per60 > 0 else 0
-
                 if usage_delta > 0.15: regression_flag = "🟢 Breakout Candidate"
                 elif usage_delta < -0.15: regression_flag = "🔴 Regression Risk"
                 elif abs(usage_delta) <= 0.05: regression_flag = "⚪ Stable"
@@ -221,7 +218,7 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df):
     return pd.DataFrame(results)
 
 # ---------------------------------------------------------------
-# Run model
+# Run Model
 # ---------------------------------------------------------------
 if "results" not in st.session_state:
     st.session_state.results=None
@@ -267,33 +264,57 @@ if st.session_state.results is not None and not st.session_state.results.empty:
     # --- Player Trend Visualization ---
     st.markdown("### 📈 Player Regression Trend Viewer")
     player_list = vis["Player"].unique().tolist()
-    selected_player = st.selectbox("Select a player to view detailed trend:", player_list, key="trend_player")
+    selected_player = st.selectbox(
+        "Select a player to view detailed trend:", 
+        player_list, 
+        key=f"trend_player_select_{team_a}_{team_b}"
+    )
 
-    df_p = shots_df[shots_df["player"].str.lower()==selected_player.lower()].copy()
+    df_p = shots_df[shots_df["player"].str.lower() == selected_player.lower()].copy()
     if df_p.empty:
         st.warning("No shot data available for this player.")
     else:
-        trend_df = (df_p.groupby(game_col)[["sog","goal"]].sum().reset_index().sort_values(game_col))
-        trend_df["shoot_pct"] = np.where(trend_df["sog"]>0,(trend_df["goal"]/trend_df["sog"])*100,0)
-        trend_df["game_num"] = np.arange(1,len(trend_df)+1)
-        trend_df["sog_ma"] = trend_df["sog"].rolling(window=5,min_periods=1).mean()
-        trend_df["shoot_pct_ma"] = trend_df["shoot_pct"].rolling(window=5,min_periods=1).mean()
+        # Limit to last 5 games
+        trend_df = (
+            df_p.groupby(game_col)[["sog","goal"]]
+            .sum()
+            .reset_index()
+            .sort_values(game_col)
+            .tail(5)
+        )
 
-        player_regression = vis.loc[vis["Player"]==selected_player,"Regression Indicator"].values[0]
+        trend_df["shoot_pct"] = np.where(
+            trend_df["sog"] > 0, (trend_df["goal"] / trend_df["sog"]) * 100, 0
+        )
+        trend_df["game_num"] = np.arange(1, len(trend_df) + 1)
+        trend_df["sog_ma"] = trend_df["sog"].rolling(window=5, min_periods=1).mean()
+        trend_df["shoot_pct_ma"] = trend_df["shoot_pct"].rolling(window=5, min_periods=1).mean()
+
+        player_regression = vis.loc[
+            vis["Player"] == selected_player, "Regression Indicator"
+        ].values[0]
         st.markdown(f"**Regression Summary for {selected_player}:**")
         st.markdown(f"🧭 Regression Status: **{player_regression}**")
 
-        base = alt.Chart(trend_df).encode(x=alt.X("game_num:Q", title="Game Number"))
+        base = alt.Chart(trend_df).encode(x=alt.X("game_num:Q", title="Most Recent 5 Games"))
         shots_line = base.mark_line(color="#1f77b4").encode(
             y=alt.Y("sog_ma:Q", title="Shots on Goal (5-Game Avg)")
         )
         pct_line = base.mark_line(color="#d62728", strokeDash=[4, 3]).encode(
-            y=alt.Y("shoot_pct_ma:Q",
-                    title="Shooting % (5-Game Avg)",
-                    axis=alt.Axis(titleColor="#d62728"))
+            y=alt.Y(
+                "shoot_pct_ma:Q",
+                title="Shooting % (5-Game Avg)",
+                axis=alt.Axis(titleColor="#d62728"),
+            )
         )
-        chart = (alt.layer(shots_line, pct_line)
-                 .resolve_scale(y="independent")
-                 .properties(width=700, height=400,
-                             title=f"{selected_player} — Shots vs Shooting% (5-Game Avg)"))
-        st.altair_chart(chart, use_container_width=True)
+        chart = (
+            alt.layer(shots_line, pct_line)
+            .resolve_scale(y="independent")
+            .properties(
+                width=700,
+                height=400,
+                title=f"{selected_player} — Shots vs Shooting% (Last 5 Games)"
+            )
+        )
+
+        st.altair_chart(chart, use_container_width=True, key=f"chart_{selected_player}")
