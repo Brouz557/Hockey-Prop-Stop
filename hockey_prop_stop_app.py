@@ -264,10 +264,7 @@ if st.session_state.results is not None and not st.session_state.results.empty:
     # --- Player Trend Visualization ---
     st.markdown("### 📈 Player Regression Trend Viewer")
     player_list = vis["Player"].unique().tolist()
-    selected_player = st.selectbox(
-        "Select a player to view detailed trend:", 
-        player_list
-    )
+    selected_player = st.selectbox("Select a player to view detailed trend:", player_list)
 
     df_p = shots_df[shots_df["player"].str.lower() == selected_player.lower()].copy()
     if df_p.empty:
@@ -281,40 +278,33 @@ if st.session_state.results is not None and not st.session_state.results.empty:
             .sort_values(game_col)
             .tail(5)
         )
+        trend_df["shoot_pct"] = np.where(trend_df["sog"]>0,(trend_df["goal"]/trend_df["sog"])*100,0)
+        trend_df["game_num"] = np.arange(1, len(trend_df)+1)
+        trend_df["sog_ma"] = trend_df["sog"].rolling(window=5,min_periods=1).mean()
+        trend_df["shoot_pct_ma"] = trend_df["shoot_pct"].rolling(window=5,min_periods=1).mean()
 
-        trend_df["shoot_pct"] = np.where(
-            trend_df["sog"] > 0, (trend_df["goal"] / trend_df["sog"]) * 100, 0
-        )
-        trend_df["game_num"] = np.arange(1, len(trend_df) + 1)
-        trend_df["sog_ma"] = trend_df["sog"].rolling(window=5, min_periods=1).mean()
-        trend_df["shoot_pct_ma"] = trend_df["shoot_pct"].rolling(window=5, min_periods=1).mean()
-
-        player_regression = vis.loc[
-            vis["Player"] == selected_player, "Regression Indicator"
-        ].values[0]
+        player_regression = vis.loc[vis["Player"]==selected_player,"Regression Indicator"].values[0]
         st.markdown(f"**Regression Summary for {selected_player}:**")
         st.markdown(f"🧭 Regression Status: **{player_regression}**")
 
-        base = alt.Chart(trend_df).encode(x=alt.X("game_num:O", title="Most Recent 5 Games"))
+        base = alt.Chart(trend_df).encode(
+            x=alt.X(
+                "game_num:O",
+                title="Most Recent 5 Games",
+                axis=alt.Axis(labelAngle=-90)   # vertical tick labels
+            )
+        )
         shots_line = base.mark_line(color="#1f77b4").encode(
             y=alt.Y("sog_ma:Q", title="Shots on Goal (5-Game Avg)")
         )
-        pct_line = base.mark_line(color="#d62728", strokeDash=[4, 3]).encode(
-            y=alt.Y(
-                "shoot_pct_ma:Q",
-                title="Shooting % (5-Game Avg)",
-                axis=alt.Axis(titleColor="#d62728"),
-            )
+        pct_line = base.mark_line(color="#d62728", strokeDash=[4,3]).encode(
+            y=alt.Y("shoot_pct_ma:Q", title="Shooting % (5-Game Avg)",
+                    axis=alt.Axis(titleColor="#d62728"))
         )
         chart = (
             alt.layer(shots_line, pct_line)
             .resolve_scale(y="independent")
-            .properties(
-                width=700,
-                height=400,
-                title=f"{selected_player} — Shots vs Shooting% (Last 5 Games)"
-            )
+            .properties(width=700, height=400,
+                        title=f"{selected_player} — Shots vs Shooting% (Last 5 Games)")
         )
-
         st.altair_chart(chart, use_container_width=True)
-
