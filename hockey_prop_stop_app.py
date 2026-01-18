@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Hockey Prop Stop — Shot Night Rank + Clean Table Formatting
+# 🏒 Hockey Prop Stop — Restored Pre-Ranking Version
 # ---------------------------------------------------------------
 
 import streamlit as st
@@ -7,7 +7,6 @@ import pandas as pd
 import numpy as np
 import os, contextlib, io
 from scipy.stats import poisson
-import altair as alt
 import streamlit.components.v1 as components
 
 # ---------------------------------------------------------------
@@ -18,7 +17,7 @@ st.markdown(
     """
     <h1 style='text-align:center;color:#00B140;'>🏒 Hockey Prop Stop</h1>
     <p style='text-align:center;color:#BFC0C0;'>
-        Team-vs-Team matchup analytics with blended regression and shot-night ranking
+        Team-vs-Team matchup analytics with blended regression and probability modeling
     </p>
     """,
     unsafe_allow_html=True,
@@ -35,7 +34,7 @@ lines_file   = st.sidebar.file_uploader("LINE DATA", type=["xlsx","csv"])
 teams_file   = st.sidebar.file_uploader("TEAMS", type=["xlsx","csv"])
 
 # ---------------------------------------------------------------
-# Helpers
+# Helper Functions
 # ---------------------------------------------------------------
 def load_file(file):
     if not file: return pd.DataFrame()
@@ -52,7 +51,8 @@ def safe_read(path):
         return pd.DataFrame()
 
 def load_data(file_uploader, default_path):
-    if file_uploader is not None: return load_file(file_uploader)
+    if file_uploader is not None:
+        return load_file(file_uploader)
     return safe_read(default_path)
 
 # ---------------------------------------------------------------
@@ -86,7 +86,7 @@ if skaters_df.empty or shots_df.empty:
 st.success("✅ Data loaded successfully.")
 
 # ---------------------------------------------------------------
-# Normalize columns
+# Normalize Columns
 # ---------------------------------------------------------------
 for df in [skaters_df, shots_df, goalies_df, lines_df]:
     if not df.empty:
@@ -97,10 +97,6 @@ player_col = "name" if "name" in skaters_df.columns else None
 toi_col, gp_col = "icetime", "games"
 
 player_col_shots = next((c for c in shots_df.columns if "player" in c or "name" in c), None)
-if player_col_shots is None:
-    st.error("❌ Could not find player name column in shots data.")
-    st.stop()
-
 shots_df = shots_df.rename(columns={player_col_shots: "player"})
 shots_df["player"] = shots_df["player"].astype(str).str.strip()
 
@@ -109,7 +105,7 @@ goal_col = next((c for c in shots_df.columns if "goal" in c), None)
 game_col = next((c for c in shots_df.columns if "game" in c and "id" in c), None)
 
 # ---------------------------------------------------------------
-# Team selection
+# Team Selection
 # ---------------------------------------------------------------
 teams = sorted(skaters_df[team_col].dropna().unique().tolist())
 col1, col2 = st.columns(2)
@@ -122,7 +118,7 @@ st.markdown("---")
 # ---------------------------------------------------------------
 @st.cache_data(show_spinner=True)
 def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df):
-    results=[]
+    results = []
     skaters = skaters_df[skaters_df[team_col].isin([team_a, team_b])]
     roster = skaters[[player_col, team_col]].rename(columns={player_col: "player", team_col: "team"}).drop_duplicates("player")
     grouped = {n.lower(): g.sort_values(game_col) for n, g in shots_df.groupby(shots_df["player"].str.lower())}
@@ -146,15 +142,13 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df):
         if df_p.empty: continue
 
         game_sogs = df_p.groupby(game_col)[["sog","goal"]].sum().reset_index().sort_values(game_col)
-        game_sogs["sog"] = pd.to_numeric(game_sogs["sog"], errors="coerce").fillna(0)
         sog_values = game_sogs["sog"].tolist()
         if len(sog_values) == 0: continue
 
-        last3 = sog_values[-3:] if len(sog_values) >= 3 else sog_values
         last5 = sog_values[-5:] if len(sog_values) >= 5 else sog_values
         last10 = sog_values[-10:] if len(sog_values) >= 10 else sog_values
 
-        l3, l5, l10 = np.mean(last3), np.mean(last5), np.mean(last10)
+        l5, l10 = np.mean(last5), np.mean(last10)
         season_avg = np.mean(sog_values)
         trend = (l5 - l10) / l10 if l10 > 0 else 0
 
@@ -168,11 +162,13 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df):
 
         lam = np.mean(last5) if last5 else np.nan
         if pd.isna(lam): continue
+
         prob = 1 - poisson.cdf(np.floor(lam) - 1, mu=lam)
         p = min(max(prob, 0.001), 0.999)
         odds = -100*(p/(1-p)) if p>=0.5 else 100*((1-p)/p)
         implied_odds = f"{'+' if odds>0 else ''}{int(odds)}"
 
+        # --- Regression indicator ---
         regression_flag = "⚪ Stable"
         try:
             season_toi = pd.to_numeric(skaters_df.loc[skaters_df[player_col].str.lower()==player.lower(), "icetime"], errors="coerce").mean()
@@ -193,9 +189,6 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df):
         results.append({
             "Player": player,"Team": team,
             "Season Avg": round(season_avg,2),
-            "L3 Shots": ", ".join(map(str,last3)),
-            "L5 Shots": ", ".join(map(str,last5)),
-            "L10 Shots": ", ".join(map(str,last10)),
             "Trend Score": round(trend,3),
             "Final Projection": round(lam,2),
             "Prob ≥ Projection (%)": round(p*100,1),
@@ -211,38 +204,21 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df):
 if st.button("🚀 Run Model"):
     st.info(f"Building model for matchup: **{team_a} vs {team_b}** ...")
     df = build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df)
-
-    # --- Shot Night Ranking ---
-    df["Shot Night Score"] = (
-        0.4 * (df["Trend Score"].clip(-0.5, 0.5) + 0.5) * 100 +
-        0.4 * df["Prob ≥ Projection (%)"] +
-        0.2 * df["Final Projection"] * 10
-    )
-    df.loc[df["Regression Indicator"].str.contains("Regression Risk", case=False, na=False), "Shot Night Score"] *= 0.8
-    df.loc[df["Regression Indicator"].str.contains("Mixed", case=False, na=False), "Shot Night Score"] *= 0.9
-    df["Shot Night Rank"] = df["Shot Night Score"].rank(ascending=False, method="dense").astype(int)
-
     st.session_state.results_raw = df.copy()
     st.success("✅ Model built successfully!")
 
 # ---------------------------------------------------------------
-# Persistent Table Rendering (clean formatting + sticky headers)
+# Display Table
 # ---------------------------------------------------------------
 if "results_raw" in st.session_state and not st.session_state.results_raw.empty:
     df = st.session_state.results_raw.copy()
 
-    # --- Round numeric values ---
-    for c in ["Final Projection","Prob ≥ Projection (%)","Shot Night Score","Season Avg","Line Adj"]:
-        if c in df.columns:
-            df[c] = df[c].apply(lambda x: f"{x:.2f}" if isinstance(x,(int,float,np.number)) else x)
-
-    # --- Trend color block ---
     def trend_color(v):
         if pd.isna(v): return "–"
-        v = max(min(v, 0.5), -0.5)
-        n = v + 0.5
-        if n < 0.5: r, g, b = 255, int(255*(n*2)), 0
-        else: r, g, b = int(255*(1-(n-0.5)*2)), 255, 0
+        v = max(min(v,0.5),-0.5)
+        n = v+0.5
+        if n<0.5: r,g,b=255,int(255*(n*2)),0
+        else: r,g,b=int(255*(1-(n-0.5)*2)),255,0
         color=f"rgb({r},{g},{b})"
         t="▲" if v>0.05 else ("▼" if v<-0.05 else "–")
         txt="#000" if abs(v)<0.2 else "#fff"
@@ -250,23 +226,11 @@ if "results_raw" in st.session_state and not st.session_state.results_raw.empty:
 
     df["Trend"] = df["Trend Score"].apply(trend_color)
 
-    cols = ["Shot Night Rank","Player","Team","Trend","Final Projection","Prob ≥ Projection (%)",
-            "Playable Odds","Shot Night Score","Season Avg","Line Adj","Regression Indicator",
-            "L3 Shots","L5 Shots","L10 Shots"]
-    vis = df[[c for c in cols if c in df.columns]].sort_values("Shot Night Rank")
+    cols = ["Player","Team","Trend","Final Projection","Prob ≥ Projection (%)",
+            "Playable Odds","Season Avg","Line Adj","Regression Indicator"]
+    vis = df[[c for c in cols if c in df.columns]]
 
-    # --- Build HTML table manually for consistent style ---
-    top5 = vis.nsmallest(5, "Shot Night Rank")["Player"].tolist()
-    table_html = "<table><thead><tr>" + "".join(f"<th>{c}</th>" for c in vis.columns) + "</tr></thead><tbody>"
-    for _, row in vis.iterrows():
-        row_style = "background-color:#005e26;color:white;font-weight:700;" if row["Player"] in top5 else ""
-        table_html += "<tr>"
-        for col in vis.columns:
-            val = row[col]
-            table_html += f"<td style='{row_style}'>{val}</td>"
-        table_html += "</tr>"
-    table_html += "</tbody></table>"
-
+    html_table = vis.to_html(index=False, escape=False)
     components.html(
         f"""
         <style>
@@ -311,7 +275,7 @@ if "results_raw" in st.session_state and not st.session_state.results_raw.empty:
         </style>
 
         <div class='scrollable-table'>
-            {table_html}
+            {html_table}
         </div>
         """,
         height=620,
