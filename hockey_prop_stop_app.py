@@ -339,3 +339,4 @@ if "results" in st.session_state and st.session_state.results is not None and no
 
         st.altair_chart(chart, use_container_width=True)
 
+
