@@ -303,4 +303,80 @@ if st.button("🚀 Run Model"):
     st.success("✅ Model built successfully!")
 
 # ---------------------------------------------------------------
-# Display Table
+# Display Table + Save Section
+# ---------------------------------------------------------------
+if "results_raw" in st.session_state and not st.session_state.results_raw.empty:
+    df = st.session_state.results_raw.copy()
+
+    def trend_color(v):
+        if pd.isna(v): return "–"
+        v = max(min(v, 0.5), -0.5)
+        n = v + 0.5
+        if n < 0.5:
+            r,g,b = 255,int(255*(n*2)),0
+        else:
+            r,g,b = int(255*(1-(n-0.5)*2)),255,0
+        color=f"rgb({r},{g},{b})"
+        t="▲" if v>0.05 else ("▼" if v<-0.05 else "–")
+        txt="#000" if abs(v)<0.2 else "#fff"
+        return f"<div style='background:{color};color:{txt};font-weight:600;border-radius:6px;padding:4px 8px;text-align:center;'>{t}</div>"
+
+    df["Trend"] = df["Trend Score"].apply(trend_color)
+
+    cols = [
+        "Player", "Team", "Injury", "Trend", "Final Projection",
+        "Prob ≥ Projection (%) L5", "Playable Odds",
+        "Season Avg", "Line Adj", "Form Indicator",
+        "L3 Shots", "L5 Shots", "L10 Shots"
+    ]
+    vis = df[[c for c in cols if c in df.columns]]
+
+    html_table = vis.to_html(index=False, escape=False)
+    components.html(
+        f"""
+        <style>
+        div.scrollable-table {{
+            overflow-x: auto;
+            overflow-y: auto;
+            height: 600px;
+        }}
+        table {{
+            width: 100%;
+            border-collapse: collapse;
+            font-family: 'Source Sans Pro', sans-serif;
+            color: #f0f0f0;
+        }}
+        th {{
+            background-color: #00B140;
+            color: white;
+            padding: 6px;
+            text-align: center;
+            position: sticky;
+            top: 0;
+        }}
+        td:first-child, th:first-child {{
+            position: sticky;
+            left: 0;
+            background-color: #00B140;
+            color: white;
+            font-weight: bold;
+        }}
+        td {{
+            background-color: #1e1e1e;
+            color: #f0f0f0;
+            padding: 4px;
+            text-align: center;
+        }}
+        tr:nth-child(even) td {{ background-color: #2a2a2a; }}
+        </style>
+        <div class='scrollable-table'>{html_table}</div>
+        """,
+        height=620,
+        scrolling=True,
+    )
+
+    # ---------------------------------------------------------------
+    # 💾 Save Projections Locally + 📥 Download
+    # ---------------------------------------------------------------
+    st.markdown("---")
+    st.subheader("💾
