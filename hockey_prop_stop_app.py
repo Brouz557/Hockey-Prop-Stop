@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Hockey Prop Stop — L5 Probability Update (Injuries Fixed)
+# 🏒 Hockey Prop Stop — L5 Probability Update (Team+LastName Injuries)
 # ---------------------------------------------------------------
 
 import streamlit as st
@@ -77,7 +77,7 @@ def load_all_data(skaters_file, shots_file, goalies_file, lines_file, teams_file
         lines   = load_data(lines_file,   find_file("LINE DATA.xlsx") or "LINE DATA.xlsx")
         teams   = load_data(teams_file,   find_file("TEAMS.xlsx") or "TEAMS.xlsx")
 
-        # --- FIXED: Injuries file lookup ---
+        # --- Fixed Injuries file lookup ---
         injuries_path_candidates = [
             "Injuries.xlsx",
             "injuries.xlsx",
@@ -113,7 +113,6 @@ if skaters_df.empty or shots_df.empty:
     st.warning("⚠️ Missing required data. Please upload or verify repo files.")
     st.stop()
 st.success("✅ Data loaded successfully.")
-
 
 # ---------------------------------------------------------------
 # 🕒 Data Last Updated — Git Commit Timestamp
@@ -247,12 +246,18 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
                 else: form_flag = "⚪ Neutral Form"
         except Exception: pass
 
-        # --- Injury Flag with Hover Tooltip (fuzzy match) ---
+        # --- Injury Flag with Hover Tooltip (team + last name match) ---
         injury_html = ""
-        if not injuries_df.empty and "player" in injuries_df.columns:
+        if not injuries_df.empty and {"player", "team"}.issubset(injuries_df.columns):
             player_lower = player.lower().strip()
             last_name = player_lower.split()[-1]
-            match = injuries_df[injuries_df["player"].str.contains(last_name, case=False, na=False)]
+            team_lower = team.lower().strip() if isinstance(team, str) else ""
+
+            match = injuries_df[
+                injuries_df["player"].str.lower().str.endswith(last_name)
+                & injuries_df["team"].str.lower().str.strip().eq(team_lower)
+            ]
+
             if not match.empty:
                 note = str(match.iloc[0].get("injury note", "")).strip()
                 injury_type = str(match.iloc[0].get("injury type", "")).strip()
@@ -365,5 +370,3 @@ if "results_raw" in st.session_state and not st.session_state.results_raw.empty:
         st.success(f"✅ Saved projections to **{save_path}**")
         csv = df_to_save.to_csv(index=False).encode('utf-8')
         st.download_button(label="📥 Download Projections CSV", data=csv, file_name=filename, mime="text/csv")
-
-
