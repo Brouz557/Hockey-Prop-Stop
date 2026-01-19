@@ -237,3 +237,4 @@ if "results_raw" in st.session_state and not st.session_state.results_raw.empty:
         df2.to_csv(path,index=False)
         st.success(f"✅ Saved projections to **{path}**")
         st.download_button("📥 Download Projections CSV",df2.to_csv(index=False).encode("utf-8"),fn,"text/csv")
+
