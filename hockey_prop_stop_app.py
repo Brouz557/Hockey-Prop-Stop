@@ -323,7 +323,10 @@ if "results_raw" in st.session_state and not st.session_state.results_raw.empty:
     ]
     vis = df[[c for c in cols if c in df.columns]]
 
-    html_table = vis.to_html(index=False, escape=False)
+    # ✅ FIX: restore emoji rendering
+    html_table = vis.to_html(index=False, escape=False, render_links=True)
+    html_table = html_table.replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", '"')
+
     components.html(
         f"""
         <style>
@@ -380,19 +383,4 @@ if "results_raw" in st.session_state and not st.session_state.results_raw.empty:
         df_to_save["Date_Game"] = selected_date.strftime("%Y-%m-%d")
         df_to_save["Matchup"] = f"{team_a} vs {team_b}"
 
-        save_dir = "projections"
-        os.makedirs(save_dir, exist_ok=True)
-
-        filename = f"{team_a}_vs_{team_b}_{selected_date.strftime('%Y-%m-%d')}.csv"
-        save_path = os.path.join(save_dir, filename)
-
-        df_to_save.to_csv(save_path, index=False)
-        st.success(f"✅ Saved projections to **{save_path}**")
-
-        csv = df_to_save.to_csv(index=False).encode("utf-8")
-        st.download_button(
-            label="📥 Download Projections CSV",
-            data=csv,
-            file_name=filename,
-            mime="text/csv",
-        )
+        save
