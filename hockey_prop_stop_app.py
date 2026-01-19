@@ -323,9 +323,11 @@ if "results_raw" in st.session_state and not st.session_state.results_raw.empty:
     ]
     vis = df[[c for c in cols if c in df.columns]]
 
-    # ✅ FIX: restore emoji rendering
-    html_table = vis.to_html(index=False, escape=False, render_links=True)
-    html_table = html_table.replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", '"')
+    # ✅ FIXED: raw HTML render to preserve 🚑 icons and modals
+    table_html = "<table><thead><tr>" + "".join(f"<th>{c}</th>" for c in vis.columns) + "</tr></thead><tbody>"
+    for _, row in vis.iterrows():
+        table_html += "<tr>" + "".join(f"<td>{row[c]}</td>" for c in vis.columns) + "</tr>"
+    table_html += "</tbody></table>"
 
     components.html(
         f"""
@@ -364,7 +366,7 @@ if "results_raw" in st.session_state and not st.session_state.results_raw.empty:
         }}
         tr:nth-child(even) td {{ background-color: #2a2a2a; }}
         </style>
-        <div class='scrollable-table'>{html_table}</div>
+        <div class='scrollable-table'>{table_html}</div>
         """,
         height=620,
         scrolling=True,
@@ -379,8 +381,4 @@ if "results_raw" in st.session_state and not st.session_state.results_raw.empty:
     selected_date = st.date_input("Select game date:", datetime.date.today())
 
     if st.button("💾 Save Projections for Selected Date"):
-        df_to_save = df.copy()
-        df_to_save["Date_Game"] = selected_date.strftime("%Y-%m-%d")
-        df_to_save["Matchup"] = f"{team_a} vs {team_b}"
-
-        save
+        df
