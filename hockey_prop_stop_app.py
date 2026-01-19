@@ -205,19 +205,33 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
         except Exception:
             pass
 
-        # --- Injury Modal ---
+        # --- Injury Modal (Improved Matching) ---
         injury_html = ""
         if not injuries_df.empty and {"player", "team"}.issubset(injuries_df.columns):
             player_lower = player.lower().strip()
-            last_name = player_lower.split()[-1]
-            team_lower = team.lower().strip()
+            parts = player_lower.split()
+            first_name = parts[0] if len(parts) > 1 else ""
+            last_name = parts[-1]
+            team_lower = str(team).lower().strip()
 
-            inj_names = injuries_df["player"].str.lower().str.strip()
-            mask = (
-                injuries_df["team"].str.lower().str.strip().eq(team_lower)
-                & inj_names.str.contains(rf"(?:^|\s){last_name}\b", regex=True)
+            injuries_df["player"] = injuries_df["player"].astype(str)
+            injuries_df["team"] = injuries_df["team"].astype(str)
+            inj_names = injuries_df["player"].str.lower().str.replace("-", " ").str.strip()
+            inj_teams = injuries_df["team"].str.lower().str.replace("-", " ").str.strip()
+
+            team_match = inj_teams.apply(
+                lambda t: team_lower in t or t in team_lower or t.split()[0] in team_lower
             )
-            match = injuries_df[mask]
+            name_match = inj_names.apply(
+                lambda n: (
+                    (last_name in n.split())
+                    and (n.startswith(first_name)
+                         or n.startswith(first_name[:1])
+                         or first_name == ""
+                         or first_name in n)
+                )
+            )
+            match = injuries_df[team_match & name_match]
 
             if not match.empty:
                 note = str(match.iloc[0].get("injury note", "")).strip()
