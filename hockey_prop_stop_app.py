@@ -114,10 +114,6 @@ if skaters_df.empty or shots_df.empty:
     st.stop()
 st.success("✅ Data loaded successfully.")
 
-# Debug line for confirmation
-st.write("Injury file rows:", len(injuries_df))
-if not injuries_df.empty:
-    st.write("Sample injury names:", injuries_df["player"].head(5).tolist())
 
 # ---------------------------------------------------------------
 # 🕒 Data Last Updated — Git Commit Timestamp
@@ -369,4 +365,5 @@ if "results_raw" in st.session_state and not st.session_state.results_raw.empty:
         st.success(f"✅ Saved projections to **{save_path}**")
         csv = df_to_save.to_csv(index=False).encode('utf-8')
         st.download_button(label="📥 Download Projections CSV", data=csv, file_name=filename, mime="text/csv")
+
 
