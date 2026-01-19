@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Hockey Prop Stop — L5 Probability Update (Injury Modal Fixed)
+# 🏒 Hockey Prop Stop — L5 Probability Update (Fixed Injury Modal)
 # ---------------------------------------------------------------
 
 import streamlit as st
@@ -231,7 +231,7 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
         except Exception:
             pass
 
-        # --- Injury Modal ---
+        # --- Injury Modal (fixed unique ID & escaping)
         injury_html = ""
         if not injuries_df.empty and {"player","team"}.issubset(injuries_df.columns):
             player_lower = player.lower().strip()
@@ -242,22 +242,36 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
                 & injuries_df["team"].str.lower().str.strip().eq(team_lower)
             ]
             if not match.empty:
-                note = str(match.iloc[0].get("injury note","")).strip()
-                injury_type = str(match.iloc[0].get("injury type","")).strip()
-                date_injury = str(match.iloc[0].get("date of injury","")).strip()
-                tooltip = "\\n".join([p for p in [injury_type,note,date_injury] if p]) or "Injury info unavailable"
+                note = str(match.iloc[0].get("injury note", "")).strip()
+                injury_type = str(match.iloc[0].get("injury type", "")).strip()
+                date_injury = str(match.iloc[0].get("date of injury", "")).strip()
+                tooltip = "\\n".join([p for p in [injury_type, note, date_injury] if p]) or "Injury info unavailable"
 
-                # Unique modal ID per player
                 modal_id = f"injuryModal_{player_lower.replace(' ', '_')}"
 
-                injury_html = (
-                    "<span style='cursor:pointer;' title='Tap or click for injury info' "
-                    "onclick=\""
-                    f"const msg = `{tooltip.replace('`','\\`').replace(chr(10),' ')}`;"
-                    "const modal = document.createElement('div');"
-                    "modal.innerHTML = `"
-                    f"<div id='{modal_id}' style='position:fixed;top:0;left:0;width:100%;height:100%;"
-                    "background:rgba(0,0,0,0.6);display:flex;align-items:center;"
-                    "justify-content:center;z-index:9999;'>"
-                    "<div style='background:#1e1e1e;padding:20px 25px;border-radius:10px;"
-                    "widt
+                injury_html = f"""
+                <span style='cursor:pointer;' title='Tap or click for injury info'
+                      onclick="
+                        const msg = `{tooltip.replace('`', '\\`').replace(chr(10), ' ')}`;
+                        const modal = document.createElement('div');
+                        modal.innerHTML = `
+                          <div id='{modal_id}' style='position:fixed;top:0;left:0;width:100%;height:100%;
+                              background:rgba(0,0,0,0.6);display:flex;align-items:center;
+                              justify-content:center;z-index:9999;'>
+                            <div style='background:#1e1e1e;padding:20px 25px;border-radius:10px;
+                                width:320px;max-width:90%;text-align:left;
+                                box-shadow:0 4px 20px rgba(0,0,0,0.4);color:#fff;
+                                font-family:sans-serif;'>
+                              <h4 style='margin-top:0;color:#00B140;'>Injury Report</h4>
+                              <p style='white-space:pre-wrap;font-size:14px;line-height:1.4;'>${{msg}}</p>
+                              <button onclick=\\"document.getElementById('{modal_id}').remove();\\"
+                                      style='margin-top:10px;background:#00B140;color:#fff;
+                                      border:none;border-radius:6px;padding:6px 14px;
+                                      cursor:pointer;font-size:14px;'>OK</button>
+                            </div>
+                          </div>`;
+                        document.body.appendChild(modal);
+                      ">
+                      🚑
+                </span>
+                """
