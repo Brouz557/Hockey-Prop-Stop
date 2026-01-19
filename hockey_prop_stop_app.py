@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Hockey Prop Stop — L5 Probability Update (Custom Modal Injury Report)
+# 🏒 Hockey Prop Stop — L5 Probability Update (Injury Modal Fixed)
 # ---------------------------------------------------------------
 
 import streamlit as st
@@ -195,12 +195,12 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
         trend = (l5 - l10)/l10 if l10>0 else 0
 
         line_factor = 1.0
-        if not isinstance(line_adj, dict):
+        if not isinstance(line_adj,dict):
             last_name = str(player).split()[-1].lower()
-            m = line_adj[line_adj["line pairings"].str.contains(last_name, case=False, na=False)]
+            m = line_adj[line_adj["line pairings"].str.contains(last_name,case=False,na=False)]
             if not m.empty:
-                line_factor = np.average(m["line_factor"], weights=m["games"])
-            line_factor = np.clip(line_factor, 0.7, 1.3)
+                line_factor = np.average(m["line_factor"],weights=m["games"])
+            line_factor = np.clip(line_factor,0.7,1.3)
 
         lam = l5
         line = round(lam, 2)
@@ -247,133 +247,17 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
                 date_injury = str(match.iloc[0].get("date of injury","")).strip()
                 tooltip = "\\n".join([p for p in [injury_type,note,date_injury] if p]) or "Injury info unavailable"
 
-                # fixed modal build - safe for caching
+                # Unique modal ID per player
+                modal_id = f"injuryModal_{player_lower.replace(' ', '_')}"
+
                 injury_html = (
                     "<span style='cursor:pointer;' title='Tap or click for injury info' "
                     "onclick=\""
-                    "const msg = `" + tooltip.replace("'", "\\'").replace('`','\\`').replace(chr(10),' ') + "`;"
+                    f"const msg = `{tooltip.replace('`','\\`').replace(chr(10),' ')}`;"
                     "const modal = document.createElement('div');"
                     "modal.innerHTML = `"
-                    "<div style='position:fixed;top:0;left:0;width:100%;height:100%;"
+                    f"<div id='{modal_id}' style='position:fixed;top:0;left:0;width:100%;height:100%;"
                     "background:rgba(0,0,0,0.6);display:flex;align-items:center;"
                     "justify-content:center;z-index:9999;'>"
                     "<div style='background:#1e1e1e;padding:20px 25px;border-radius:10px;"
-                    "width:320px;max-width:90%;text-align:left;"
-                    "box-shadow:0 4px 20px rgba(0,0,0,0.4);color:#fff;"
-                    "font-family:sans-serif;'>"
-                    "<h4 style='margin-top:0;color:#00B140;'>Injury Report</h4>"
-                    "<p style='white-space:pre-wrap;font-size:14px;line-height:1.4;'>${msg}</p>"
-                    "<button onclick='document.body.removeChild(this.parentNode.parentNode)' "
-                    "style='margin-top:10px;background:#00B140;color:#fff;"
-                    "border:none;border-radius:6px;padding:6px 14px;"
-                    "cursor:pointer;font-size:14px;'>OK</button>"
-                    "</div></div>`;"
-                    "document.body.appendChild(modal);"
-                    "\">🚑</span>"
-                )
-
-        results.append({
-            "Player": player, "Team": team, "Injury": injury_html,
-            "Season Avg": round(season_avg,2),
-            "L3 Shots": ", ".join(map(str,last3)),
-            "L5 Shots": ", ".join(map(str,last5)),
-            "L10 Shots": ", ".join(map(str,last10)),
-            "Trend Score": round(trend,3),
-            "Final Projection": round(line,2),
-            "Prob ≥ Projection (%) L5": round(p*100,1),
-            "Playable Odds": implied_odds,
-            "Line Adj": round(line_factor,2),
-            "Form Indicator": form_flag
-        })
-    return pd.DataFrame(results)
-
-# ---------------------------------------------------------------
-# Run Model
-# ---------------------------------------------------------------
-if st.button("🚀 Run Model"):
-    st.info(f"Building model for matchup: **{team_a} vs {team_b}** …")
-    df = build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, teams_df, injuries_df)
-    if "Injury" not in df.columns:
-        df["Injury"] = ""
-    df = df.sort_values("Final Projection", ascending=False).reset_index(drop=True)
-    st.session_state.results_raw = df.copy()
-    st.success("✅ Model built successfully!")
-
-# ---------------------------------------------------------------
-# Display Table + Save/Download
-# ---------------------------------------------------------------
-if "results_raw" in st.session_state and not st.session_state.results_raw.empty:
-    df = st.session_state.results_raw.copy()
-
-    def trend_color(v):
-        if pd.isna(v): return "–"
-        v = max(min(v, 0.5), -0.5)
-        n = v + 0.5
-        if n < 0.5: r,g,b = 255,int(255*(n*2)),0
-        else: r,g,b = int(255*(1-(n-0.5)*2)),255,0
-        color=f"rgb({r},{g},{b})"
-        t="▲" if v>0.05 else ("▼" if v<-0.05 else "–")
-        txt="#000" if abs(v)<0.2 else "#fff"
-        return f"<div style='background:{color};color:{txt};font-weight:600;border-radius:6px;padding:4px 8px;text-align:center;'>{t}</div>"
-
-    df["Trend"] = df["Trend Score"].apply(trend_color)
-
-    cols = [
-        "Player","Team","Injury","Trend","Final Projection",
-        "Prob ≥ Projection (%) L5","Playable Odds",
-        "Season Avg","Line Adj","Form Indicator",
-        "L3 Shots","L5 Shots","L10 Shots"
-    ]
-    vis = df[[c for c in cols if c in df.columns]]
-
-    html_table = vis.to_html(index=False, escape=False)
-    components.html(f"""
-        <style>
-        div.scrollable-table {{
-            overflow-x: auto;
-            overflow-y: auto;
-            height: 600px;
-        }}
-        table {{
-            width: 100%;
-            border-collapse: collapse;
-            font-family: 'Source Sans Pro', sans-serif;
-            color: #f0f0f0;
-        }}
-        th {{
-            background-color: #00B140;
-            color: white;
-            padding: 6px;
-            text-align: center;
-            position: sticky;
-            top: 0;
-        }}
-        td:first-child, th:first-child {{
-            position: sticky;
-            left: 0;
-            background-color: #00B140;
-            color: white;
-            font-weight: bold;
-        }}
-        td {{
-            background-color: #1e1e1e;
-            color: #f0f0f0;
-            padding: 4px;
-            text-align: center;
-        }}
-        tr:nth-child(even) td {{ background-color: #2a2a2a; }}
-        </style>
-        <div class='scrollable-table'>{html_table}</div>
-        """, height=620, scrolling=True)
-
-    # ---------------------------------------------------------------
-    # 💾 Save + Download
-    # ---------------------------------------------------------------
-    st.markdown("---")
-    st.subheader("💾 Save or Download Projections")
-    selected_date = st.date_input("Select game date:", datetime.date.today())
-
-    if st.button("💾 Save Projections for Selected Date"):
-        df_to_save = df.copy()
-        df_to_save["Date_Game"] = selected
-
+                    "widt
