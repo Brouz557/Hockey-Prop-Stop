@@ -144,9 +144,6 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
         l["line_factor"] = (league_avg / l["sog_against_per_game"]).clip(0.7, 1.3)
         line_adj = l.copy()
 
-    # -----------------------------------------------------------
-    # Player Loop
-    # -----------------------------------------------------------
     for row in roster.itertuples(index=False):
         player, team = row.player, row.team
         df_p = grouped.get(player.lower(), pd.DataFrame())
@@ -205,38 +202,22 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
         except Exception:
             pass
 
-        # --- Injury Modal (Improved Matching) ---
+        # --- Injury Modal (Match Team + Last Name) ---
         injury_html = ""
         if not injuries_df.empty and {"player", "team"}.issubset(injuries_df.columns):
             player_lower = player.lower().strip()
-            parts = player_lower.split()
-            first_name = parts[0] if len(parts) > 1 else ""
-            last_name = parts[-1]
+            last_name = player_lower.split()[-1]
             team_lower = str(team).lower().strip()
 
-            injuries_df["player"] = injuries_df["player"].astype(str)
-            injuries_df["team"] = injuries_df["team"].astype(str)
-            inj_names = injuries_df["player"].str.lower().str.replace("-", " ").str.strip()
-            inj_teams = injuries_df["team"].str.lower().str.replace("-", " ").str.strip()
+            inj = injuries_df[
+                injuries_df["team"].str.lower().str.contains(team_lower, na=False)
+                & injuries_df["player"].str.lower().str.contains(last_name, na=False)
+            ]
 
-            team_match = inj_teams.apply(
-                lambda t: team_lower in t or t in team_lower or t.split()[0] in team_lower
-            )
-            name_match = inj_names.apply(
-                lambda n: (
-                    (last_name in n.split())
-                    and (n.startswith(first_name)
-                         or n.startswith(first_name[:1])
-                         or first_name == ""
-                         or first_name in n)
-                )
-            )
-            match = injuries_df[team_match & name_match]
-
-            if not match.empty:
-                note = str(match.iloc[0].get("injury note", "")).strip()
-                injury_type = str(match.iloc[0].get("injury type", "")).strip()
-                date_injury = str(match.iloc[0].get("date of injury", "")).strip()
+            if not inj.empty:
+                note = str(inj.iloc[0].get("injury note", "")).strip()
+                injury_type = str(inj.iloc[0].get("injury type", "")).strip()
+                date_injury = str(inj.iloc[0].get("date of injury", "")).strip()
                 tooltip = "\\n".join([p for p in [injury_type, note, date_injury] if p]) or "Injury info unavailable"
                 modal_id = f"injuryModal_{player_lower.replace(' ', '_')}"
                 injury_html = f"""
@@ -323,10 +304,15 @@ if "results_raw" in st.session_state and not st.session_state.results_raw.empty:
     ]
     vis = df[[c for c in cols if c in df.columns]]
 
-    # ✅ FIXED: raw HTML render to preserve 🚑 icons and modals
+    # ✅ FIXED: preserve clickable 🚑 icons
+    def safe_html(val):
+        if pd.isna(val):
+            return ""
+        return str(val).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("&lt;span", "<span").replace("/span&gt;", "/span>")
+
     table_html = "<table><thead><tr>" + "".join(f"<th>{c}</th>" for c in vis.columns) + "</tr></thead><tbody>"
     for _, row in vis.iterrows():
-        table_html += "<tr>" + "".join(f"<td>{row[c]}</td>" for c in vis.columns) + "</tr>"
+        table_html += "<tr>" + "".join(f"<td>{safe_html(row[c])}</td>" for c in vis.columns) + "</tr>"
     table_html += "</tbody></table>"
 
     components.html(
@@ -388,16 +374,4 @@ if "results_raw" in st.session_state and not st.session_state.results_raw.empty:
         save_dir = "projections"
         os.makedirs(save_dir, exist_ok=True)
 
-        filename = f"{team_a}_vs_{team_b}_{selected_date.strftime('%Y-%m-%d')}.csv"
-        save_path = os.path.join(save_dir, filename)
-
-        df_to_save.to_csv(save_path, index=False)
-        st.success(f"✅ Saved projections to **{save_path}**")
-
-        csv = df_to_save.to_csv(index=False).encode("utf-8")
-        st.download_button(
-            label="📥 Download Projections CSV",
-            data=csv,
-            file_name=filename,
-            mime="text/csv"
-        )
+        filename = f"{team_a}_vs_{team_b}_{selected_date.strftime('%
