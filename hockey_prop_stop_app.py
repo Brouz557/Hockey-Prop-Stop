@@ -376,3 +376,4 @@ if "results_raw" in st.session_state and not st.session_state.results_raw.empty:
     if st.button("💾 Save Projections for Selected Date"):
         df_to_save = df.copy()
         df_to_save["Date_Game"] = selected
+
