@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Hockey Prop Stop — L5 Probability Update (Form Indicator)
+# 🏒 Hockey Prop Stop — L5 Probability Update (Save + Download)
 # ---------------------------------------------------------------
 
 import streamlit as st
@@ -86,36 +86,6 @@ if skaters_df.empty or shots_df.empty:
 st.success("✅ Data loaded successfully.")
 
 # ---------------------------------------------------------------
-# 🕒 Data Last Updated — True Git Commit Timestamp for SHOT DATA
-# ---------------------------------------------------------------
-def get_shots_file_git_time():
-    tz_cst = pytz.timezone("America/Chicago")
-    file_candidates = [
-        "data/SHOT DATA.xlsx",
-        "/mount/src/hockey-prop-stop/data/SHOT DATA.xlsx",
-        "SHOT DATA.xlsx"
-    ]
-    for f in file_candidates:
-        if os.path.exists(f):
-            try:
-                git_time_str = subprocess.check_output(
-                    ["git", "log", "-1", "--format=%cd", "--date=iso", f],
-                    stderr=subprocess.DEVNULL
-                ).decode().strip()
-                if git_time_str:
-                    git_time = datetime.datetime.fromisoformat(git_time_str.replace("Z","+00:00"))
-                    return git_time.astimezone(tz_cst).strftime("%Y-%m-%d %I:%M %p CST")
-            except Exception:
-                continue
-    return None
-
-last_update = get_shots_file_git_time()
-if last_update:
-    st.markdown(f"🕒 **Data last updated:** {last_update}")
-else:
-    st.markdown("🕒 **Data last updated:** Unknown")
-
-# ---------------------------------------------------------------
 # Normalize Columns
 # ---------------------------------------------------------------
 for df in [skaters_df, shots_df, goalies_df, lines_df, teams_df]:
@@ -123,8 +93,6 @@ for df in [skaters_df, shots_df, goalies_df, lines_df, teams_df]:
 
 team_col = next((c for c in skaters_df.columns if "team" in c), None)
 player_col = "name" if "name" in skaters_df.columns else None
-toi_col, gp_col = "icetime", "games"
-
 player_col_shots = next((c for c in shots_df.columns if "player" in c or "name" in c), None)
 shots_df = shots_df.rename(columns={player_col_shots: "player"})
 shots_df["player"] = shots_df["player"].astype(str).str.strip()
@@ -183,12 +151,12 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
         trend = (l5 - l10)/l10 if l10>0 else 0
 
         line_factor = 1.0
-        if not isinstance(line_adj, dict):
+        if not isinstance(line_adj,dict):
             last_name = str(player).split()[-1].lower()
-            m = line_adj[line_adj["line pairings"].str.contains(last_name, case=False, na=False)]
+            m = line_adj[line_adj["line pairings"].str.contains(last_name,case=False,na=False)]
             if not m.empty:
-                line_factor = np.average(m["line_factor"], weights=m["games"])
-            line_factor = np.clip(line_factor, 0.7, 1.3)
+                line_factor = np.average(m["line_factor"],weights=m["games"])
+            line_factor = np.clip(line_factor,0.7,1.3)
 
         lam = l5
         line = round(lam, 2)
@@ -197,7 +165,7 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
         odds = -100*(p/(1-p)) if p>=0.5 else 100*((1-p)/p)
         implied_odds = f"{'+' if odds>0 else ''}{int(odds)}"
 
-        # --- Opponent-adjusted Form Indicator ---
+        # --- Form Indicator ---
         form_flag = "⚪ Neutral Form"
         try:
             season_toi = pd.to_numeric(
@@ -208,48 +176,29 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
                 skaters_df.loc[skaters_df[player_col].str.lower() == player.lower(), "games"],
                 errors="coerce"
             ).mean()
-
             if season_toi > 0 and games_played >= 10:
                 avg_toi = (season_toi / games_played) / 60.0
                 sog_per60 = (season_avg / avg_toi) * 60
                 blended_recent = 0.7 * l5 + 0.3 * l10
-                recent_per60 = (blended_recent / avg_toi) * 60 if avg_toi > 0 else 0
-
-                opponent = team_b if team == team_a else team_a
-                if not teams_df.empty and "shots_against_per_game" in teams_df.columns:
-                    opp_rate = teams_df.loc[
-                        teams_df["team"].str.lower() == opponent.lower(), "shots_against_per_game"
-                    ]
-                    league_avg = teams_df["shots_against_per_game"].mean()
-                    opp_factor = float(league_avg / opp_rate.mean()) if not opp_rate.empty else 1.0
-                else:
-                    opp_factor = 1.0
-
-                recent_adj = recent_per60 * opp_factor
-                usage_delta = (recent_adj - sog_per60) / sog_per60 if sog_per60 > 0 else 0
-
-                if usage_delta > 0.10:
-                    form_flag = "🟢 Above-Baseline Form"
-                elif usage_delta < -0.10:
-                    form_flag = "🔴 Below-Baseline Form"
-                else:
-                    form_flag = "⚪ Neutral Form"
-        except Exception:
-            pass
+                recent_per60 = (blended_recent / avg_toi) * 60 if avg_toi>0 else 0
+                usage_delta = (recent_per60 - sog_per60)/sog_per60 if sog_per60>0 else 0
+                if usage_delta > 0.10: form_flag = "🟢 Above-Baseline Form"
+                elif usage_delta < -0.10: form_flag = "🔴 Below-Baseline Form"
+                else: form_flag = "⚪ Neutral Form"
+        except Exception: pass
 
         results.append({
-            "Player": player,
-            "Team": team,
-            "Season Avg": round(season_avg, 2),
-            "L3 Shots": ", ".join(map(str, last3)),
-            "L5 Shots": ", ".join(map(str, last5)),
-            "L10 Shots": ", ".join(map(str, last10)),
-            "Trend Score": round(trend, 3),
-            "Final Projection": round(line, 2),
-            "Prob ≥ Projection (%) L5": round(p * 100, 1),
-            "Playable Odds": implied_odds,
-            "Line Adj": round(line_factor, 2),
-            "Form Indicator": form_flag
+            "Player":player,"Team":team,
+            "Season Avg":round(season_avg,2),
+            "L3 Shots":", ".join(map(str,last3)),
+            "L5 Shots":", ".join(map(str,last5)),
+            "L10 Shots":", ".join(map(str,last10)),
+            "Trend Score":round(trend,3),
+            "Final Projection":round(line,2),
+            "Prob ≥ Projection (%) L5":round(p*100,1),
+            "Playable Odds":implied_odds,
+            "Line Adj":round(line_factor,2),
+            "Form Indicator":form_flag
         })
     return pd.DataFrame(results)
 
@@ -298,7 +247,6 @@ if "results_raw" in st.session_state and not st.session_state.results_raw.empty:
             overflow-x: auto;
             overflow-y: auto;
             height: 600px;
-            position: relative;
         }}
         table {{
             width: 100%;
@@ -313,12 +261,10 @@ if "results_raw" in st.session_state and not st.session_state.results_raw.empty:
             text-align: center;
             position: sticky;
             top: 0;
-            z-index: 3;
         }}
         td:first-child, th:first-child {{
             position: sticky;
             left: 0;
-            z-index: 4;
             background-color: #00B140;
             color: white;
             font-weight: bold;
@@ -336,3 +282,34 @@ if "results_raw" in st.session_state and not st.session_state.results_raw.empty:
         height=620,
         scrolling=True,
     )
+
+    # ---------------------------------------------------------------
+    # 💾 Save Projections Locally + 📥 Download
+    # ---------------------------------------------------------------
+    st.markdown("---")
+    st.subheader("💾 Save or Download Projections")
+
+    selected_date = st.date_input("Select game date:", datetime.date.today())
+
+    if st.button("💾 Save Projections for Selected Date"):
+        df_to_save = df.copy()
+        df_to_save["Date_Game"] = selected_date.strftime("%Y-%m-%d")
+        df_to_save["Matchup"] = f"{team_a} vs {team_b}"
+
+        save_dir = "projections"
+        os.makedirs(save_dir, exist_ok=True)
+
+        filename = f"{team_a}_vs_{team_b}_{selected_date.strftime('%Y-%m-%d')}.csv"
+        save_path = os.path.join(save_dir, filename)
+
+        df_to_save.to_csv(save_path, index=False)
+        st.success(f"✅ Saved projections to **{save_path}**")
+
+        # Provide Download Button
+        csv = df_to_save.to_csv(index=False).encode('utf-8')
+        st.download_button(
+            label="📥 Download Projections CSV",
+            data=csv,
+            file_name=filename,
+            mime="text/csv"
+        )
