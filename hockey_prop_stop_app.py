@@ -32,7 +32,7 @@ shots_file   = st.sidebar.file_uploader("SHOT DATA", type=["xlsx","csv"])
 goalies_file = st.sidebar.file_uploader("GOALTENDERS", type=["xlsx","csv"])
 lines_file   = st.sidebar.file_uploader("LINE DATA", type=["xlsx","csv"])
 teams_file   = st.sidebar.file_uploader("TEAMS", type=["xlsx","csv"])
-injuries_file = st.sidebar.file_uploader("INJURY REPORT", type=["xlsx","csv"])
+injuries_file = st.sidebar.file_uploader("INJURY REPORT (optional)", type=["xlsx","csv"])
 
 # ---------------------------------------------------------------
 # Helper Functions
@@ -60,26 +60,36 @@ def load_data(file_uploader, default_path):
 # Cached Data Load
 # ---------------------------------------------------------------
 @st.cache_data(show_spinner=False)
-def load_all_data(skaters_file, shots_file, goalies_file, lines_file, teams_file):
+def load_all_data(skaters_file, shots_file, goalies_file, lines_file, teams_file, injuries_file):
     base_paths = [".", "data", "/mount/src/hockey-prop-stop/data"]
+
     def find_file(name):
         for p in base_paths:
             full = os.path.join(p, name)
-            if os.path.exists(full): return full
+            if os.path.exists(full):
+                return full
         return None
+
     with contextlib.redirect_stdout(io.StringIO()):
         skaters = load_data(skaters_file, find_file("Skaters.xlsx") or "Skaters.xlsx")
         shots   = load_data(shots_file,   find_file("SHOT DATA.xlsx") or "SHOT DATA.xlsx")
         goalies = load_data(goalies_file, find_file("GOALTENDERS.xlsx") or "GOALTENDERS.xlsx")
         lines   = load_data(lines_file,   find_file("LINE DATA.xlsx") or "LINE DATA.xlsx")
         teams   = load_data(teams_file,   find_file("TEAMS.xlsx") or "TEAMS.xlsx")
-    return skaters, shots, goalies, lines, teams
+        injuries = load_data(injuries_file, find_file("injuries.xlsx") or "injuries.xlsx")
+
+        if not injuries.empty:
+            injuries.columns = injuries.columns.str.lower().str.strip()
+            if "player" in injuries.columns:
+                injuries["player"] = injuries["player"].astype(str).str.strip().str.lower()
+
+    return skaters, shots, goalies, lines, teams, injuries
 
 # ---------------------------------------------------------------
 # Load Data
 # ---------------------------------------------------------------
-skaters_df, shots_df, goalies_df, lines_df, teams_df = load_all_data(
-    skaters_file, shots_file, goalies_file, lines_file, teams_file
+skaters_df, shots_df, goalies_df, lines_df, teams_df, injuries_df = load_all_data(
+    skaters_file, shots_file, goalies_file, lines_file, teams_file, injuries_file
 )
 if skaters_df.empty or shots_df.empty:
     st.warning("⚠️ Missing required data. Please upload or verify repo files.")
@@ -132,19 +142,6 @@ shots_df["player"] = shots_df["player"].astype(str).str.strip()
 sog_col  = next((c for c in shots_df.columns if "sog" in c), None)
 goal_col = next((c for c in shots_df.columns if "goal" in c), None)
 game_col = next((c for c in shots_df.columns if "game" in c and "id" in c), None)
-
-# ---------------------------------------------------------------
-# Load Injury Data (optional)
-# ---------------------------------------------------------------
-injuries_df = pd.DataFrame()
-if injuries_file is not None:
-    try:
-        injuries_df = pd.read_excel(injuries_file) if injuries_file.name.lower().endswith(".xlsx") else pd.read_csv(injuries_file)
-        injuries_df.columns = injuries_df.columns.str.lower().str.strip()
-        if "player" in injuries_df.columns:
-            injuries_df["player"] = injuries_df["player"].astype(str).str.strip().str.lower()
-    except Exception:
-        st.warning("⚠️ Could not load injury file.")
 
 # ---------------------------------------------------------------
 # Team Selection
@@ -265,6 +262,8 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
 if st.button("🚀 Run Model"):
     st.info(f"Building model for matchup: **{team_a} vs {team_b}** …")
     df = build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, teams_df, injuries_df)
+    if "Injury" not in df.columns:
+        df["Injury"] = ""
     df = df.sort_values("Final Projection", ascending=False).reset_index(drop=True)
     st.session_state.results_raw = df.copy()
     st.success("✅ Model built successfully!")
@@ -362,7 +361,6 @@ if "results_raw" in st.session_state and not st.session_state.results_raw.empty:
         df_to_save.to_csv(save_path, index=False)
         st.success(f"✅ Saved projections to **{save_path}**")
 
-        # Provide Download Button
         csv = df_to_save.to_csv(index=False).encode('utf-8')
         st.download_button(
             label="📥 Download Projections CSV",
