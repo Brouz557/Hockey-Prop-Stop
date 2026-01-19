@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Hockey Prop Stop — L5 Probability Update (Team+LastName Injuries)
+# 🏒 Hockey Prop Stop — L5 Probability Update (Clickable Multiline Injury Info)
 # ---------------------------------------------------------------
 
 import streamlit as st
@@ -57,7 +57,7 @@ def load_data(file_uploader, default_path):
     return safe_read(default_path)
 
 # ---------------------------------------------------------------
-# Cached Data Load (with fixed Injuries file logic)
+# Cached Data Load
 # ---------------------------------------------------------------
 @st.cache_data(show_spinner=False)
 def load_all_data(skaters_file, shots_file, goalies_file, lines_file, teams_file, injuries_file):
@@ -77,14 +77,11 @@ def load_all_data(skaters_file, shots_file, goalies_file, lines_file, teams_file
         lines   = load_data(lines_file,   find_file("LINE DATA.xlsx") or "LINE DATA.xlsx")
         teams   = load_data(teams_file,   find_file("TEAMS.xlsx") or "TEAMS.xlsx")
 
-        # --- Fixed Injuries file lookup ---
+        # --- Injuries file detection ---
         injuries_path_candidates = [
-            "Injuries.xlsx",
-            "injuries.xlsx",
-            "./Injuries.xlsx",
-            "./injuries.xlsx",
-            "data/Injuries.xlsx",
-            "data/injuries.xlsx",
+            "Injuries.xlsx", "injuries.xlsx",
+            "./Injuries.xlsx", "./injuries.xlsx",
+            "data/Injuries.xlsx", "data/injuries.xlsx",
             "/mount/src/hockey-prop-stop/Injuries.xlsx",
             "/mount/src/hockey-prop-stop/injuries.xlsx",
         ]
@@ -239,14 +236,14 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
                 avg_toi = (season_toi / games_played) / 60.0
                 sog_per60 = (season_avg / avg_toi) * 60
                 blended_recent = 0.7 * l5 + 0.3 * l10
-                recent_per60 = (blended_recent / avg_toi) * 60 if avg_toi>0 else 0
+                recent_per60 = (blended_recent / avg_toi)*60 if avg_toi>0 else 0
                 usage_delta = (recent_per60 - sog_per60)/sog_per60 if sog_per60>0 else 0
                 if usage_delta > 0.10: form_flag = "🟢 Above-Baseline Form"
                 elif usage_delta < -0.10: form_flag = "🔴 Below-Baseline Form"
                 else: form_flag = "⚪ Neutral Form"
         except Exception: pass
 
-        # --- Injury Flag with Hover Tooltip (team + last name match) ---
+        # --- Injury Flag (Multiline Clickable Popup)
         injury_html = ""
         if not injuries_df.empty and {"player", "team"}.issubset(injuries_df.columns):
             player_lower = player.lower().strip()
@@ -262,9 +259,15 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
                 note = str(match.iloc[0].get("injury note", "")).strip()
                 injury_type = str(match.iloc[0].get("injury type", "")).strip()
                 date_injury = str(match.iloc[0].get("date of injury", "")).strip()
+
                 tooltip_parts = [p for p in [injury_type, note, date_injury] if p]
-                tooltip = " — ".join(tooltip_parts) if tooltip_parts else "Injury info unavailable"
-                injury_html = f"<span title='{tooltip}'>🚑</span>"
+                tooltip = "\\n".join(tooltip_parts) if tooltip_parts else "Injury info unavailable"
+
+                # ✅ Clickable emoji for mobile & desktop
+                injury_html = f"""
+                <span style='cursor:pointer;' onclick="alert('{tooltip}')"
+                title='Tap or click for injury info'>🚑</span>
+                """
 
         results.append({
             "Player":player,"Team":team,"Injury":injury_html,
@@ -280,93 +283,3 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
             "Form Indicator":form_flag
         })
     return pd.DataFrame(results)
-
-# ---------------------------------------------------------------
-# Run Model
-# ---------------------------------------------------------------
-if st.button("🚀 Run Model"):
-    st.info(f"Building model for matchup: **{team_a} vs {team_b}** …")
-    df = build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, teams_df, injuries_df)
-    if "Injury" not in df.columns:
-        df["Injury"] = ""
-    df = df.sort_values("Final Projection", ascending=False).reset_index(drop=True)
-    st.session_state.results_raw = df.copy()
-    st.success("✅ Model built successfully!")
-
-# ---------------------------------------------------------------
-# Display Table + Save/Download
-# ---------------------------------------------------------------
-if "results_raw" in st.session_state and not st.session_state.results_raw.empty:
-    df = st.session_state.results_raw.copy()
-    def trend_color(v):
-        if pd.isna(v): return "–"
-        v = max(min(v, 0.5), -0.5)
-        n = v + 0.5
-        if n < 0.5: r,g,b = 255,int(255*(n*2)),0
-        else: r,g,b = int(255*(1-(n-0.5)*2)),255,0
-        color=f"rgb({r},{g},{b})"
-        t="▲" if v>0.05 else ("▼" if v<-0.05 else "–")
-        txt="#000" if abs(v)<0.2 else "#fff"
-        return f"<div style='background:{color};color:{txt};font-weight:600;border-radius:6px;padding:4px 8px;text-align:center;'>{t}</div>"
-    df["Trend"] = df["Trend Score"].apply(trend_color)
-    cols = [
-        "Player","Team","Injury","Trend","Final Projection",
-        "Prob ≥ Projection (%) L5","Playable Odds",
-        "Season Avg","Line Adj","Form Indicator",
-        "L3 Shots","L5 Shots","L10 Shots"
-    ]
-    vis = df[[c for c in cols if c in df.columns]]
-    html_table = vis.to_html(index=False, escape=False)
-    components.html(f"""
-        <style>
-        div.scrollable-table {{
-            overflow-x: auto;
-            overflow-y: auto;
-            height: 600px;
-        }}
-        table {{
-            width: 100%;
-            border-collapse: collapse;
-            font-family: 'Source Sans Pro', sans-serif;
-            color: #f0f0f0;
-        }}
-        th {{
-            background-color: #00B140;
-            color: white;
-            padding: 6px;
-            text-align: center;
-            position: sticky;
-            top: 0;
-        }}
-        td:first-child, th:first-child {{
-            position: sticky;
-            left: 0;
-            background-color: #00B140;
-            color: white;
-            font-weight: bold;
-        }}
-        td {{
-            background-color: #1e1e1e;
-            color: #f0f0f0;
-            padding: 4px;
-            text-align: center;
-        }}
-        tr:nth-child(even) td {{ background-color: #2a2a2a; }}
-        </style>
-        <div class='scrollable-table'>{html_table}</div>
-        """, height=620, scrolling=True)
-    st.markdown("---")
-    st.subheader("💾 Save or Download Projections")
-    selected_date = st.date_input("Select game date:", datetime.date.today())
-    if st.button("💾 Save Projections for Selected Date"):
-        df_to_save = df.copy()
-        df_to_save["Date_Game"] = selected_date.strftime("%Y-%m-%d")
-        df_to_save["Matchup"] = f"{team_a} vs {team_b}"
-        save_dir = "projections"
-        os.makedirs(save_dir, exist_ok=True)
-        filename = f"{team_a}_vs_{team_b}_{selected_date.strftime('%Y-%m-%d')}.csv"
-        save_path = os.path.join(save_dir, filename)
-        df_to_save.to_csv(save_path, index=False)
-        st.success(f"✅ Saved projections to **{save_path}**")
-        csv = df_to_save.to_csv(index=False).encode('utf-8')
-        st.download_button(label="📥 Download Projections CSV", data=csv, file_name=filename, mime="text/csv")
