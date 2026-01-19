@@ -77,7 +77,6 @@ def load_all_data(skaters_file, shots_file, goalies_file, lines_file, teams_file
         lines   = load_data(lines_file,   find_file("LINE DATA.xlsx") or "LINE DATA.xlsx")
         teams   = load_data(teams_file,   find_file("TEAMS.xlsx") or "TEAMS.xlsx")
 
-        # --- Injuries file detection ---
         injuries_path_candidates = [
             "injuries.xlsx", "Injuries.xlsx", "./injuries.xlsx", "data/injuries.xlsx",
             "/mount/src/hockey-prop-stop/injuries.xlsx"
@@ -210,6 +209,7 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
         odds = -100*(p/(1-p)) if p>=0.5 else 100*((1-p)/p)
         implied_odds = f"{'+' if odds>0 else ''}{int(odds)}"
 
+        # --- Form Indicator ---
         form_flag = "⚪ Neutral Form"
         try:
             season_toi = pd.to_numeric(
@@ -231,7 +231,7 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
         except Exception:
             pass
 
-        # --- Clickable Injury Modal ---
+        # --- Injury Modal ---
         injury_html = ""
         if not injuries_df.empty and {"player","team"}.issubset(injuries_df.columns):
             player_lower = player.lower().strip()
@@ -246,30 +246,31 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
                 injury_type = str(match.iloc[0].get("injury type","")).strip()
                 date_injury = str(match.iloc[0].get("date of injury","")).strip()
                 tooltip = "\\n".join([p for p in [injury_type,note,date_injury] if p]) or "Injury info unavailable"
-                injury_html = f"""
-                <span style='cursor:pointer;' title='Tap or click for injury info'
-                onclick="
-                    const msg = `{tooltip.replace("'", "\\'").replace('`','\\`').replace(chr(10),' ')}`;
-                    const modal = document.createElement('div');
-                    modal.innerHTML = `
-                        <div style='position:fixed;top:0;left:0;width:100%;height:100%;
-                                    background:rgba(0,0,0,0.6);display:flex;align-items:center;
-                                    justify-content:center;z-index:9999;'>
-                            <div style='background:#1e1e1e;padding:20px 25px;border-radius:10px;
-                                        width:320px;max-width:90%;text-align:left;
-                                        box-shadow:0 4px 20px rgba(0,0,0,0.4);color:#fff;
-                                        font-family:sans-serif;'>
-                                <h4 style='margin-top:0;color:#00B140;'>Injury Report</h4>
-                                <p style='white-space:pre-wrap;font-size:14px;line-height:1.4;'>\\${msg}</p>
-                                <button onclick='document.body.removeChild(this.parentNode.parentNode)'
-                                        style='margin-top:10px;background:#00B140;color:#fff;
-                                        border:none;border-radius:6px;padding:6px 14px;
-                                        cursor:pointer;font-size:14px;'>OK</button>
-                            </div>
-                        </div>`;
-                    document.body.appendChild(modal);
-                ">🚑</span>
-                """
+
+                # fixed modal build - safe for caching
+                injury_html = (
+                    "<span style='cursor:pointer;' title='Tap or click for injury info' "
+                    "onclick=\""
+                    "const msg = `" + tooltip.replace("'", "\\'").replace('`','\\`').replace(chr(10),' ') + "`;"
+                    "const modal = document.createElement('div');"
+                    "modal.innerHTML = `"
+                    "<div style='position:fixed;top:0;left:0;width:100%;height:100%;"
+                    "background:rgba(0,0,0,0.6);display:flex;align-items:center;"
+                    "justify-content:center;z-index:9999;'>"
+                    "<div style='background:#1e1e1e;padding:20px 25px;border-radius:10px;"
+                    "width:320px;max-width:90%;text-align:left;"
+                    "box-shadow:0 4px 20px rgba(0,0,0,0.4);color:#fff;"
+                    "font-family:sans-serif;'>"
+                    "<h4 style='margin-top:0;color:#00B140;'>Injury Report</h4>"
+                    "<p style='white-space:pre-wrap;font-size:14px;line-height:1.4;'>${msg}</p>"
+                    "<button onclick='document.body.removeChild(this.parentNode.parentNode)' "
+                    "style='margin-top:10px;background:#00B140;color:#fff;"
+                    "border:none;border-radius:6px;padding:6px 14px;"
+                    "cursor:pointer;font-size:14px;'>OK</button>"
+                    "</div></div>`;"
+                    "document.body.appendChild(modal);"
+                    "\">🚑</span>"
+                )
 
         results.append({
             "Player": player, "Team": team, "Injury": injury_html,
@@ -374,12 +375,4 @@ if "results_raw" in st.session_state and not st.session_state.results_raw.empty:
 
     if st.button("💾 Save Projections for Selected Date"):
         df_to_save = df.copy()
-        df_to_save["Date_Game"] = selected_date.strftime("%Y-%m-%d")
-        df_to_save["Matchup"] = f"{team_a} vs {team_b}"
-        os.makedirs("projections", exist_ok=True)
-        filename = f"{team_a}_vs_{team_b}_{selected_date.strftime('%Y-%m-%d')}.csv"
-        save_path = os.path.join("projections", filename)
-        df_to_save.to_csv(save_path, index=False)
-        st.success(f"✅ Saved projections to **{save_path}**")
-        csv = df_to_save.to_csv(index=False).encode('utf-8')
-        st.download_button("📥 Download Projections CSV", csv, filename, "text/csv")
+        df_to_save["Date_Game"] = selected
