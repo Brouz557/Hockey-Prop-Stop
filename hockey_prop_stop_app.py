@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Hockey Prop Stop — Form Indicator + Results Dashboard + Clear Button
+# 🏒 Hockey Prop Stop — Full Build (Restored Columns + Dashboard)
 # ---------------------------------------------------------------
 import streamlit as st
 import pandas as pd
@@ -9,7 +9,7 @@ from scipy.stats import poisson
 import streamlit.components.v1 as components
 
 # ---------------------------------------------------------------
-# Page Setup + Tabs
+# Page Setup
 # ---------------------------------------------------------------
 st.set_page_config(page_title="Hockey Prop Stop", layout="wide", page_icon="🏒")
 st.markdown(
@@ -21,15 +21,14 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
+
+# Tabs
 tab1, tab2 = st.tabs(["🏒 Model", "📊 Results Dashboard"])
 
 # ===============================================================
 # 🏒 MODEL TAB
 # ===============================================================
 with tab1:
-    # -----------------------------------------------------------
-    # Sidebar Uploads
-    # -----------------------------------------------------------
     st.sidebar.header("📂 Upload Data Files (.xlsx or .csv)")
     skaters_file = st.sidebar.file_uploader("Skaters", type=["xlsx","csv"])
     shots_file   = st.sidebar.file_uploader("SHOT DATA", type=["xlsx","csv"])
@@ -37,9 +36,6 @@ with tab1:
     lines_file   = st.sidebar.file_uploader("LINE DATA", type=["xlsx","csv"])
     teams_file   = st.sidebar.file_uploader("TEAMS", type=["xlsx","csv"])
 
-    # -----------------------------------------------------------
-    # File Loaders
-    # -----------------------------------------------------------
     def load_file(file):
         if not file: return pd.DataFrame()
         try:
@@ -57,9 +53,6 @@ with tab1:
     def load_data(file_uploader, default_path):
         return load_file(file_uploader) if file_uploader is not None else safe_read(default_path)
 
-    # -----------------------------------------------------------
-    # Cached Load
-    # -----------------------------------------------------------
     @st.cache_data(show_spinner=False)
     def load_all_data(skaters_file, shots_file, goalies_file, lines_file, teams_file):
         base_paths = [".","data","/mount/src/hockey-prop-stop/data"]
@@ -76,9 +69,6 @@ with tab1:
             teams   = load_data(teams_file,   find_file("TEAMS.xlsx") or "TEAMS.xlsx")
         return skaters, shots, goalies, lines, teams
 
-    # -----------------------------------------------------------
-    # Load Data
-    # -----------------------------------------------------------
     skaters_df, shots_df, goalies_df, lines_df, teams_df = load_all_data(
         skaters_file, shots_file, goalies_file, lines_file, teams_file
     )
@@ -87,37 +77,33 @@ with tab1:
         st.stop()
     st.success("✅ Data loaded successfully.")
 
-    # -----------------------------------------------------------
-    # Normalize Columns
-    # -----------------------------------------------------------
+    # Normalize
     for df in [skaters_df, shots_df, goalies_df, lines_df, teams_df]:
         if not df.empty: df.columns = df.columns.str.lower().str.strip()
+
     team_col = next((c for c in skaters_df.columns if "team" in c), None)
     player_col = "name" if "name" in skaters_df.columns else None
     player_col_shots = next((c for c in shots_df.columns if "player" in c or "name" in c), None)
     shots_df = shots_df.rename(columns={player_col_shots: "player"})
     shots_df["player"] = shots_df["player"].astype(str).str.strip()
     sog_col = next((c for c in shots_df.columns if "sog" in c), None)
+    goal_col = next((c for c in shots_df.columns if "goal" in c), None)
     game_col = next((c for c in shots_df.columns if "game" in c and "id" in c), None)
 
-    # -----------------------------------------------------------
-    # Team Selection
-    # -----------------------------------------------------------
+    # Team selectors
     teams = sorted(skaters_df[team_col].dropna().unique().tolist())
     col1, col2 = st.columns(2)
     with col1: team_a = st.selectbox("Select Team A", teams)
     with col2: team_b = st.selectbox("Select Team B", [t for t in teams if t != team_a])
     st.markdown("---")
 
-    # -----------------------------------------------------------
-    # Cached Model Build
-    # -----------------------------------------------------------
     @st.cache_data(show_spinner=True)
     def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, teams_df):
         results=[]
         skaters=skaters_df[skaters_df[team_col].isin([team_a,team_b])]
         roster=skaters[[player_col,team_col]].rename(columns={player_col:"player",team_col:"team"}).drop_duplicates("player")
         grouped={n.lower():g.sort_values(game_col) for n,g in shots_df.groupby(shots_df["player"].str.lower())}
+
         for row in roster.itertuples(index=False):
             player,team=row.player,row.team
             df_p=grouped.get(player.lower(),pd.DataFrame())
@@ -128,7 +114,7 @@ with tab1:
             last3=sog_values[-3:] if len(sog_values)>=3 else sog_values
             last5=sog_values[-5:] if len(sog_values)>=5 else sog_values
             last10=sog_values[-10:] if len(sog_values)>=10 else sog_values
-            l5,l10=np.mean(last5),np.mean(last10)
+            l3,l5,l10=np.mean(last3),np.mean(last5),np.mean(last10)
             season_avg=np.mean(sog_values)
             trend=(l5-l10)/l10 if l10>0 else 0
             lam=l5; line=round(lam,2)
@@ -136,6 +122,7 @@ with tab1:
             p=min(max(prob,0.001),0.999)
             odds=-100*(p/(1-p)) if p>=0.5 else 100*((1-p)/p)
             implied_odds=f"{'+' if odds>0 else ''}{int(odds)}"
+
             form_flag="⚪ Neutral Form"
             try:
                 season_toi=pd.to_numeric(skaters_df.loc[skaters_df[player_col].str.lower()==player.lower(),"icetime"],errors="coerce").mean()
@@ -156,9 +143,14 @@ with tab1:
                     if usage_delta>0.10: form_flag="🟢 Above-Baseline Form"
                     elif usage_delta<-0.10: form_flag="🔴 Below-Baseline Form"
             except Exception: pass
+
             results.append({
                 "Player":player,"Team":team,
                 "Season Avg":round(season_avg,2),
+                "L3 Shots":", ".join(map(str,last3)),
+                "L5 Shots":", ".join(map(str,last5)),
+                "L10 Shots":", ".join(map(str,last10)),
+                "Trend Score":round(trend,3),
                 "Final Projection":round(line,2),
                 "Prob ≥ Projection (%) L5":round(p*100,1),
                 "Playable Odds":implied_odds,
@@ -172,12 +164,11 @@ with tab1:
         st.session_state.results_raw=df.copy()
         st.success("✅ Model built successfully!")
 
-    # -----------------------------------------------------------
-    # Display + Save
-    # -----------------------------------------------------------
     if "results_raw" in st.session_state and not st.session_state.results_raw.empty:
         df=st.session_state.results_raw.copy()
         st.dataframe(df)
+
+        # --- Save with Date
         st.markdown("### 💾 Save Projections")
         selected_date=st.date_input("Select game date:",datetime.date.today())
         if st.button("💾 Save Projections for Selected Date"):
@@ -185,24 +176,22 @@ with tab1:
             out_df["Date_Game"]=selected_date.strftime("%Y-%m-%d")
             out_df["Matchup"]=f"{team_a} vs {team_b}"
             os.makedirs("projections",exist_ok=True)
-            master_path="model_results.csv"
-            if os.path.exists(master_path):
-                existing=pd.read_csv(master_path)
+            master="model_results.csv"
+            if os.path.exists(master):
+                existing=pd.read_csv(master)
                 missing=[c for c in out_df.columns if c not in existing.columns]
                 for c in missing: existing[c]=np.nan
-                pd.concat([existing,out_df],ignore_index=True).to_csv(master_path,index=False)
-            else: out_df.to_csv(master_path,index=False)
-            matchup_file=f"projections/{team_a}_vs_{team_b}_{out_df['Date_Game'].iloc[0]}.csv"
-            out_df.to_csv(matchup_file,index=False)
-            st.success(f"✅ Saved projections for {selected_date} to both {master_path} and {matchup_file}")
+                pd.concat([existing,out_df],ignore_index=True).to_csv(master,index=False)
+            else: out_df.to_csv(master,index=False)
+            matchup=f"projections/{team_a}_vs_{team_b}_{out_df['Date_Game'].iloc[0]}.csv"
+            out_df.to_csv(matchup,index=False)
+            st.success(f"✅ Saved projections for {selected_date} to both {master} and {matchup}")
 
 # ===============================================================
 # 📊 RESULTS DASHBOARD TAB
 # ===============================================================
 with tab2:
     st.header("📊 Model Results Dashboard")
-
-    # --- Clear Results Section
     st.markdown("### 🧹 Manage Results Data")
     if os.path.exists("model_results.csv"):
         with st.expander("⚙️ Clear or Manage Saved Results"):
@@ -221,11 +210,11 @@ with tab2:
                 if not clear_master and not clear_matchups:
                     st.info("No selections made — nothing deleted.")
 
-    master_path="model_results.csv"
-    if not os.path.exists(master_path):
+    master="model_results.csv"
+    if not os.path.exists(master):
         st.info("No results logged yet. Run and save projections first.")
     else:
-        df=pd.read_csv(master_path)
+        df=pd.read_csv(master)
         st.markdown("### 📅 Projection History")
         st.dataframe(df.tail(30))
         st.markdown("#### Upload Actual Results")
@@ -233,17 +222,17 @@ with tab2:
         if actuals_file:
             actuals=pd.read_excel(actuals_file) if actuals_file.name.endswith(".xlsx") else pd.read_csv(actuals_file)
             actuals.columns=actuals.columns.str.lower().str.strip()
-            player_col_shots=next((c for c in actuals.columns if "player" in c or "name" in c),None)
+            player_col=next((c for c in actuals.columns if "player" in c or "name" in c),None)
             sog_col=next((c for c in actuals.columns if "sog" in c),None)
-            if player_col_shots and sog_col:
-                latest_sog=actuals.groupby(player_col_shots)[sog_col].mean().reset_index()
-                latest_sog.columns=["Player","Actual_SOG"]
-                df_eval=df.merge(latest_sog,on="Player",how="left")
+            if player_col and sog_col:
+                latest=actuals.groupby(player_col)[sog_col].mean().reset_index()
+                latest.columns=["Player","Actual_SOG"]
+                df_eval=df.merge(latest,on="Player",how="left")
                 df_eval["Hit"]=(df_eval["Actual_SOG"]>=df_eval["Final Projection"]).astype(int)
-                hit_rate=df_eval["Hit"].mean()*100
+                hit=df_eval["Hit"].mean()*100
                 mae=np.mean(np.abs(df_eval["Actual_SOG"]-df_eval["Final Projection"]))
-                st.metric("Overall Hit Rate",f"{hit_rate:.1f}%")
-                st.metric("Mean Absolute Error (MAE)",f"{mae:.2f}")
+                st.metric("Overall Hit Rate",f"{hit:.1f}%")
+                st.metric("Mean Absolute Error",f"{mae:.2f}")
                 st.markdown("#### Top Performers")
                 st.dataframe(df_eval.groupby("Player")["Hit"].mean().sort_values(ascending=False).head(10).reset_index())
                 st.markdown("#### Bottom Performers")
