@@ -1,11 +1,11 @@
 # ---------------------------------------------------------------
-# 🏒 Hockey Prop Stop — L5 Probability Update + Dashboard + Manual Entry (Duplicate Fix)
+# 🏒 Hockey Prop Stop — L5 Probability Update + Manual Results + Safe Widget IDs
 # ---------------------------------------------------------------
 
 import streamlit as st
 import pandas as pd
 import numpy as np
-import os, contextlib, io, datetime, pytz, subprocess, hashlib
+import os, contextlib, io, datetime, pytz, subprocess
 from scipy.stats import poisson
 import streamlit.components.v1 as components
 
@@ -186,16 +186,20 @@ with tab2:
 
                 st.write(f"**Entering results for {matchup} ({date_game})**")
                 actuals = {}
-                for player in sub_df["Player"]:
-                    # --- Safe unique widget key using hash ---
-                    key_str = f"{matchup}_{date_game}_{player}".encode("utf-8")
-                    safe_key = hashlib.md5(key_str).hexdigest()
 
+                # Generate a stable unique run_id for widget key names
+                if "run_id" not in st.session_state:
+                    st.session_state["run_id"] = int(datetime.datetime.now().timestamp())
+
+                run_id = st.session_state["run_id"]
+
+                for i, player in enumerate(sub_df["Player"].unique()):
+                    safe_key = f"res_{run_id}_{i}_{abs(hash(player)) % 1000000}"
                     actuals[player] = st.number_input(
                         f"{player} SOG:",
                         min_value=0,
                         step=1,
-                        key=f"res_{safe_key}"
+                        key=safe_key
                     )
 
                 if st.button(f"💾 Save Entered Results for {matchup} ({date_game})"):
