@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Hockey Prop Stop — L5 Probability Update (Injury Debug Version)
+# 🏒 Hockey Prop Stop — L5 Probability Update (Injuries Fixed)
 # ---------------------------------------------------------------
 
 import streamlit as st
@@ -32,7 +32,7 @@ shots_file   = st.sidebar.file_uploader("SHOT DATA", type=["xlsx","csv"])
 goalies_file = st.sidebar.file_uploader("GOALTENDERS", type=["xlsx","csv"])
 lines_file   = st.sidebar.file_uploader("LINE DATA", type=["xlsx","csv"])
 teams_file   = st.sidebar.file_uploader("TEAMS", type=["xlsx","csv"])
-injuries_file = st.sidebar.file_uploader("INJURY REPORT (optional)", type=["xlsx","csv"])
+injuries_file = st.sidebar.file_uploader("INJURIES", type=["xlsx","csv"])
 
 # ---------------------------------------------------------------
 # Helper Functions
@@ -57,7 +57,7 @@ def load_data(file_uploader, default_path):
     return safe_read(default_path)
 
 # ---------------------------------------------------------------
-# Cached Data Load
+# Cached Data Load (with fixed Injuries file logic)
 # ---------------------------------------------------------------
 @st.cache_data(show_spinner=False)
 def load_all_data(skaters_file, shots_file, goalies_file, lines_file, teams_file, injuries_file):
@@ -76,7 +76,25 @@ def load_all_data(skaters_file, shots_file, goalies_file, lines_file, teams_file
         goalies = load_data(goalies_file, find_file("GOALTENDERS.xlsx") or "GOALTENDERS.xlsx")
         lines   = load_data(lines_file,   find_file("LINE DATA.xlsx") or "LINE DATA.xlsx")
         teams   = load_data(teams_file,   find_file("TEAMS.xlsx") or "TEAMS.xlsx")
-        injuries = load_data(injuries_file, find_file("injuries.xlsx") or "injuries.xlsx")
+
+        # --- FIXED: Injuries file lookup ---
+        injuries_path_candidates = [
+            "Injuries.xlsx",
+            "injuries.xlsx",
+            "./Injuries.xlsx",
+            "./injuries.xlsx",
+            "data/Injuries.xlsx",
+            "data/injuries.xlsx",
+            "/mount/src/hockey-prop-stop/Injuries.xlsx",
+            "/mount/src/hockey-prop-stop/injuries.xlsx",
+        ]
+        injuries = pd.DataFrame()
+        for path in injuries_path_candidates:
+            if os.path.exists(path):
+                injuries = load_file(open(path, "rb"))
+                break
+        if injuries.empty:
+            injuries = load_file(injuries_file)
 
         if not injuries.empty:
             injuries.columns = injuries.columns.str.lower().str.strip()
@@ -96,11 +114,10 @@ if skaters_df.empty or shots_df.empty:
     st.stop()
 st.success("✅ Data loaded successfully.")
 
-# ------------------- 🔍 Debug Info -------------------
+# Debug line for confirmation
 st.write("Injury file rows:", len(injuries_df))
 if not injuries_df.empty:
     st.write("Sample injury names:", injuries_df["player"].head(5).tolist())
-st.write("Sample skater names:", skaters_df["name"].head(5).tolist() if "name" in skaters_df.columns else "No 'name' column found")
 
 # ---------------------------------------------------------------
 # 🕒 Data Last Updated — Git Commit Timestamp
@@ -247,7 +264,6 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
                 tooltip_parts = [p for p in [injury_type, note, date_injury] if p]
                 tooltip = " — ".join(tooltip_parts) if tooltip_parts else "Injury info unavailable"
                 injury_html = f"<span title='{tooltip}'>🚑</span>"
-                st.write(f"Matched injury for {player}: {tooltip}")
 
         results.append({
             "Player":player,"Team":team,"Injury":injury_html,
@@ -277,7 +293,7 @@ if st.button("🚀 Run Model"):
     st.success("✅ Model built successfully!")
 
 # ---------------------------------------------------------------
-# Display Table
+# Display Table + Save/Download
 # ---------------------------------------------------------------
 if "results_raw" in st.session_state and not st.session_state.results_raw.empty:
     df = st.session_state.results_raw.copy()
@@ -292,7 +308,6 @@ if "results_raw" in st.session_state and not st.session_state.results_raw.empty:
         txt="#000" if abs(v)<0.2 else "#fff"
         return f"<div style='background:{color};color:{txt};font-weight:600;border-radius:6px;padding:4px 8px;text-align:center;'>{t}</div>"
     df["Trend"] = df["Trend Score"].apply(trend_color)
-
     cols = [
         "Player","Team","Injury","Trend","Final Projection",
         "Prob ≥ Projection (%) L5","Playable Odds",
@@ -339,10 +354,6 @@ if "results_raw" in st.session_state and not st.session_state.results_raw.empty:
         </style>
         <div class='scrollable-table'>{html_table}</div>
         """, height=620, scrolling=True)
-
-    # ---------------------------------------------------------------
-    # 💾 Save / Download
-    # ---------------------------------------------------------------
     st.markdown("---")
     st.subheader("💾 Save or Download Projections")
     selected_date = st.date_input("Select game date:", datetime.date.today())
