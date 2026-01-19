@@ -374,4 +374,3 @@ if "results_raw" in st.session_state and not st.session_state.results_raw.empty:
         save_dir = "projections"
         os.makedirs(save_dir, exist_ok=True)
 
-        filename = f"{team_a}_vs_{team_b}_{selected_date.strftime('%
