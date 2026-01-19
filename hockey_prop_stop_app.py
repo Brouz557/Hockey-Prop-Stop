@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Hockey Prop Stop — L5 Probability Update (Clickable Multiline Injury Info + Run Model Restored)
+# 🏒 Hockey Prop Stop — L5 Probability Update (Full Columns + Clickable Injury Notes)
 # ---------------------------------------------------------------
 
 import streamlit as st
@@ -79,11 +79,8 @@ def load_all_data(skaters_file, shots_file, goalies_file, lines_file, teams_file
 
         # --- Injuries file detection ---
         injuries_path_candidates = [
-            "Injuries.xlsx", "injuries.xlsx",
-            "./Injuries.xlsx", "./injuries.xlsx",
-            "data/Injuries.xlsx", "data/injuries.xlsx",
-            "/mount/src/hockey-prop-stop/Injuries.xlsx",
-            "/mount/src/hockey-prop-stop/injuries.xlsx",
+            "injuries.xlsx", "Injuries.xlsx", "./injuries.xlsx", "data/injuries.xlsx",
+            "/mount/src/hockey-prop-stop/injuries.xlsx"
         ]
         injuries = pd.DataFrame()
         for path in injuries_path_candidates:
@@ -92,7 +89,6 @@ def load_all_data(skaters_file, shots_file, goalies_file, lines_file, teams_file
                 break
         if injuries.empty:
             injuries = load_file(injuries_file)
-
         if not injuries.empty:
             injuries.columns = injuries.columns.str.lower().str.strip()
             if "player" in injuries.columns:
@@ -112,15 +108,11 @@ if skaters_df.empty or shots_df.empty:
 st.success("✅ Data loaded successfully.")
 
 # ---------------------------------------------------------------
-# 🕒 Data Last Updated — Git Commit Timestamp
+# 🕒 Data Last Updated
 # ---------------------------------------------------------------
 def get_shots_file_git_time():
     tz_cst = pytz.timezone("America/Chicago")
-    file_candidates = [
-        "data/SHOT DATA.xlsx",
-        "/mount/src/hockey-prop-stop/data/SHOT DATA.xlsx",
-        "SHOT DATA.xlsx"
-    ]
+    file_candidates = ["data/SHOT DATA.xlsx", "/mount/src/hockey-prop-stop/data/SHOT DATA.xlsx", "SHOT DATA.xlsx"]
     for f in file_candidates:
         if os.path.exists(f):
             try:
@@ -136,16 +128,14 @@ def get_shots_file_git_time():
     return None
 
 last_update = get_shots_file_git_time()
-if last_update:
-    st.markdown(f"🕒 **Data last updated:** {last_update}")
-else:
-    st.markdown("🕒 **Data last updated:** Unknown")
+st.markdown(f"🕒 **Data last updated:** {last_update or 'Unknown'}")
 
 # ---------------------------------------------------------------
 # Normalize Columns
 # ---------------------------------------------------------------
 for df in [skaters_df, shots_df, goalies_df, lines_df, teams_df]:
-    if not df.empty: df.columns = df.columns.str.lower().str.strip()
+    if not df.empty:
+        df.columns = df.columns.str.lower().str.strip()
 
 team_col = next((c for c in skaters_df.columns if "team" in c), None)
 player_col = "name" if "name" in skaters_df.columns else None
@@ -167,7 +157,7 @@ with col2: team_b = st.selectbox("Select Team B", [t for t in teams if t != team
 st.markdown("---")
 
 # ---------------------------------------------------------------
-# Cached Model Build
+# Build Model
 # ---------------------------------------------------------------
 @st.cache_data(show_spinner=True)
 def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, teams_df, injuries_df):
@@ -176,7 +166,6 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
     roster = skaters[[player_col, team_col]].rename(columns={player_col:"player", team_col:"team"}).drop_duplicates("player")
     grouped = {n.lower():g.sort_values(game_col) for n,g in shots_df.groupby(shots_df["player"].str.lower())}
 
-    # --- Line Adjustments ---
     line_adj = {}
     if not lines_df.empty and "line pairings" in lines_df.columns:
         l = lines_df.copy()
@@ -206,6 +195,14 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
         season_avg = np.mean(sog_values)
         trend = (l5 - l10)/l10 if l10>0 else 0
 
+        line_factor = 1.0
+        if not isinstance(line_adj, dict):
+            last_name = str(player).split()[-1].lower()
+            m = line_adj[line_adj["line pairings"].str.contains(last_name, case=False, na=False)]
+            if not m.empty:
+                line_factor = np.average(m["line_factor"], weights=m["games"])
+            line_factor = np.clip(line_factor, 0.7, 1.3)
+
         lam = l5
         line = round(lam, 2)
         prob = 1 - poisson.cdf(np.floor(line) - 1, mu=lam)
@@ -213,7 +210,29 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
         odds = -100*(p/(1-p)) if p>=0.5 else 100*((1-p)/p)
         implied_odds = f"{'+' if odds>0 else ''}{int(odds)}"
 
-        # --- Injury Indicator ---
+        # Form Indicator
+        form_flag = "⚪ Neutral Form"
+        try:
+            season_toi = pd.to_numeric(
+                skaters_df.loc[skaters_df[player_col].str.lower() == player.lower(), "icetime"],
+                errors="coerce"
+            ).mean()
+            games_played = pd.to_numeric(
+                skaters_df.loc[skaters_df[player_col].str.lower() == player.lower(), "games"],
+                errors="coerce"
+            ).mean()
+            if season_toi > 0 and games_played >= 10:
+                avg_toi = (season_toi / games_played) / 60.0
+                sog_per60 = (season_avg / avg_toi) * 60
+                blended_recent = 0.7 * l5 + 0.3 * l10
+                recent_per60 = (blended_recent / avg_toi) * 60 if avg_toi>0 else 0
+                usage_delta = (recent_per60 - sog_per60)/sog_per60 if sog_per60>0 else 0
+                if usage_delta > 0.10: form_flag = "🟢 Above-Baseline Form"
+                elif usage_delta < -0.10: form_flag = "🔴 Below-Baseline Form"
+        except Exception:
+            pass
+
+        # Injury column (clickable)
         injury_html = ""
         if not injuries_df.empty and {"player","team"}.issubset(injuries_df.columns):
             player_lower = player.lower().strip()
@@ -231,12 +250,17 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
                 injury_html = f"<span style='cursor:pointer;' onclick=\"alert('{tooltip}')\" title='Tap or click for injury info'>🚑</span>"
 
         results.append({
-            "Player":player,"Team":team,"Injury":injury_html,
-            "Season Avg":round(season_avg,2),
-            "Trend Score":round(trend,3),
-            "Final Projection":round(line,2),
-            "Prob ≥ Projection (%) L5":round(p*100,1),
-            "Playable Odds":implied_odds
+            "Player": player, "Team": team, "Injury": injury_html,
+            "Season Avg": round(season_avg,2),
+            "L3 Shots": ", ".join(map(str,last3)),
+            "L5 Shots": ", ".join(map(str,last5)),
+            "L10 Shots": ", ".join(map(str,last10)),
+            "Trend Score": round(trend,3),
+            "Final Projection": round(line,2),
+            "Prob ≥ Projection (%) L5": round(p*100,1),
+            "Playable Odds": implied_odds,
+            "Line Adj": round(line_factor,2),
+            "Form Indicator": form_flag
         })
     return pd.DataFrame(results)
 
@@ -253,15 +277,29 @@ if st.button("🚀 Run Model"):
     st.success("✅ Model built successfully!")
 
 # ---------------------------------------------------------------
-# Display Table + Save/Download
+# Display Table
 # ---------------------------------------------------------------
 if "results_raw" in st.session_state and not st.session_state.results_raw.empty:
     df = st.session_state.results_raw.copy()
 
+    def trend_color(v):
+        if pd.isna(v): return "–"
+        v = max(min(v, 0.5), -0.5)
+        n = v + 0.5
+        if n < 0.5: r,g,b = 255,int(255*(n*2)),0
+        else: r,g,b = int(255*(1-(n-0.5)*2)),255,0
+        color=f"rgb({r},{g},{b})"
+        t="▲" if v>0.05 else ("▼" if v<-0.05 else "–")
+        txt="#000" if abs(v)<0.2 else "#fff"
+        return f"<div style='background:{color};color:{txt};font-weight:600;border-radius:6px;padding:4px 8px;text-align:center;'>{t}</div>"
+
+    df["Trend"] = df["Trend Score"].apply(trend_color)
+
     cols = [
-        "Player","Team","Injury","Final Projection",
+        "Player","Team","Injury","Trend","Final Projection",
         "Prob ≥ Projection (%) L5","Playable Odds",
-        "Season Avg"
+        "Season Avg","Line Adj","Form Indicator",
+        "L3 Shots","L5 Shots","L10 Shots"
     ]
     vis = df[[c for c in cols if c in df.columns]]
 
@@ -306,31 +344,20 @@ if "results_raw" in st.session_state and not st.session_state.results_raw.empty:
         """, height=620, scrolling=True)
 
     # ---------------------------------------------------------------
-    # 💾 Save Projections Locally + 📥 Download
+    # 💾 Save + Download
     # ---------------------------------------------------------------
     st.markdown("---")
     st.subheader("💾 Save or Download Projections")
-
     selected_date = st.date_input("Select game date:", datetime.date.today())
 
     if st.button("💾 Save Projections for Selected Date"):
         df_to_save = df.copy()
         df_to_save["Date_Game"] = selected_date.strftime("%Y-%m-%d")
         df_to_save["Matchup"] = f"{team_a} vs {team_b}"
-
-        save_dir = "projections"
-        os.makedirs(save_dir, exist_ok=True)
-
+        os.makedirs("projections", exist_ok=True)
         filename = f"{team_a}_vs_{team_b}_{selected_date.strftime('%Y-%m-%d')}.csv"
-        save_path = os.path.join(save_dir, filename)
-
+        save_path = os.path.join("projections", filename)
         df_to_save.to_csv(save_path, index=False)
         st.success(f"✅ Saved projections to **{save_path}**")
-
         csv = df_to_save.to_csv(index=False).encode('utf-8')
-        st.download_button(
-            label="📥 Download Projections CSV",
-            data=csv,
-            file_name=filename,
-            mime="text/csv"
-        )
+        st.download_button("📥 Download Projections CSV", csv, filename, "text/csv")
