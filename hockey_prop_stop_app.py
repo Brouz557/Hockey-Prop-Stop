@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Hockey Prop Stop — L5 Probability Update (Save + Download + Injury Hover)
+# 🏒 Hockey Prop Stop — L5 Probability Update (Injury Debug Version)
 # ---------------------------------------------------------------
 
 import streamlit as st
@@ -96,11 +96,16 @@ if skaters_df.empty or shots_df.empty:
     st.stop()
 st.success("✅ Data loaded successfully.")
 
+# ------------------- 🔍 Debug Info -------------------
+st.write("Injury file rows:", len(injuries_df))
+if not injuries_df.empty:
+    st.write("Sample injury names:", injuries_df["player"].head(5).tolist())
+st.write("Sample skater names:", skaters_df["name"].head(5).tolist() if "name" in skaters_df.columns else "No 'name' column found")
+
 # ---------------------------------------------------------------
-# 🕒 Data Last Updated — Git Commit Timestamp for SHOT DATA
+# 🕒 Data Last Updated — Git Commit Timestamp
 # ---------------------------------------------------------------
 def get_shots_file_git_time():
-    """Return last Git commit time for SHOT DATA file (CST/CDT)."""
     tz_cst = pytz.timezone("America/Chicago")
     file_candidates = [
         "data/SHOT DATA.xlsx",
@@ -242,6 +247,7 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
                 tooltip_parts = [p for p in [injury_type, note, date_injury] if p]
                 tooltip = " — ".join(tooltip_parts) if tooltip_parts else "Injury info unavailable"
                 injury_html = f"<span title='{tooltip}'>🚑</span>"
+                st.write(f"Matched injury for {player}: {tooltip}")
 
         results.append({
             "Player":player,"Team":team,"Injury":injury_html,
@@ -275,7 +281,6 @@ if st.button("🚀 Run Model"):
 # ---------------------------------------------------------------
 if "results_raw" in st.session_state and not st.session_state.results_raw.empty:
     df = st.session_state.results_raw.copy()
-
     def trend_color(v):
         if pd.isna(v): return "–"
         v = max(min(v, 0.5), -0.5)
@@ -286,7 +291,6 @@ if "results_raw" in st.session_state and not st.session_state.results_raw.empty:
         t="▲" if v>0.05 else ("▼" if v<-0.05 else "–")
         txt="#000" if abs(v)<0.2 else "#fff"
         return f"<div style='background:{color};color:{txt};font-weight:600;border-radius:6px;padding:4px 8px;text-align:center;'>{t}</div>"
-
     df["Trend"] = df["Trend Score"].apply(trend_color)
 
     cols = [
@@ -296,10 +300,8 @@ if "results_raw" in st.session_state and not st.session_state.results_raw.empty:
         "L3 Shots","L5 Shots","L10 Shots"
     ]
     vis = df[[c for c in cols if c in df.columns]]
-
     html_table = vis.to_html(index=False, escape=False)
-    components.html(
-        f"""
+    components.html(f"""
         <style>
         div.scrollable-table {{
             overflow-x: auto;
@@ -336,37 +338,23 @@ if "results_raw" in st.session_state and not st.session_state.results_raw.empty:
         tr:nth-child(even) td {{ background-color: #2a2a2a; }}
         </style>
         <div class='scrollable-table'>{html_table}</div>
-        """,
-        height=620,
-        scrolling=True,
-    )
+        """, height=620, scrolling=True)
 
     # ---------------------------------------------------------------
-    # 💾 Save Projections Locally + 📥 Download
+    # 💾 Save / Download
     # ---------------------------------------------------------------
     st.markdown("---")
     st.subheader("💾 Save or Download Projections")
-
     selected_date = st.date_input("Select game date:", datetime.date.today())
-
     if st.button("💾 Save Projections for Selected Date"):
         df_to_save = df.copy()
         df_to_save["Date_Game"] = selected_date.strftime("%Y-%m-%d")
         df_to_save["Matchup"] = f"{team_a} vs {team_b}"
-
         save_dir = "projections"
         os.makedirs(save_dir, exist_ok=True)
-
         filename = f"{team_a}_vs_{team_b}_{selected_date.strftime('%Y-%m-%d')}.csv"
         save_path = os.path.join(save_dir, filename)
-
         df_to_save.to_csv(save_path, index=False)
         st.success(f"✅ Saved projections to **{save_path}**")
-
         csv = df_to_save.to_csv(index=False).encode('utf-8')
-        st.download_button(
-            label="📥 Download Projections CSV",
-            data=csv,
-            file_name=filename,
-            mime="text/csv"
-        )
+        st.download_button(label="📥 Download Projections CSV", data=csv, file_name=filename, mime="text/csv")
