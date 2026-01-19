@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Hockey Prop Stop — L5 Probability Update (Save + Download)
+# 🏒 Hockey Prop Stop — L5 Probability Update (Save + Download + Injury Hover)
 # ---------------------------------------------------------------
 
 import streamlit as st
@@ -32,6 +32,7 @@ shots_file   = st.sidebar.file_uploader("SHOT DATA", type=["xlsx","csv"])
 goalies_file = st.sidebar.file_uploader("GOALTENDERS", type=["xlsx","csv"])
 lines_file   = st.sidebar.file_uploader("LINE DATA", type=["xlsx","csv"])
 teams_file   = st.sidebar.file_uploader("TEAMS", type=["xlsx","csv"])
+injuries_file = st.sidebar.file_uploader("INJURY REPORT", type=["xlsx","csv"])
 
 # ---------------------------------------------------------------
 # Helper Functions
@@ -86,6 +87,37 @@ if skaters_df.empty or shots_df.empty:
 st.success("✅ Data loaded successfully.")
 
 # ---------------------------------------------------------------
+# 🕒 Data Last Updated — Git Commit Timestamp for SHOT DATA
+# ---------------------------------------------------------------
+def get_shots_file_git_time():
+    """Return last Git commit time for SHOT DATA file (CST/CDT)."""
+    tz_cst = pytz.timezone("America/Chicago")
+    file_candidates = [
+        "data/SHOT DATA.xlsx",
+        "/mount/src/hockey-prop-stop/data/SHOT DATA.xlsx",
+        "SHOT DATA.xlsx"
+    ]
+    for f in file_candidates:
+        if os.path.exists(f):
+            try:
+                git_time_str = subprocess.check_output(
+                    ["git", "log", "-1", "--format=%cd", "--date=iso", f],
+                    stderr=subprocess.DEVNULL
+                ).decode().strip()
+                if git_time_str:
+                    git_time = datetime.datetime.fromisoformat(git_time_str.replace("Z","+00:00"))
+                    return git_time.astimezone(tz_cst).strftime("%Y-%m-%d %I:%M %p CST")
+            except Exception:
+                continue
+    return None
+
+last_update = get_shots_file_git_time()
+if last_update:
+    st.markdown(f"🕒 **Data last updated:** {last_update}")
+else:
+    st.markdown("🕒 **Data last updated:** Unknown")
+
+# ---------------------------------------------------------------
 # Normalize Columns
 # ---------------------------------------------------------------
 for df in [skaters_df, shots_df, goalies_df, lines_df, teams_df]:
@@ -102,6 +134,19 @@ goal_col = next((c for c in shots_df.columns if "goal" in c), None)
 game_col = next((c for c in shots_df.columns if "game" in c and "id" in c), None)
 
 # ---------------------------------------------------------------
+# Load Injury Data (optional)
+# ---------------------------------------------------------------
+injuries_df = pd.DataFrame()
+if injuries_file is not None:
+    try:
+        injuries_df = pd.read_excel(injuries_file) if injuries_file.name.lower().endswith(".xlsx") else pd.read_csv(injuries_file)
+        injuries_df.columns = injuries_df.columns.str.lower().str.strip()
+        if "player" in injuries_df.columns:
+            injuries_df["player"] = injuries_df["player"].astype(str).str.strip().str.lower()
+    except Exception:
+        st.warning("⚠️ Could not load injury file.")
+
+# ---------------------------------------------------------------
 # Team Selection
 # ---------------------------------------------------------------
 teams = sorted(skaters_df[team_col].dropna().unique().tolist())
@@ -114,7 +159,7 @@ st.markdown("---")
 # Cached Model Build
 # ---------------------------------------------------------------
 @st.cache_data(show_spinner=True)
-def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, teams_df):
+def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, teams_df, injuries_df):
     results = []
     skaters = skaters_df[skaters_df[team_col].isin([team_a, team_b])]
     roster = skaters[[player_col, team_col]].rename(columns={player_col:"player", team_col:"team"}).drop_duplicates("player")
@@ -187,8 +232,20 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
                 else: form_flag = "⚪ Neutral Form"
         except Exception: pass
 
+        # --- Injury Flag with Hover Tooltip ---
+        injury_html = ""
+        if not injuries_df.empty and "player" in injuries_df.columns:
+            match = injuries_df[injuries_df["player"] == player.lower()]
+            if not match.empty:
+                note = str(match.iloc[0].get("injury note", "")).strip()
+                injury_type = str(match.iloc[0].get("injury type", "")).strip()
+                date_injury = str(match.iloc[0].get("date of injury", "")).strip()
+                tooltip_parts = [p for p in [injury_type, note, date_injury] if p]
+                tooltip = " — ".join(tooltip_parts) if tooltip_parts else "Injury info unavailable"
+                injury_html = f"<span title='{tooltip}'>🚑</span>"
+
         results.append({
-            "Player":player,"Team":team,
+            "Player":player,"Team":team,"Injury":injury_html,
             "Season Avg":round(season_avg,2),
             "L3 Shots":", ".join(map(str,last3)),
             "L5 Shots":", ".join(map(str,last5)),
@@ -207,7 +264,7 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
 # ---------------------------------------------------------------
 if st.button("🚀 Run Model"):
     st.info(f"Building model for matchup: **{team_a} vs {team_b}** …")
-    df = build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, teams_df)
+    df = build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, teams_df, injuries_df)
     df = df.sort_values("Final Projection", ascending=False).reset_index(drop=True)
     st.session_state.results_raw = df.copy()
     st.success("✅ Model built successfully!")
@@ -232,7 +289,7 @@ if "results_raw" in st.session_state and not st.session_state.results_raw.empty:
     df["Trend"] = df["Trend Score"].apply(trend_color)
 
     cols = [
-        "Player","Team","Trend","Final Projection",
+        "Player","Team","Injury","Trend","Final Projection",
         "Prob ≥ Projection (%) L5","Playable Odds",
         "Season Avg","Line Adj","Form Indicator",
         "L3 Shots","L5 Shots","L10 Shots"
