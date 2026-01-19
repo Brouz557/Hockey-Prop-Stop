@@ -260,7 +260,7 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
                                         box-shadow:0 4px 20px rgba(0,0,0,0.4);color:#fff;
                                         font-family:sans-serif;'>
                                 <h4 style='margin-top:0;color:#00B140;'>Injury Report</h4>
-                                <p style='white-space:pre-wrap;font-size:14px;line-height:1.4;'>${msg}</p>
+                                <p style='white-space:pre-wrap;font-size:14px;line-height:1.4;'>\\${msg}</p>
                                 <button onclick='document.body.removeChild(this.parentNode.parentNode)'
                                         style='margin-top:10px;background:#00B140;color:#fff;
                                         border:none;border-radius:6px;padding:6px 14px;
