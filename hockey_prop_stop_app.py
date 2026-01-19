@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Hockey Prop Stop — L5 Probability Update (Full Columns + Clickable Injury Notes)
+# 🏒 Hockey Prop Stop — L5 Probability Update (Full Columns + Clickable Injury Notes, Improved Matching)
 # ---------------------------------------------------------------
 
 import streamlit as st
@@ -196,12 +196,12 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
         trend = (l5 - l10)/l10 if l10>0 else 0
 
         line_factor = 1.0
-        if not isinstance(line_adj, dict):
+        if not isinstance(line_adj,dict):
             last_name = str(player).split()[-1].lower()
-            m = line_adj[line_adj["line pairings"].str.contains(last_name, case=False, na=False)]
+            m = line_adj[line_adj["line pairings"].str.contains(last_name,case=False,na=False)]
             if not m.empty:
-                line_factor = np.average(m["line_factor"], weights=m["games"])
-            line_factor = np.clip(line_factor, 0.7, 1.3)
+                line_factor = np.average(m["line_factor"],weights=m["games"])
+            line_factor = np.clip(line_factor,0.7,1.3)
 
         lam = l5
         line = round(lam, 2)
@@ -232,22 +232,27 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
         except Exception:
             pass
 
-        # Injury column (clickable)
+        # Injury column (clickable, improved team+name match)
         injury_html = ""
-        if not injuries_df.empty and {"player","team"}.issubset(injuries_df.columns):
+        if not injuries_df.empty and {"player", "team"}.issubset(injuries_df.columns):
             player_lower = player.lower().strip()
             last_name = player_lower.split()[-1]
             team_lower = team.lower().strip()
+
             match = injuries_df[
-                injuries_df["player"].str.lower().str.endswith(last_name)
-                & injuries_df["team"].str.lower().str.strip().eq(team_lower)
+                injuries_df["team"].str.lower().str.contains(team_lower, na=False)
+                & injuries_df["player"].str.lower().str.contains(last_name, na=False)
             ]
+
             if not match.empty:
-                note = str(match.iloc[0].get("injury note","")).strip()
-                injury_type = str(match.iloc[0].get("injury type","")).strip()
-                date_injury = str(match.iloc[0].get("date of injury","")).strip()
-                tooltip = "\\n".join([p for p in [injury_type,note,date_injury] if p]) or "Injury info unavailable"
-                injury_html = f"<span style='cursor:pointer;' onclick=\"alert('{tooltip}')\" title='Tap or click for injury info'>🚑</span>"
+                note = str(match.iloc[0].get("injury note", "")).strip()
+                injury_type = str(match.iloc[0].get("injury type", "")).strip()
+                date_injury = str(match.iloc[0].get("date of injury", "")).strip()
+                tooltip = "\\n".join([p for p in [injury_type, note, date_injury] if p]) or "Injury info unavailable"
+                injury_html = (
+                    f"<span style='cursor:pointer;' onclick=\"alert('{tooltip}')\" "
+                    f"title='Tap or click for injury info'>🚑</span>"
+                )
 
         results.append({
             "Player": player, "Team": team, "Injury": injury_html,
