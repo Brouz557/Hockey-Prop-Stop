@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Hockey Prop Stop — L5 Probability Update + Dashboard + Manual Entry
+# 🏒 Hockey Prop Stop — L5 Probability Update + Dashboard + Manual Entry (Fixed)
 # ---------------------------------------------------------------
 
 import streamlit as st
@@ -111,7 +111,6 @@ with tab1:
             game_sogs = df_p.groupby(game_col)[["sog","goal"]].sum().reset_index().sort_values(game_col)
             sog_values = game_sogs["sog"].tolist()
             if not sog_values: continue
-            last3 = sog_values[-3:] if len(sog_values)>=3 else sog_values
             last5 = sog_values[-5:] if len(sog_values)>=5 else sog_values
             last10 = sog_values[-10:] if len(sog_values)>=10 else sog_values
             l5 = np.mean(last5); l10 = np.mean(last10)
@@ -188,9 +187,14 @@ with tab2:
                 st.write(f"**Entering results for {matchup} ({date_game})**")
                 actuals = {}
                 for player in sub_df["Player"]:
-                    actuals[player] = st.number_input(f"{player} SOG:", min_value=0, step=1, key=f"res_{player}")
+                    actuals[player] = st.number_input(
+                        f"{player} SOG:",
+                        min_value=0,
+                        step=1,
+                        key=f"res_{matchup}_{date_game}_{player}"
+                    )
 
-                if st.button("💾 Save Entered Results"):
+                if st.button(f"💾 Save Entered Results for {matchup} ({date_game})"):
                     sub_df["Actual_SOG"] = sub_df["Player"].map(actuals)
                     sub_df["Hit"] = (sub_df["Actual_SOG"] >= sub_df["Final Projection"]).astype(int)
                     sub_df["Evaluation_Date"] = datetime.date.today().strftime("%Y-%m-%d")
