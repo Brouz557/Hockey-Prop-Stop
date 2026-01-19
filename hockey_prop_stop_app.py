@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Hockey Prop Stop — L5 Probability Update (Save + Injuries)
+# 🏒 Hockey Prop Stop — L5 Probability Update (Full Columns + Clickable Injury Notes)
 # ---------------------------------------------------------------
 
 import streamlit as st
@@ -27,19 +27,18 @@ st.markdown(
 # Sidebar Uploaders
 # ---------------------------------------------------------------
 st.sidebar.header("📂 Upload Data Files (.xlsx or .csv)")
-skaters_file = st.sidebar.file_uploader("Skaters", type=["xlsx", "csv"])
-shots_file   = st.sidebar.file_uploader("SHOT DATA", type=["xlsx", "csv"])
-goalies_file = st.sidebar.file_uploader("GOALTENDERS", type=["xlsx", "csv"])
-lines_file   = st.sidebar.file_uploader("LINE DATA", type=["xlsx", "csv"])
-teams_file   = st.sidebar.file_uploader("TEAMS", type=["xlsx", "csv"])
-injuries_file = st.sidebar.file_uploader("INJURIES", type=["xlsx", "csv"])
+skaters_file = st.sidebar.file_uploader("Skaters", type=["xlsx","csv"])
+shots_file   = st.sidebar.file_uploader("SHOT DATA", type=["xlsx","csv"])
+goalies_file = st.sidebar.file_uploader("GOALTENDERS", type=["xlsx","csv"])
+lines_file   = st.sidebar.file_uploader("LINE DATA", type=["xlsx","csv"])
+teams_file   = st.sidebar.file_uploader("TEAMS", type=["xlsx","csv"])
+injuries_file = st.sidebar.file_uploader("INJURIES", type=["xlsx","csv"])
 
 # ---------------------------------------------------------------
 # Helper Functions
 # ---------------------------------------------------------------
 def load_file(file):
-    if not file:
-        return pd.DataFrame()
+    if not file: return pd.DataFrame()
     try:
         return pd.read_excel(file) if file.name.lower().endswith(".xlsx") else pd.read_csv(file)
     except Exception:
@@ -47,8 +46,7 @@ def load_file(file):
 
 def safe_read(path):
     try:
-        if not os.path.exists(path):
-            return pd.DataFrame()
+        if not os.path.exists(path): return pd.DataFrame()
         return pd.read_excel(path) if path.lower().endswith(".xlsx") else pd.read_csv(path)
     except Exception:
         return pd.DataFrame()
@@ -78,7 +76,24 @@ def load_all_data(skaters_file, shots_file, goalies_file, lines_file, teams_file
         goalies = load_data(goalies_file, find_file("GOALTENDERS.xlsx") or "GOALTENDERS.xlsx")
         lines   = load_data(lines_file,   find_file("LINE DATA.xlsx") or "LINE DATA.xlsx")
         teams   = load_data(teams_file,   find_file("TEAMS.xlsx") or "TEAMS.xlsx")
-        injuries = load_data(injuries_file, find_file("injuries.xlsx") or "injuries.xlsx")
+
+        # --- Injuries file detection ---
+        injuries_path_candidates = [
+            "injuries.xlsx", "Injuries.xlsx", "./injuries.xlsx", "data/injuries.xlsx",
+            "/mount/src/hockey-prop-stop/injuries.xlsx"
+        ]
+        injuries = pd.DataFrame()
+        for path in injuries_path_candidates:
+            if os.path.exists(path):
+                injuries = load_file(open(path, "rb"))
+                break
+        if injuries.empty:
+            injuries = load_file(injuries_file)
+        if not injuries.empty:
+            injuries.columns = injuries.columns.str.lower().str.strip()
+            if "player" in injuries.columns:
+                injuries["player"] = injuries["player"].astype(str).str.strip().str.lower()
+
     return skaters, shots, goalies, lines, teams, injuries
 
 # ---------------------------------------------------------------
@@ -87,16 +102,38 @@ def load_all_data(skaters_file, shots_file, goalies_file, lines_file, teams_file
 skaters_df, shots_df, goalies_df, lines_df, teams_df, injuries_df = load_all_data(
     skaters_file, shots_file, goalies_file, lines_file, teams_file, injuries_file
 )
-
 if skaters_df.empty or shots_df.empty:
     st.warning("⚠️ Missing required data. Please upload or verify repo files.")
     st.stop()
 st.success("✅ Data loaded successfully.")
 
 # ---------------------------------------------------------------
+# 🕒 Data Last Updated
+# ---------------------------------------------------------------
+def get_shots_file_git_time():
+    tz_cst = pytz.timezone("America/Chicago")
+    file_candidates = ["data/SHOT DATA.xlsx", "/mount/src/hockey-prop-stop/data/SHOT DATA.xlsx", "SHOT DATA.xlsx"]
+    for f in file_candidates:
+        if os.path.exists(f):
+            try:
+                git_time_str = subprocess.check_output(
+                    ["git", "log", "-1", "--format=%cd", "--date=iso", f],
+                    stderr=subprocess.DEVNULL
+                ).decode().strip()
+                if git_time_str:
+                    git_time = datetime.datetime.fromisoformat(git_time_str.replace("Z","+00:00"))
+                    return git_time.astimezone(tz_cst).strftime("%Y-%m-%d %I:%M %p CST")
+            except Exception:
+                continue
+    return None
+
+last_update = get_shots_file_git_time()
+st.markdown(f"🕒 **Data last updated:** {last_update or 'Unknown'}")
+
+# ---------------------------------------------------------------
 # Normalize Columns
 # ---------------------------------------------------------------
-for df in [skaters_df, shots_df, goalies_df, lines_df, teams_df, injuries_df]:
+for df in [skaters_df, shots_df, goalies_df, lines_df, teams_df]:
     if not df.empty:
         df.columns = df.columns.str.lower().str.strip()
 
@@ -115,53 +152,48 @@ game_col = next((c for c in shots_df.columns if "game" in c and "id" in c), None
 # ---------------------------------------------------------------
 teams = sorted(skaters_df[team_col].dropna().unique().tolist())
 col1, col2 = st.columns(2)
-with col1:
-    team_a = st.selectbox("Select Team A", teams)
-with col2:
-    team_b = st.selectbox("Select Team B", [t for t in teams if t != team_a])
+with col1: team_a = st.selectbox("Select Team A", teams)
+with col2: team_b = st.selectbox("Select Team B", [t for t in teams if t != team_a])
 st.markdown("---")
 
 # ---------------------------------------------------------------
-# Cached Model Build
+# Build Model
 # ---------------------------------------------------------------
 @st.cache_data(show_spinner=True)
 def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, teams_df, injuries_df):
     results = []
     skaters = skaters_df[skaters_df[team_col].isin([team_a, team_b])]
-    roster = skaters[[player_col, team_col]].rename(columns={player_col: "player", team_col: "team"}).drop_duplicates("player")
-    grouped = {n.lower(): g.sort_values(game_col) for n, g in shots_df.groupby(shots_df["player"].str.lower())}
+    roster = skaters[[player_col, team_col]].rename(columns={player_col:"player", team_col:"team"}).drop_duplicates("player")
+    grouped = {n.lower():g.sort_values(game_col) for n,g in shots_df.groupby(shots_df["player"].str.lower())}
 
-    # --- Line Adjustments ---
     line_adj = {}
     if not lines_df.empty and "line pairings" in lines_df.columns:
         l = lines_df.copy()
         l["games"] = pd.to_numeric(l["games"], errors="coerce").fillna(0)
         l["sog against"] = pd.to_numeric(l["sog against"], errors="coerce").fillna(0)
-        l = l.groupby(["line pairings", "team"], as_index=False).agg({"games": "sum", "sog against": "sum"})
-        l["sog_against_per_game"] = np.where(l["games"] > 0, l["sog against"] / l["games"], np.nan)
+        l = l.groupby(["line pairings","team"], as_index=False).agg({"games":"sum","sog against":"sum"})
+        l["sog_against_per_game"] = np.where(l["games"]>0, l["sog against"]/l["games"], np.nan)
         team_avg = l.groupby("team")["sog_against_per_game"].mean()
         league_avg = team_avg.mean()
-        l["line_factor"] = (league_avg / l["sog_against_per_game"]).clip(0.7, 1.3)
+        l["line_factor"] = (league_avg / l["sog_against_per_game"]).clip(0.7,1.3)
         line_adj = l.copy()
 
     for row in roster.itertuples(index=False):
         player, team = row.player, row.team
         df_p = grouped.get(player.lower(), pd.DataFrame())
-        if df_p.empty:
-            continue
+        if df_p.empty: continue
 
-        game_sogs = df_p.groupby(game_col)[["sog", "goal"]].sum().reset_index().sort_values(game_col)
+        game_sogs = df_p.groupby(game_col)[["sog","goal"]].sum().reset_index().sort_values(game_col)
         sog_values = game_sogs["sog"].tolist()
-        if not sog_values:
-            continue
+        if not sog_values: continue
 
-        last3 = sog_values[-3:] if len(sog_values) >= 3 else sog_values
-        last5 = sog_values[-5:] if len(sog_values) >= 5 else sog_values
-        last10 = sog_values[-10:] if len(sog_values) >= 10 else sog_values
+        last3 = sog_values[-3:] if len(sog_values)>=3 else sog_values
+        last5 = sog_values[-5:] if len(sog_values)>=5 else sog_values
+        last10 = sog_values[-10:] if len(sog_values)>=10 else sog_values
 
         l3, l5, l10 = np.mean(last3), np.mean(last5), np.mean(last10)
         season_avg = np.mean(sog_values)
-        trend = (l5 - l10) / l10 if l10 > 0 else 0
+        trend = (l5 - l10)/l10 if l10>0 else 0
 
         line_factor = 1.0
         if not isinstance(line_adj, dict):
@@ -175,92 +207,60 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
         line = round(lam, 2)
         prob = 1 - poisson.cdf(np.floor(line) - 1, mu=lam)
         p = min(max(prob, 0.001), 0.999)
-        odds = -100 * (p / (1 - p)) if p >= 0.5 else 100 * ((1 - p) / p)
-        implied_odds = f"{'+' if odds > 0 else ''}{int(odds)}"
+        odds = -100*(p/(1-p)) if p>=0.5 else 100*((1-p)/p)
+        implied_odds = f"{'+' if odds>0 else ''}{int(odds)}"
 
-        # --- Form Indicator ---
+        # Form Indicator
         form_flag = "⚪ Neutral Form"
         try:
             season_toi = pd.to_numeric(
                 skaters_df.loc[skaters_df[player_col].str.lower() == player.lower(), "icetime"],
-                errors="coerce",
+                errors="coerce"
             ).mean()
             games_played = pd.to_numeric(
                 skaters_df.loc[skaters_df[player_col].str.lower() == player.lower(), "games"],
-                errors="coerce",
+                errors="coerce"
             ).mean()
             if season_toi > 0 and games_played >= 10:
                 avg_toi = (season_toi / games_played) / 60.0
                 sog_per60 = (season_avg / avg_toi) * 60
                 blended_recent = 0.7 * l5 + 0.3 * l10
-                recent_per60 = (blended_recent / avg_toi) * 60 if avg_toi > 0 else 0
-                usage_delta = (recent_per60 - sog_per60) / sog_per60 if sog_per60 > 0 else 0
-                if usage_delta > 0.10:
-                    form_flag = "🟢 Above-Baseline Form"
-                elif usage_delta < -0.10:
-                    form_flag = "🔴 Below-Baseline Form"
+                recent_per60 = (blended_recent / avg_toi) * 60 if avg_toi>0 else 0
+                usage_delta = (recent_per60 - sog_per60)/sog_per60 if sog_per60>0 else 0
+                if usage_delta > 0.10: form_flag = "🟢 Above-Baseline Form"
+                elif usage_delta < -0.10: form_flag = "🔴 Below-Baseline Form"
         except Exception:
             pass
 
-        # --- Injury Modal (Match Team + Last Name) ---
+        # Injury column (clickable)
         injury_html = ""
-        if not injuries_df.empty and {"player", "team"}.issubset(injuries_df.columns):
+        if not injuries_df.empty and {"player","team"}.issubset(injuries_df.columns):
             player_lower = player.lower().strip()
             last_name = player_lower.split()[-1]
-            team_lower = str(team).lower().strip()
-
-            inj = injuries_df[
-                injuries_df["team"].str.lower().str.contains(team_lower, na=False)
-                & injuries_df["player"].str.lower().str.contains(last_name, na=False)
+            team_lower = team.lower().strip()
+            match = injuries_df[
+                injuries_df["player"].str.lower().str.endswith(last_name)
+                & injuries_df["team"].str.lower().str.strip().eq(team_lower)
             ]
-
-            if not inj.empty:
-                note = str(inj.iloc[0].get("injury note", "")).strip()
-                injury_type = str(inj.iloc[0].get("injury type", "")).strip()
-                date_injury = str(inj.iloc[0].get("date of injury", "")).strip()
-                tooltip = "\\n".join([p for p in [injury_type, note, date_injury] if p]) or "Injury info unavailable"
-                modal_id = f"injuryModal_{player_lower.replace(' ', '_')}"
-                injury_html = f"""
-                <span style='cursor:pointer;' title='Tap or click for injury info'
-                      onclick="
-                        const msg = `{tooltip.replace('`', '\\`').replace(chr(10), ' ')}`;
-                        const modal = document.createElement('div');
-                        modal.innerHTML = `
-                          <div id='{modal_id}' style='position:fixed;top:0;left:0;width:100%;height:100%;
-                              background:rgba(0,0,0,0.6);display:flex;align-items:center;
-                              justify-content:center;z-index:9999;'>
-                            <div style='background:#1e1e1e;padding:20px 25px;border-radius:10px;
-                                width:320px;max-width:90%;text-align:left;
-                                box-shadow:0 4px 20px rgba(0,0,0,0.4);color:#fff;
-                                font-family:sans-serif;'>
-                              <h4 style='margin-top:0;color:#00B140;'>Injury Report</h4>
-                              <p style='white-space:pre-wrap;font-size:14px;line-height:1.4;'>${{msg}}</p>
-                              <button onclick=\\"document.getElementById('{modal_id}').remove();\\"
-                                      style='margin-top:10px;background:#00B140;color:#fff;
-                                      border:none;border-radius:6px;padding:6px 14px;
-                                      cursor:pointer;font-size:14px;'>OK</button>
-                            </div>
-                          </div>`;
-                        document.body.appendChild(modal);
-                      ">
-                      🚑
-                </span>
-                """
+            if not match.empty:
+                note = str(match.iloc[0].get("injury note","")).strip()
+                injury_type = str(match.iloc[0].get("injury type","")).strip()
+                date_injury = str(match.iloc[0].get("date of injury","")).strip()
+                tooltip = "\\n".join([p for p in [injury_type,note,date_injury] if p]) or "Injury info unavailable"
+                injury_html = f"<span style='cursor:pointer;' onclick=\"alert('{tooltip}')\" title='Tap or click for injury info'>🚑</span>"
 
         results.append({
-            "Player": player,
-            "Team": team,
-            "Season Avg": round(season_avg, 2),
-            "L3 Shots": ", ".join(map(str, last3)),
-            "L5 Shots": ", ".join(map(str, last5)),
-            "L10 Shots": ", ".join(map(str, last10)),
-            "Trend Score": round(trend, 3),
-            "Final Projection": round(line, 2),
-            "Prob ≥ Projection (%) L5": round(p * 100, 1),
+            "Player": player, "Team": team, "Injury": injury_html,
+            "Season Avg": round(season_avg,2),
+            "L3 Shots": ", ".join(map(str,last3)),
+            "L5 Shots": ", ".join(map(str,last5)),
+            "L10 Shots": ", ".join(map(str,last10)),
+            "Trend Score": round(trend,3),
+            "Final Projection": round(line,2),
+            "Prob ≥ Projection (%) L5": round(p*100,1),
             "Playable Odds": implied_odds,
-            "Line Adj": round(line_factor, 2),
-            "Form Indicator": form_flag,
-            "Injury": injury_html
+            "Line Adj": round(line_factor,2),
+            "Form Indicator": form_flag
         })
     return pd.DataFrame(results)
 
@@ -270,6 +270,8 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
 if st.button("🚀 Run Model"):
     st.info(f"Building model for matchup: **{team_a} vs {team_b}** …")
     df = build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, teams_df, injuries_df)
+    if "Injury" not in df.columns:
+        df["Injury"] = ""
     df = df.sort_values("Final Projection", ascending=False).reset_index(drop=True)
     st.session_state.results_raw = df.copy()
     st.success("✅ Model built successfully!")
@@ -281,42 +283,28 @@ if "results_raw" in st.session_state and not st.session_state.results_raw.empty:
     df = st.session_state.results_raw.copy()
 
     def trend_color(v):
-        if pd.isna(v):
-            return "–"
+        if pd.isna(v): return "–"
         v = max(min(v, 0.5), -0.5)
         n = v + 0.5
-        if n < 0.5:
-            r, g, b = 255, int(255 * (n * 2)), 0
-        else:
-            r, g, b = int(255 * (1 - (n - 0.5) * 2)), 255, 0
-        color = f"rgb({r},{g},{b})"
-        t = "▲" if v > 0.05 else ("▼" if v < -0.05 else "–")
-        txt = "#000" if abs(v) < 0.2 else "#fff"
+        if n < 0.5: r,g,b = 255,int(255*(n*2)),0
+        else: r,g,b = int(255*(1-(n-0.5)*2)),255,0
+        color=f"rgb({r},{g},{b})"
+        t="▲" if v>0.05 else ("▼" if v<-0.05 else "–")
+        txt="#000" if abs(v)<0.2 else "#fff"
         return f"<div style='background:{color};color:{txt};font-weight:600;border-radius:6px;padding:4px 8px;text-align:center;'>{t}</div>"
 
     df["Trend"] = df["Trend Score"].apply(trend_color)
 
     cols = [
-        "Player", "Team", "Trend", "Final Projection",
-        "Prob ≥ Projection (%) L5", "Playable Odds",
-        "Season Avg", "Line Adj", "Form Indicator", "Injury",
-        "L3 Shots", "L5 Shots", "L10 Shots"
+        "Player","Team","Injury","Trend","Final Projection",
+        "Prob ≥ Projection (%) L5","Playable Odds",
+        "Season Avg","Line Adj","Form Indicator",
+        "L3 Shots","L5 Shots","L10 Shots"
     ]
     vis = df[[c for c in cols if c in df.columns]]
 
-    # ✅ FIXED: preserve clickable 🚑 icons
-    def safe_html(val):
-        if pd.isna(val):
-            return ""
-        return str(val).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("&lt;span", "<span").replace("/span&gt;", "/span>")
-
-    table_html = "<table><thead><tr>" + "".join(f"<th>{c}</th>" for c in vis.columns) + "</tr></thead><tbody>"
-    for _, row in vis.iterrows():
-        table_html += "<tr>" + "".join(f"<td>{safe_html(row[c])}</td>" for c in vis.columns) + "</tr>"
-    table_html += "</tbody></table>"
-
-    components.html(
-        f"""
+    html_table = vis.to_html(index=False, escape=False)
+    components.html(f"""
         <style>
         div.scrollable-table {{
             overflow-x: auto;
@@ -352,25 +340,24 @@ if "results_raw" in st.session_state and not st.session_state.results_raw.empty:
         }}
         tr:nth-child(even) td {{ background-color: #2a2a2a; }}
         </style>
-        <div class='scrollable-table'>{table_html}</div>
-        """,
-        height=620,
-        scrolling=True,
-    )
+        <div class='scrollable-table'>{html_table}</div>
+        """, height=620, scrolling=True)
 
     # ---------------------------------------------------------------
-    # 💾 Save Projections Locally + 📥 Download
+    # 💾 Save + Download
     # ---------------------------------------------------------------
     st.markdown("---")
     st.subheader("💾 Save or Download Projections")
-
     selected_date = st.date_input("Select game date:", datetime.date.today())
 
     if st.button("💾 Save Projections for Selected Date"):
         df_to_save = df.copy()
         df_to_save["Date_Game"] = selected_date.strftime("%Y-%m-%d")
         df_to_save["Matchup"] = f"{team_a} vs {team_b}"
-
-        save_dir = "projections"
-        os.makedirs(save_dir, exist_ok=True)
-
+        os.makedirs("projections", exist_ok=True)
+        filename = f"{team_a}_vs_{team_b}_{selected_date.strftime('%Y-%m-%d')}.csv"
+        save_path = os.path.join("projections", filename)
+        df_to_save.to_csv(save_path, index=False)
+        st.success(f"✅ Saved projections to **{save_path}**")
+        csv = df_to_save.to_csv(index=False).encode('utf-8')
+        st.download_button("📥 Download Projections CSV", csv, filename, "text/csv")
