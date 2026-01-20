@@ -9,15 +9,17 @@ import os, contextlib, io, datetime, pytz, subprocess, html, json
 from scipy.stats import poisson
 import streamlit.components.v1 as components
 
-# 🧪 TEST MODE WARNING — this makes it clear you’re in your sandbox
-st.warning("🧪 TEST MODE — You’re editing and running the sandbox version. Changes here will NOT affect your main app.")
-
 # ---------------------------------------------------------------
-# Page Setup — Puck Shotz Hockey Analytics
+# Page Setup — must be first Streamlit call
 # ---------------------------------------------------------------
 st.set_page_config(page_title="Puck Shotz Hockey Analytics (Test)", layout="wide", page_icon="🏒")
 
-# Always display GitHub-hosted logo at top
+# 🧪 TEST MODE WARNING — Safe sandbox banner
+st.warning("🧪 TEST MODE — You’re editing and running the sandbox version. Changes here will NOT affect your main app.")
+
+# ---------------------------------------------------------------
+# Page Header
+# ---------------------------------------------------------------
 st.markdown(
     """
     <div style='text-align:center; background-color:#0A3A67; padding:15px; border-radius:6px; margin-bottom:10px;'>
