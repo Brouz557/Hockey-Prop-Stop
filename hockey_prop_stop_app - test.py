@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Puck Shotz Hockey Analytics — L5 Probability Update (TEST MODE, Strong Line Adj Impact)
+# 🏒 Puck Shotz Hockey Analytics — L5 Probability Update (TEST MODE, Stronger Line Adj Impact)
 # ---------------------------------------------------------------
 
 import streamlit as st
@@ -25,7 +25,7 @@ st.markdown(
     </div>
     <h1 style='text-align:center;color:#1E5A99;'>Puck Shotz Hockey Analytics</h1>
     <p style='text-align:center;color:#D6D6D6;'>
-        Strong Line Adj scaling — lower adj = big drop, higher = strong boost
+        Stronger Line Adj scaling — hard matchups crush projections, easy ones soar
     </p>
     """,
     unsafe_allow_html=True,
@@ -137,7 +137,7 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
     roster = skaters[[player_col, team_col]].rename(columns={player_col:"player", team_col:"team"}).drop_duplicates("player")
     grouped = {n.lower():g.sort_values(game_col) for n,g in shots_df.groupby(shots_df["player"].str.lower())}
 
-    # --- Line Adj (same structure as you liked) ---
+    # --- Line Adj
     line_adj = {}
     if not lines_df.empty and "line pairings" in lines_df.columns:
         l = lines_df.copy()
@@ -150,7 +150,7 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
         l["line_factor"] = (league_avg / l["sog_against_per_game"]).clip(0.7,1.3)
         line_adj = l.copy()
 
-    # --- Goalie Adjustment ---
+    # --- Goalie Adjustment
     goalie_adj = {}
     if not goalies_df.empty and {"team","shots against","games"}.issubset(goalies_df.columns):
         g = goalies_df.copy()
@@ -161,7 +161,7 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
         g["goalie_factor"] = (g["shots_per_game"] / league_avg_sa).clip(0.7,1.3)
         goalie_adj = g.groupby("team")["goalie_factor"].mean().to_dict()
 
-    # --- Player loop ---
+    # --- Player loop
     for row in roster.itertuples(index=False):
         player, team = row.player, row.team
         df_p = grouped.get(player.lower(), pd.DataFrame())
@@ -175,7 +175,7 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
         l10 = np.mean(sog_values[-10:]) if len(sog_values)>=10 else np.mean(sog_values)
         baseline = (0.55*l10) + (0.30*l5) + (0.15*l3)
 
-        # --- Line factor internal ---
+        # --- Line factor
         line_factor_internal = 1.0
         if isinstance(line_adj, pd.DataFrame) and not line_adj.empty:
             last_name = str(player).split()[-1].lower()
@@ -183,12 +183,12 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
             if not m.empty:
                 line_factor_internal = np.average(m["line_factor"], weights=m["games"])
 
-        # --- Goalie factor ---
+        # --- Goalie factor
         opp_team = team_b if team == team_a else team_a
         goalie_factor = goalie_adj.get(opp_team, 1.0)
         goalie_term = (goalie_factor - 1.0) * 0.2
 
-        # --- Form term ---
+        # --- Form
         form_flag, form_term = "⚪ Neutral Form", 0.0
         try:
             season_toi = pd.to_numeric(skaters_df.loc[skaters_df[player_col].str.lower()==player.lower(),"icetime"], errors="coerce").mean()
@@ -204,15 +204,13 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
                     form_flag, form_term = "🔴 Below-Baseline Form", -0.05
         except Exception: pass
 
-        # --- Final Projection (Line Adj dominates) ---
+        # --- Final Projection: very strong Line Adj scaling
         lam_base = baseline * (1 + goalie_term + form_term)
 
         if line_factor_internal >= 1:
-            # Easier matchup → boost
-            scale = 1 + 3.0 * (line_factor_internal - 1.0) ** 1.5
+            scale = 1 + 5.0 * (line_factor_internal - 1.0) ** 1.6
         else:
-            # Tougher matchup → heavy suppression
-            scale = max(0.1, 1 - 6.0 * (1 - line_factor_internal) ** 2.0)
+            scale = max(0.05, 1 - 10.0 * (1 - line_factor_internal) ** 2.4)
 
         lam = lam_base * scale
 
