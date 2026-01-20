@@ -269,20 +269,21 @@ if st.button("🚀 Run Model"):
 if "results_raw" in st.session_state and not st.session_state.results_raw.empty:
     df = st.session_state.results_raw.copy()
 
+    # ✅ Fixed trend color — green for up, red for down
     def trend_color(v):
         if pd.isna(v):
             return "–"
         v = max(min(v, 0.5), -0.5)
         if v > 0.05:
-            color = "#1E5A99"
+            color = "#00B140"  # green
             txt = "#FFFFFF"
             symbol = "▲"
         elif v < -0.05:
-            color = "#0A3A67"
+            color = "#E63946"  # red
             txt = "#FFFFFF"
             symbol = "▼"
         else:
-            color = "#6C7A89"
+            color = "#6C7A89"  # neutral gray
             txt = "#FFFFFF"
             symbol = "–"
         return f"<div style='background:{color};color:{txt};font-weight:600;border-radius:6px;padding:4px 8px;text-align:center;'>{symbol}</div>"
