@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Puck Shotz Hockey Analytics — L5 Probability Update (TEST MODE, Balanced Adjustments)
+# 🏒 Puck Shotz Hockey Analytics — L5 Probability Update (TEST MODE, Realistic Scaling)
 # ---------------------------------------------------------------
 
 import streamlit as st
@@ -25,7 +25,7 @@ st.markdown(
     </div>
     <h1 style='text-align:center;color:#1E5A99;'>Puck Shotz Hockey Analytics</h1>
     <p style='text-align:center;color:#D6D6D6;'>
-        Weighted L10/L5/L3 projections with balanced Line, Goalie & Form adjustments
+        Weighted L10/L5/L3 projections with realistic scaling and balanced adjustments
     </p>
     """,
     unsafe_allow_html=True,
@@ -128,7 +128,7 @@ with col2: team_b = st.selectbox("Select Team B", [t for t in teams if t != team
 st.markdown("---")
 
 # ---------------------------------------------------------------
-# Build Model — Balanced Adjustments
+# Build Model — Realistic Scaling
 # ---------------------------------------------------------------
 @st.cache_data(show_spinner=True)
 def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, teams_df, injuries_df):
@@ -172,9 +172,9 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
         l3 = np.mean(sog_values[-3:]) if len(sog_values)>=3 else np.mean(sog_values)
         l5 = np.mean(sog_values[-5:]) if len(sog_values)>=5 else np.mean(sog_values)
         l10 = np.mean(sog_values[-10:]) if len(sog_values)>=10 else np.mean(sog_values)
-        baseline = (0.45*l10) + (0.35*l5) + (0.20*l3)
+        baseline = (0.55*l10) + (0.30*l5) + (0.15*l3)
 
-        # --- Line factor (nonlinear penalty, mild boost) ---
+        # --- Line factor (soft nonlinear) ---
         line_factor_internal = 1.0
         if not isinstance(line_adj,dict):
             last_name = str(player).split()[-1].lower()
@@ -182,14 +182,14 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
             if not m.empty:
                 line_factor_internal = np.average(m["line_factor"],weights=m["games"])
         if line_factor_internal < 1:
-            line_term = -((1 - line_factor_internal) ** 1.5)
+            line_term = -0.8 * (1 - line_factor_internal) ** 1.2
         else:
-            line_term = (line_factor_internal - 1.0) * 0.4
+            line_term = 0.4 * (line_factor_internal - 1.0)
 
-        # --- Goalie factor (moderate influence) ---
+        # --- Goalie factor (small influence) ---
         opp_team = team_b if team == team_a else team_a
         goalie_factor = goalie_adj.get(opp_team, 1.0)
-        goalie_term = (goalie_factor - 1.0) * 0.25
+        goalie_term = (goalie_factor - 1.0) * 0.2
 
         # --- Form factor ---
         form_flag, form_term = "⚪ Neutral Form", 0.0
@@ -202,16 +202,16 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
                 recent_per60 = (baseline / avg_toi) * 60 if avg_toi>0 else 0
                 usage_delta = (recent_per60 - sog_per60)/sog_per60 if sog_per60>0 else 0
                 if usage_delta > 0.10:
-                    form_flag, form_term = "🟢 Above-Baseline Form", 0.10
+                    form_flag, form_term = "🟢 Above-Baseline Form", 0.05
                 elif usage_delta < -0.10:
-                    form_flag, form_term = "🔴 Below-Baseline Form", -0.10
+                    form_flag, form_term = "🔴 Below-Baseline Form", -0.05
         except Exception: pass
 
-        # --- Compounded projection ---
-        lam = baseline * (1 + line_term) * (1 + goalie_term) * (1 + form_term)
-        lam = np.clip(lam, 0.1, 8.0)
+        # --- Combined Projection ---
+        lam = baseline * (1 + line_term + goalie_term + form_term)
+        lam = np.clip(lam, 0.1, 7.0)
 
-        # --- Probability & odds ---
+        # --- Probability & Odds ---
         prob = 1 - poisson.cdf(np.floor(lam) - 1, mu=lam)
         p = min(max(prob, 0.001), 0.999)
         odds = -100*(p/(1-p)) if p>=0.5 else 100*((1-p)/p)
