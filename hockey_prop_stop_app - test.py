@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Puck Shotz Hockey Analytics — TEST MODE with Line + Goalie + Form Adjustments
+# 🏒 Puck Shotz Hockey Analytics — TEST MODE (Stronger Line Adj)
 # ---------------------------------------------------------------
 
 import streamlit as st
@@ -25,7 +25,7 @@ st.markdown(
     </div>
     <h1 style='text-align:center;color:#1E5A99;'>Puck Shotz Hockey Analytics</h1>
     <p style='text-align:center;color:#D6D6D6;'>
-        Weighted L10/L5/L3 projections with Line, Goalie, and Form adjustments
+        Weighted L10/L5/L3 projections with stronger Line Adj impact, Goalie, and Form adjustments
     </p>
     """,
     unsafe_allow_html=True,
@@ -128,7 +128,7 @@ with col2: team_b = st.selectbox("Select Team B", [t for t in teams if t != team
 st.markdown("---")
 
 # ---------------------------------------------------------------
-# Build Model — Weighted L10/L5/L3 + Line + Goalie + Form
+# Build Model — Stronger Line Adj
 # ---------------------------------------------------------------
 @st.cache_data(show_spinner=True)
 def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, teams_df, injuries_df):
@@ -176,24 +176,24 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
 
         l3, l5, l10 = np.mean(last3), np.mean(last5), np.mean(last10)
 
-        # --- Weighted Baseline ---
-        baseline = (0.5*l10) + (0.35*l5) + (0.15*l3)
+        # --- Weighted Baseline (less top-heavy) ---
+        baseline = (0.45*l10) + (0.30*l5) + (0.25*l3)
 
-        # --- Line Adjustment ---
+        # --- Line Adjustment (stronger emphasis) ---
         line_factor = 1.0
         if not isinstance(line_adj,dict):
             last_name = str(player).split()[-1].lower()
             m = line_adj[line_adj["line pairings"].str.contains(last_name,case=False,na=False)]
             if not m.empty:
                 line_factor = np.average(m["line_factor"],weights=m["games"])
-        line_effect = (line_factor - 1.0) * baseline * 0.6
+        line_effect = (line_factor - 1.0) * baseline * 1.0  # ← stronger
 
-        # --- Goalie Adjustment ---
+        # --- Goalie Adjustment (moderate) ---
         opp_team = team_b if team == team_a else team_a
         goalie_factor = goalie_adj.get(opp_team, 1.0)
         goalie_effect = (goalie_factor - 1.0) * baseline * 0.4
 
-        # --- Form Adjustment (based on Form Indicator logic) ---
+        # --- Form Adjustment ---
         form_flag = "⚪ Neutral Form"
         form_effect = 0
         try:
@@ -254,7 +254,6 @@ if st.button("🚀 Run Model"):
 
 if "results_raw" in st.session_state and not st.session_state.results_raw.empty:
     df = st.session_state.results_raw.copy()
-
     html_table = df.to_html(index=False, escape=False)
     components.html(f"""
         <style>
