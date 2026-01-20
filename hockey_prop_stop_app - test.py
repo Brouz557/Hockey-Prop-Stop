@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Puck Shotz Hockey Analytics — L5 Probability Update (TEST MODE, Extreme Line Adj Penalty)
+# 🏒 Puck Shotz Hockey Analytics — L5 Probability Update (TEST MODE, Corrected Line Adj Direction)
 # ---------------------------------------------------------------
 
 import streamlit as st
@@ -25,7 +25,7 @@ st.markdown(
     </div>
     <h1 style='text-align:center;color:#1E5A99;'>Puck Shotz Hockey Analytics</h1>
     <p style='text-align:center;color:#D6D6D6;'>
-        Weighted L10/L5/L3 projections with extreme bad-matchup penalty
+        Weighted L10/L5/L3 projections with corrected Line Adj impact
     </p>
     """,
     unsafe_allow_html=True,
@@ -137,7 +137,7 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
     roster = skaters[[player_col, team_col]].rename(columns={player_col:"player", team_col:"team"}).drop_duplicates("player")
     grouped = {n.lower():g.sort_values(game_col) for n,g in shots_df.groupby(shots_df["player"].str.lower())}
 
-    # --- Line Adjustment (unchanged, as you liked) ---
+    # --- Line Adjustment (unchanged column math) ---
     line_adj = {}
     if not lines_df.empty and "line pairings" in lines_df.columns:
         l = lines_df.copy()
@@ -175,7 +175,7 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
         l10 = np.mean(sog_values[-10:]) if len(sog_values)>=10 else np.mean(sog_values)
         baseline = (0.55*l10) + (0.30*l5) + (0.15*l3)
 
-        # --- Line factor (extreme penalty/boost) ---
+        # --- Line factor impact (corrected direction) ---
         line_factor_internal = 1.0
         if isinstance(line_adj, pd.DataFrame) and not line_adj.empty:
             last_name = str(player).split()[-1].lower()
@@ -184,11 +184,11 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
                 line_factor_internal = np.average(m["line_factor"], weights=m["games"])
 
         if line_factor_internal > 1:
-            # easier matchup → slightly more boost
+            # Easier matchup → boost
             line_term = 2.8 * (line_factor_internal - 1.0) ** 1.7
         else:
-            # tougher matchup → significantly more deduction
-            line_term = -9.5 * (1 - line_factor_internal) ** 2.8
+            # Tougher matchup → drop
+            line_term = -7.0 * (1 - line_factor_internal) ** 2.3
 
         # --- Goalie factor ---
         opp_team = team_b if team == team_a else team_a
@@ -211,7 +211,7 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
                     form_flag, form_term = "🔴 Below-Baseline Form", -0.05
         except Exception: pass
 
-        # --- Combined Projection (no clipping) ---
+        # --- Combined Projection ---
         lam = baseline * (1 + goalie_term + form_term) * (1 + line_term * 3.0)
 
         prob = 1 - poisson.cdf(np.floor(lam) - 1, mu=max(lam, 0.01))
