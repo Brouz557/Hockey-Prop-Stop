@@ -1,22 +1,46 @@
 # ---------------------------------------------------------------
-# 🏒 Hockey Prop Stop — L5 Probability Update (Original Columns + Working Clickable Injury Notes)
+# 🏒 Puck Shotz Hockey Analytics — L5 Probability Update
 # ---------------------------------------------------------------
 
 import streamlit as st
 import pandas as pd
 import numpy as np
-import os, contextlib, io, datetime, pytz, subprocess, html, json
+import os, contextlib, io, datetime, pytz, subprocess, html, json, base64
 from scipy.stats import poisson
 import streamlit.components.v1 as components
 
 # ---------------------------------------------------------------
-# Page Setup
+# Page Setup — Puck Shotz Hockey Analytics
 # ---------------------------------------------------------------
-st.set_page_config(page_title="Hockey Prop Stop", layout="wide", page_icon="🏒")
+st.set_page_config(page_title="Puck Shotz Hockey Analytics", layout="wide", page_icon="🏒")
+
+# Sidebar uploader for logo (optional)
+st.sidebar.header("🏒 Brand Settings")
+logo_file = st.sidebar.file_uploader("Upload Logo (.png or .jpg)", type=["png", "jpg", "jpeg"])
+
+# If a logo is uploaded, display it centered at the top
+if logo_file is not None:
+    logo_bytes = logo_file.getvalue()
+    logo_b64 = base64.b64encode(logo_bytes).decode()
+    st.markdown(
+        f"""
+        <div style='text-align:center; margin-bottom:10px;'>
+            <img src='data:image/png;base64,{logo_b64}' width='220'>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+else:
+    # Default text title if no logo provided
+    st.markdown(
+        "<h1 style='text-align:center;color:#1E5A99;'>Puck Shotz Hockey Analytics</h1>",
+        unsafe_allow_html=True,
+    )
+
+# Subheading
 st.markdown(
     """
-    <h1 style='text-align:center;color:#00B140;'>🏒 Hockey Prop Stop</h1>
-    <p style='text-align:center;color:#BFC0C0;'>
+    <p style='text-align:center;color:#D6D6D6;'>
         Team-vs-Team matchup analytics with blended regression and L5-based probabilities
     </p>
     """,
@@ -215,7 +239,7 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
                 elif usage_delta < -0.10: form_flag = "🔴 Below-Baseline Form"
         except Exception: pass
 
-        # Injury clickable — fixed safe alert
+        # Injury clickable
         injury_html = ""
         if not injuries_df.empty and {"player","team"}.issubset(injuries_df.columns):
             player_lower = player.lower().strip()
@@ -266,15 +290,24 @@ if st.button("🚀 Run Model"):
 if "results_raw" in st.session_state and not st.session_state.results_raw.empty:
     df = st.session_state.results_raw.copy()
 
+    # Blue-themed trend indicator
     def trend_color(v):
-        if pd.isna(v): return "–"
-        v = max(min(v,0.5),-0.5); n = v+0.5
-        if n<0.5: r,g,b=255,int(255*(n*2)),0
-        else: r,g,b=int(255*(1-(n-0.5)*2)),255,0
-        color=f"rgb({r},{g},{b})"
-        t="▲" if v>0.05 else ("▼" if v<-0.05 else "–")
-        txt="#000" if abs(v)<0.2 else "#fff"
-        return f"<div style='background:{color};color:{txt};font-weight:600;border-radius:6px;padding:4px 8px;text-align:center;'>{t}</div>"
+        if pd.isna(v):
+            return "–"
+        v = max(min(v, 0.5), -0.5)
+        if v > 0.05:
+            color = "#1E5A99"   # positive
+            txt = "#FFFFFF"
+            symbol = "▲"
+        elif v < -0.05:
+            color = "#0A3A67"   # negative
+            txt = "#FFFFFF"
+            symbol = "▼"
+        else:
+            color = "#6C7A89"   # neutral
+            txt = "#FFFFFF"
+            symbol = "–"
+        return f"<div style='background:{color};color:{txt};font-weight:600;border-radius:6px;padding:4px 8px;text-align:center;'>{symbol}</div>"
 
     df["Trend"] = df["Trend Score"].apply(trend_color)
 
@@ -293,18 +326,19 @@ if "results_raw" in st.session_state and not st.session_state.results_raw.empty:
             overflow-x:auto;overflow-y:auto;height:600px;
         }}
         table {{
-            width:100%;border-collapse:collapse;font-family:'Source Sans Pro',sans-serif;color:#f0f0f0;
+            width:100%;border-collapse:collapse;font-family:'Source Sans Pro',sans-serif;color:#D6D6D6;
         }}
         th {{
-            background-color:#00B140;color:white;padding:6px;text-align:center;position:sticky;top:0;
+            background-color:#0A3A67;color:#FFFFFF;padding:6px;text-align:center;position:sticky;top:0;
+            border-bottom:2px solid #1E5A99;
         }}
         td:first-child,th:first-child {{
-            position:sticky;left:0;background-color:#00B140;color:white;font-weight:bold;
+            position:sticky;left:0;background-color:#1E5A99;color:#FFFFFF;font-weight:bold;
         }}
         td {{
-            background-color:#1e1e1e;color:#f0f0f0;padding:4px;text-align:center;
+            background-color:#0F2743;color:#D6D6D6;padding:4px;text-align:center;
         }}
-        tr:nth-child(even) td {{background-color:#2a2a2a;}}
+        tr:nth-child(even) td {{background-color:#142F52;}}
         </style>
         <div class='scrollable-table'>{html_table}</div>
         """,height=620,scrolling=True)
