@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Puck Shotz Hockey Analytics — L5 Probability Update (TEST MODE)
+# 🏒 Puck Shotz Hockey Analytics — TEST MODE with Line + Goalie + Form Adjustments
 # ---------------------------------------------------------------
 
 import streamlit as st
@@ -10,15 +10,13 @@ from scipy.stats import poisson
 import streamlit.components.v1 as components
 
 # ---------------------------------------------------------------
-# Page Setup — must be first Streamlit call
+# Page Setup
 # ---------------------------------------------------------------
 st.set_page_config(page_title="Puck Shotz Hockey Analytics (Test)", layout="wide", page_icon="🏒")
-
-# 🧪 TEST MODE WARNING — Safe sandbox banner
 st.warning("🧪 TEST MODE — You’re editing and running the sandbox version. Changes here will NOT affect your main app.")
 
 # ---------------------------------------------------------------
-# Page Header
+# Header
 # ---------------------------------------------------------------
 st.markdown(
     """
@@ -27,14 +25,14 @@ st.markdown(
     </div>
     <h1 style='text-align:center;color:#1E5A99;'>Puck Shotz Hockey Analytics</h1>
     <p style='text-align:center;color:#D6D6D6;'>
-        Team-vs-Team matchup analytics with blended regression and L5-based probabilities
+        Weighted L10/L5/L3 projections with Line, Goalie, and Form adjustments
     </p>
     """,
     unsafe_allow_html=True,
 )
 
 # ---------------------------------------------------------------
-# Sidebar Uploaders
+# Sidebar
 # ---------------------------------------------------------------
 st.sidebar.header("📂 Upload Data Files (.xlsx or .csv)")
 skaters_file = st.sidebar.file_uploader("Skaters", type=["xlsx","csv"])
@@ -108,28 +106,7 @@ if skaters_df.empty or shots_df.empty:
 st.success("✅ Data loaded successfully.")
 
 # ---------------------------------------------------------------
-# 🕒 Data Last Updated
-# ---------------------------------------------------------------
-def get_shots_file_git_time():
-    tz_cst = pytz.timezone("America/Chicago")
-    for f in ["data/SHOT DATA.xlsx","/mount/src/hockey-prop-stop/data/SHOT DATA.xlsx","SHOT DATA.xlsx"]:
-        if os.path.exists(f):
-            try:
-                git_time_str = subprocess.check_output(
-                    ["git","log","-1","--format=%cd","--date=iso",f],
-                    stderr=subprocess.DEVNULL
-                ).decode().strip()
-                if git_time_str:
-                    git_time = datetime.datetime.fromisoformat(git_time_str.replace("Z","+00:00"))
-                    return git_time.astimezone(tz_cst).strftime("%Y-%m-%d %I:%M %p CST")
-            except Exception:
-                continue
-    return None
-
-st.markdown(f"🕒 **Data last updated:** {get_shots_file_git_time() or 'Unknown'}")
-
-# ---------------------------------------------------------------
-# Normalize Columns
+# Data Prep
 # ---------------------------------------------------------------
 for df in [skaters_df, shots_df, goalies_df, lines_df, teams_df]:
     if not df.empty: df.columns = df.columns.str.lower().str.strip()
@@ -151,7 +128,7 @@ with col2: team_b = st.selectbox("Select Team B", [t for t in teams if t != team
 st.markdown("---")
 
 # ---------------------------------------------------------------
-# Build Model — Weighted Line Adjustment + L3/L5/L10 Blend
+# Build Model — Weighted L10/L5/L3 + Line + Goalie + Form
 # ---------------------------------------------------------------
 @st.cache_data(show_spinner=True)
 def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, teams_df, injuries_df):
@@ -160,6 +137,7 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
     roster = skaters[[player_col, team_col]].rename(columns={player_col:"player", team_col:"team"}).drop_duplicates("player")
     grouped = {n.lower():g.sort_values(game_col) for n,g in shots_df.groupby(shots_df["player"].str.lower())}
 
+    # --- Line Factors ---
     line_adj = {}
     if not lines_df.empty and "line pairings" in lines_df.columns:
         l = lines_df.copy()
@@ -171,6 +149,17 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
         league_avg = team_avg.mean()
         l["line_factor"] = (league_avg / l["sog_against_per_game"]).clip(0.7,1.3)
         line_adj = l.copy()
+
+    # --- Goalie Factors ---
+    goalie_adj = {}
+    if not goalies_df.empty and {"team","shots against","games"}.issubset(goalies_df.columns):
+        g = goalies_df.copy()
+        g["shots against"] = pd.to_numeric(g["shots against"], errors="coerce").fillna(0)
+        g["games"] = pd.to_numeric(g["games"], errors="coerce").fillna(1)
+        g["shots_per_game"] = g["shots against"] / g["games"]
+        league_avg_sa = g["shots_per_game"].mean()
+        g["goalie_factor"] = (league_avg_sa / g["shots_per_game"]).clip(0.7,1.3)
+        goalie_adj = g.groupby("team")["goalie_factor"].mean().to_dict()
 
     for row in roster.itertuples(index=False):
         player, team = row.player, row.team
@@ -186,125 +175,89 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
         last10 = sog_values[-10:] if len(sog_values)>=10 else sog_values
 
         l3, l5, l10 = np.mean(last3), np.mean(last5), np.mean(last10)
-        season_avg = np.mean(sog_values)
-        trend = (l5 - l10)/l10 if l10>0 else 0
 
-        # --- Weighted Line Adjustment ---
+        # --- Weighted Baseline ---
+        baseline = (0.5*l10) + (0.35*l5) + (0.15*l3)
+
+        # --- Line Adjustment ---
         line_factor = 1.0
-        if not isinstance(line_adj, dict):
+        if not isinstance(line_adj,dict):
             last_name = str(player).split()[-1].lower()
             m = line_adj[line_adj["line pairings"].str.contains(last_name,case=False,na=False)]
             if not m.empty:
                 line_factor = np.average(m["line_factor"],weights=m["games"])
-            line_factor = np.clip(line_factor,0.7,1.3)
+        line_effect = (line_factor - 1.0) * baseline * 0.6
 
-        # More boost when >1, gentle penalty when <1
-        if line_factor > 1:
-            adj_factor = 1 + (line_factor - 1) * 1.8
-        else:
-            adj_factor = 1 - (1 - line_factor) * 0.6
-        adj_factor = np.clip(adj_factor, 0.6, 1.7)
+        # --- Goalie Adjustment ---
+        opp_team = team_b if team == team_a else team_a
+        goalie_factor = goalie_adj.get(opp_team, 1.0)
+        goalie_effect = (goalie_factor - 1.0) * baseline * 0.4
 
-        # --- Weighted blend of L3/L5/L10 ---
-        blended = (0.2 * l3) + (0.35 * l5) + (0.45 * l10)
+        # --- Form Adjustment (based on Form Indicator logic) ---
+        form_flag = "⚪ Neutral Form"
+        form_effect = 0
+        try:
+            season_toi = pd.to_numeric(skaters_df.loc[skaters_df[player_col].str.lower() == player.lower(), "icetime"], errors="coerce").mean()
+            games_played = pd.to_numeric(skaters_df.loc[skaters_df[player_col].str.lower() == player.lower(), "games"], errors="coerce").mean()
+            if season_toi > 0 and games_played >= 10:
+                avg_toi = (season_toi / games_played) / 60.0
+                sog_per60 = (np.mean(sog_values) / avg_toi) * 60
+                blended_recent = baseline
+                recent_per60 = (blended_recent / avg_toi) * 60 if avg_toi>0 else 0
+                usage_delta = (recent_per60 - sog_per60)/sog_per60 if sog_per60>0 else 0
+                if usage_delta > 0.10:
+                    form_flag = "🟢 Above-Baseline Form"
+                    form_effect = baseline * 0.10
+                elif usage_delta < -0.10:
+                    form_flag = "🔴 Below-Baseline Form"
+                    form_effect = -baseline * 0.10
+        except Exception:
+            pass
 
-        # Apply matchup adjustment
-        lam = blended * adj_factor
-        line = round(lam, 2)
+        # --- Final Projection ---
+        lam = baseline + line_effect + goalie_effect + form_effect
+        lam = np.clip(lam, 0.1, None)
 
-        prob = 1 - poisson.cdf(np.floor(line) - 1, mu=lam)
+        # --- Probability ---
+        prob = 1 - poisson.cdf(np.floor(lam) - 1, mu=lam)
         p = min(max(prob, 0.001), 0.999)
         odds = -100*(p/(1-p)) if p>=0.5 else 100*((1-p)/p)
         implied_odds = f"{'+' if odds>0 else ''}{int(odds)}"
 
-        # --- Form flag logic (unchanged) ---
-        form_flag = "⚪ Neutral Form"
-        try:
-            season_toi = pd.to_numeric(
-                skaters_df.loc[skaters_df[player_col].str.lower() == player.lower(), "icetime"],
-                errors="coerce"
-            ).mean()
-            games_played = pd.to_numeric(
-                skaters_df.loc[skaters_df[player_col].str.lower() == player.lower(), "games"],
-                errors="coerce"
-            ).mean()
-            if season_toi > 0 and games_played >= 10:
-                avg_toi = (season_toi / games_played) / 60.0
-                sog_per60 = (season_avg / avg_toi) * 60
-                blended_recent = blended
-                recent_per60 = (blended_recent / avg_toi) * 60 if avg_toi>0 else 0
-                usage_delta = (recent_per60 - sog_per60)/sog_per60 if sog_per60>0 else 0
-                if usage_delta > 0.10: form_flag = "🟢 Above-Baseline Form"
-                elif usage_delta < -0.10: form_flag = "🔴 Below-Baseline Form"
-        except Exception: pass
-
-        # --- Injury info ---
-        injury_html = ""
-        if not injuries_df.empty and {"player","team"}.issubset(injuries_df.columns):
-            player_lower = player.lower().strip()
-            last_name = player_lower.split()[-1]
-            team_lower = team.lower().strip()
-            match = injuries_df[
-                injuries_df["team"].str.lower().str.strip().eq(team_lower)
-                & injuries_df["player"].str.lower().str.endswith(last_name)
-            ]
-            if not match.empty:
-                note = str(match.iloc[0].get("injury note","")).strip()
-                injury_type = str(match.iloc[0].get("injury type","")).strip()
-                date_injury = str(match.iloc[0].get("date of injury","")).strip()
-                tooltip = "\n".join([p for p in [injury_type,note,date_injury] if p]) or "Injury info unavailable"
-                safe = html.escape(tooltip)
-                injury_html = f"<span style='cursor:pointer;' onclick='alert({json.dumps(safe)})' title='Tap or click for injury info'>🚑</span>"
+        total_change = ((lam - baseline) / baseline) * 100
 
         results.append({
-            "Player":player,"Team":team,"Injury":injury_html,
-            "Season Avg":round(season_avg,2),
-            "L3 Shots":", ".join(map(str,last3)),
-            "L5 Shots":", ".join(map(str,last5)),
-            "L10 Shots":", ".join(map(str,last10)),
-            "Trend Score":round(trend,3),
-            "Final Projection":round(line,2),
-            "Prob ≥ Projection (%) L5":round(p*100,1),
-            "Playable Odds":implied_odds,
+            "Player":player,"Team":team,
+            "Season Avg":round(np.mean(sog_values),2),
+            "L3":round(l3,2),"L5":round(l5,2),"L10":round(l10,2),
+            "Baseline":round(baseline,2),
             "Line Adj":round(line_factor,2),
-            "Adj Factor Used":round(adj_factor,2),
-            "Form Indicator":form_flag
+            "Goalie Adj":round(goalie_factor,2),
+            "Form Indicator":form_flag,
+            "Final Projection":round(lam,2),
+            "Adj Impact (Total % Change)":f"{total_change:+.1f}%",
+            "Prob ≥ Projection (%)":round(p*100,1),
+            "Playable Odds":implied_odds
         })
     return pd.DataFrame(results)
 
 # ---------------------------------------------------------------
-# Run Model and Display
+# Run + Display
 # ---------------------------------------------------------------
 if st.button("🚀 Run Model"):
-    st.info(f"Building model for matchup: **{team_a} vs {team_b}** …")
     df = build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, teams_df, injuries_df)
-    if "Injury" not in df.columns:
-        df["Injury"] = ""
-    df = df.sort_values("Final Projection", ascending=False).reset_index(drop=True)
-    st.session_state.results_raw = df.copy()
-    st.success("✅ Model built successfully!")
+    if df.empty:
+        st.error("No results found.")
+    else:
+        st.session_state.results_raw = df.copy()
+        st.success("✅ Model built successfully!")
 
 if "results_raw" in st.session_state and not st.session_state.results_raw.empty:
     df = st.session_state.results_raw.copy()
 
-    def trend_color(v):
-        if pd.isna(v): return "–"
-        if v > 0.05: color="#00B140"; symbol="▲"
-        elif v < -0.05: color="#E63946"; symbol="▼"
-        else: color="#6C7A89"; symbol="–"
-        return f"<div style='background:{color};color:#fff;font-weight:600;border-radius:6px;padding:4px 8px;text-align:center;'>{symbol}</div>"
-
-    df["Trend"] = df["Trend Score"].apply(trend_color)
-
-    cols = ["Player","Team","Injury","Trend","Final Projection","Prob ≥ Projection (%) L5","Playable Odds","Season Avg","Line Adj","Adj Factor Used","Form Indicator","L3 Shots","L5 Shots","L10 Shots"]
-    vis = df[[c for c in cols if c in df.columns]]
-
-    html_table = vis.to_html(index=False, escape=False)
+    html_table = df.to_html(index=False, escape=False)
     components.html(f"""
         <style>
-        div.scrollable-table {{
-            overflow-x:auto;overflow-y:auto;height:600px;
-        }}
         table {{
             width:100%;border-collapse:collapse;font-family:'Source Sans Pro',sans-serif;color:#D6D6D6;
         }}
@@ -312,13 +265,10 @@ if "results_raw" in st.session_state and not st.session_state.results_raw.empty:
             background-color:#0A3A67;color:#FFFFFF;padding:6px;text-align:center;position:sticky;top:0;
             border-bottom:2px solid #1E5A99;
         }}
-        td:first-child,th:first-child {{
-            position:sticky;left:0;background-color:#1E5A99;color:#FFFFFF;font-weight:bold;
-        }}
         td {{
             background-color:#0F2743;color:#D6D6D6;padding:4px;text-align:center;
         }}
         tr:nth-child(even) td {{background-color:#142F52;}}
         </style>
-        <div class='scrollable-table'>{html_table}</div>
-        """,height=620,scrolling=True)
+        <div style='overflow-x:auto;height:620px;'>{html_table}</div>
+        """,height=650,scrolling=True)
