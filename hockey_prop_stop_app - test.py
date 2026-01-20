@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Puck Shotz Hockey Analytics — L5 Probability Update (TEST MODE, Stronger Boost for Easy Matchups)
+# 🏒 Puck Shotz Hockey Analytics — L5 Probability Update (TEST MODE, Full UI Restored)
 # ---------------------------------------------------------------
 
 import streamlit as st
@@ -25,7 +25,7 @@ st.markdown(
     </div>
     <h1 style='text-align:center;color:#1E5A99;'>Puck Shotz Hockey Analytics</h1>
     <p style='text-align:center;color:#D6D6D6;'>
-        Boosted easy matchups — Line Adj > 1 now gives stronger shot increases
+        Full UI restored — includes injury icons and L3/L5/L10 shot columns
     </p>
     """,
     unsafe_allow_html=True,
@@ -170,9 +170,10 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
         sog_values = df_p.groupby(game_col)["sog"].sum().tolist()
         if not sog_values: continue
 
-        l3 = np.mean(sog_values[-3:]) if len(sog_values)>=3 else np.mean(sog_values)
-        l5 = np.mean(sog_values[-5:]) if len(sog_values)>=5 else np.mean(sog_values)
-        l10 = np.mean(sog_values[-10:]) if len(sog_values)>=10 else np.mean(sog_values)
+        last3 = sog_values[-3:] if len(sog_values)>=3 else sog_values
+        last5 = sog_values[-5:] if len(sog_values)>=5 else sog_values
+        last10 = sog_values[-10:] if len(sog_values)>=10 else sog_values
+        l3, l5, l10 = np.mean(last3), np.mean(last5), np.mean(last10)
         baseline = (0.55*l10) + (0.30*l5) + (0.15*l3)
 
         # --- Line factor
@@ -206,14 +207,10 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
 
         # --- Final Projection: boosted easy matchups
         lam_base = baseline * (1 + goalie_term + form_term)
-
         if line_factor_internal >= 1:
-            # easier matchup → stronger boost
             scale = 1 + 7.0 * (line_factor_internal - 1.0) ** 1.5
         else:
-            # tougher matchup → heavy penalty
             scale = max(0.05, line_factor_internal ** 3.5)
-
         lam = lam_base * scale
 
         prob = 1 - poisson.cdf(np.floor(lam) - 1, mu=max(lam, 0.01))
@@ -221,15 +218,37 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
         odds = -100*(p/(1-p)) if p>=0.5 else 100*((1-p)/p)
         implied_odds = f"{'+' if odds>0 else ''}{int(odds)}"
 
+        # --- Injury clickable icon
+        injury_html = ""
+        if not injuries_df.empty and {"player","team"}.issubset(injuries_df.columns):
+            player_lower = player.lower().strip()
+            last_name = player_lower.split()[-1]
+            team_lower = team.lower().strip()
+            match = injuries_df[
+                injuries_df["team"].str.lower().str.strip().eq(team_lower)
+                & injuries_df["player"].str.lower().str.endswith(last_name)
+            ]
+            if not match.empty:
+                note = str(match.iloc[0].get("injury note","")).strip()
+                injury_type = str(match.iloc[0].get("injury type","")).strip()
+                date_injury = str(match.iloc[0].get("date of injury","")).strip()
+                tooltip = "\n".join([p for p in [injury_type,note,date_injury] if p]) or "Injury info unavailable"
+                safe = html.escape(tooltip)
+                injury_html = f"<span style='cursor:pointer;' onclick='alert({json.dumps(safe)})' title='Tap or click for injury info'>🚑</span>"
+
+        # --- Append results
         results.append({
-            "Player":player,"Team":team,"Injury":"",
+            "Player":player,"Team":team,"Injury":injury_html,
             "Trend Score":round((l5 - l10)/l10 if l10>0 else 0,3),
             "Final Projection":round(lam,2),
             "Prob ≥ Projection (%) L5":round(p*100,1),
             "Playable Odds":implied_odds,
             "Season Avg":round(np.mean(sog_values),2),
             "Line Adj":round(line_factor_internal,2),
-            "Form Indicator":form_flag
+            "Form Indicator":form_flag,
+            "L3 Shots":", ".join(map(str,last3)),
+            "L5 Shots":", ".join(map(str,last5)),
+            "L10 Shots":", ".join(map(str,last10))
         })
     return pd.DataFrame(results)
 
@@ -257,7 +276,8 @@ if "results_raw" in st.session_state and not st.session_state.results_raw.empty:
 
     cols = ["Player","Team","Injury","Trend","Final Projection",
             "Prob ≥ Projection (%) L5","Playable Odds",
-            "Season Avg","Line Adj","Form Indicator"]
+            "Season Avg","Line Adj","Form Indicator",
+            "L3 Shots","L5 Shots","L10 Shots"]
     vis = df[[c for c in cols if c in df.columns]]
 
     html_table = vis.to_html(index=False, escape=False)
