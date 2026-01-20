@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Puck Shotz Hockey Analytics — L5 Probability Update (TEST MODE, Corrected Line Adj Direction)
+# 🏒 Puck Shotz Hockey Analytics — L5 Probability Update (TEST MODE, Stronger Boost for Easy Matchups)
 # ---------------------------------------------------------------
 
 import streamlit as st
@@ -25,7 +25,7 @@ st.markdown(
     </div>
     <h1 style='text-align:center;color:#1E5A99;'>Puck Shotz Hockey Analytics</h1>
     <p style='text-align:center;color:#D6D6D6;'>
-        Stronger Line Adj scaling — now correctly penalizes tough matchups
+        Boosted easy matchups — Line Adj > 1 now gives stronger shot increases
     </p>
     """,
     unsafe_allow_html=True,
@@ -204,12 +204,12 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
                     form_flag, form_term = "🔴 Below-Baseline Form", -0.05
         except Exception: pass
 
-        # --- Final Projection: Correct Line Adj direction ---
+        # --- Final Projection: boosted easy matchups
         lam_base = baseline * (1 + goalie_term + form_term)
 
         if line_factor_internal >= 1:
-            # easier matchup → boost
-            scale = 1 + 5.0 * (line_factor_internal - 1.0) ** 1.6
+            # easier matchup → stronger boost
+            scale = 1 + 7.0 * (line_factor_internal - 1.0) ** 1.5
         else:
             # tougher matchup → heavy penalty
             scale = max(0.05, line_factor_internal ** 3.5)
