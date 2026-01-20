@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Puck Shotz Hockey Analytics — L5 Probability Update (TEST MODE, Line Adj Display Fixed)
+# 🏒 Puck Shotz Hockey Analytics — L5 Probability Update (TEST MODE, Strong Line Adj Penalty)
 # ---------------------------------------------------------------
 
 import streamlit as st
@@ -25,7 +25,7 @@ st.markdown(
     </div>
     <h1 style='text-align:center;color:#1E5A99;'>Puck Shotz Hockey Analytics</h1>
     <p style='text-align:center;color:#D6D6D6;'>
-        Weighted L10/L5/L3 projections with corrected Line & Goalie Adj direction (display reflipped)
+        Weighted L10/L5/L3 projections with stronger penalties for low Line Adj
     </p>
     """,
     unsafe_allow_html=True,
@@ -128,7 +128,7 @@ with col2: team_b = st.selectbox("Select Team B", [t for t in teams if t != team
 st.markdown("---")
 
 # ---------------------------------------------------------------
-# Build Model — Corrected Adj Direction + Display Reflip
+# Build Model — stronger penalty for low Line Adj
 # ---------------------------------------------------------------
 @st.cache_data(show_spinner=True)
 def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, teams_df, injuries_df):
@@ -137,7 +137,7 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
     roster = skaters[[player_col, team_col]].rename(columns={player_col:"player", team_col:"team"}).drop_duplicates("player")
     grouped = {n.lower():g.sort_values(game_col) for n,g in shots_df.groupby(shots_df["player"].str.lower())}
 
-    # --- Line Adjustment (correct direction internally) ---
+    # Line adjustment
     line_adj = {}
     if not lines_df.empty and "line pairings" in lines_df.columns:
         l = lines_df.copy()
@@ -147,11 +147,10 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
         l["sog_against_per_game"] = np.where(l["games"]>0, l["sog against"]/l["games"], np.nan)
         team_avg = l.groupby("team")["sog_against_per_game"].mean()
         league_avg = team_avg.mean()
-        # >1 = easier matchup (boost)
         l["line_factor"] = (l["sog_against_per_game"] / league_avg).clip(0.7,1.3)
         line_adj = l.copy()
 
-    # --- Goalie Adjustment (flipped ratio) ---
+    # Goalie adjustment
     goalie_adj = {}
     if not goalies_df.empty and {"team","shots against","games"}.issubset(goalies_df.columns):
         g = goalies_df.copy()
@@ -175,21 +174,26 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
         l10 = np.mean(sog_values[-10:]) if len(sog_values)>=10 else np.mean(sog_values)
         baseline = (0.45*l10) + (0.35*l5) + (0.20*l3)
 
-        # Line factor (internal correct direction)
+        # --- Line factor with stronger penalty below 1 ---
         line_factor_internal = 1.0
         if not isinstance(line_adj,dict):
             last_name = str(player).split()[-1].lower()
             m = line_adj[line_adj["line pairings"].str.contains(last_name,case=False,na=False)]
             if not m.empty:
                 line_factor_internal = np.average(m["line_factor"],weights=m["games"])
-        line_effect = (line_factor_internal - 1.0) * baseline * 1.0
+        if line_factor_internal < 1:
+            penalty_strength = (1 - line_factor_internal) ** 1.5
+            line_effect = -baseline * penalty_strength
+        else:
+            boost_strength = (line_factor_internal - 1.0) * 0.8
+            line_effect = baseline * boost_strength
 
-        # Goalie adj
+        # --- Goalie adj ---
         opp_team = team_b if team == team_a else team_a
         goalie_factor = goalie_adj.get(opp_team, 1.0)
         goalie_effect = (goalie_factor - 1.0) * baseline * 0.4
 
-        # Form
+        # --- Form adj ---
         form_flag, form_effect = "⚪ Neutral Form", 0
         try:
             season_toi = pd.to_numeric(skaters_df.loc[skaters_df[player_col].str.lower()==player.lower(), "icetime"], errors="coerce").mean()
@@ -212,7 +216,6 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
         odds = -100*(p/(1-p)) if p>=0.5 else 100*((1-p)/p)
         implied_odds = f"{'+' if odds>0 else ''}{int(odds)}"
 
-        # 🟢 Display reflipped Line Adj
         display_line_adj = 1 / line_factor_internal if line_factor_internal != 0 else 1.0
 
         results.append({
