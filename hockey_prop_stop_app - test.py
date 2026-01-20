@@ -55,4 +55,227 @@ def load_file(file):
 def safe_read(path):
     try:
         if not os.path.exists(path): return pd.DataFrame()
-        return pd.read_excel(path) if path.lower().endswith_
+        return pd.read_excel(path) if path.lower().endswith(".xlsx") else pd.read_csv(path)
+    except Exception:
+        return pd.DataFrame()
+
+def load_data(file_uploader, default_path):
+    if file_uploader is not None:
+        return load_file(file_uploader)
+    return safe_read(default_path)
+
+# ---------------------------------------------------------------
+# Cached Data Load
+# ---------------------------------------------------------------
+@st.cache_data(show_spinner=False)
+def load_all_data(skaters_file, shots_file, goalies_file, lines_file, teams_file, injuries_file):
+    base_paths = [".", "data", "/mount/src/hockey-prop-stop/data"]
+    def find_file(name):
+        for p in base_paths:
+            full = os.path.join(p, name)
+            if os.path.exists(full): return full
+        return None
+    with contextlib.redirect_stdout(io.StringIO()):
+        skaters = load_data(skaters_file, find_file("Skaters.xlsx") or "Skaters.xlsx")
+        shots   = load_data(shots_file,   find_file("SHOT DATA.xlsx") or "SHOT DATA.xlsx")
+        goalies = load_data(goalies_file, find_file("GOALTENDERS.xlsx") or "GOALTENDERS.xlsx")
+        lines   = load_data(lines_file,   find_file("LINE DATA.xlsx") or "LINE DATA.xlsx")
+        teams   = load_data(teams_file,   find_file("TEAMS.xlsx") or "TEAMS.xlsx")
+
+        injuries = pd.DataFrame()
+        for p in ["injuries.xlsx","Injuries.xlsx","./injuries.xlsx","data/injuries.xlsx","/mount/src/hockey-prop-stop/injuries.xlsx"]:
+            if os.path.exists(p):
+                injuries = load_file(open(p,"rb")); break
+        if injuries.empty:
+            injuries = load_file(injuries_file)
+        if not injuries.empty:
+            injuries.columns = injuries.columns.str.lower().str.strip()
+            if "player" in injuries.columns:
+                injuries["player"] = injuries["player"].astype(str).str.strip().str.lower()
+    return skaters, shots, goalies, lines, teams, injuries
+
+# ---------------------------------------------------------------
+# Load Data
+# ---------------------------------------------------------------
+skaters_df, shots_df, goalies_df, lines_df, teams_df, injuries_df = load_all_data(
+    skaters_file, shots_file, goalies_file, lines_file, teams_file, injuries_file
+)
+if skaters_df.empty or shots_df.empty:
+    st.warning("⚠️ Missing required data. Please upload or verify repo files.")
+    st.stop()
+st.success("✅ Data loaded successfully.")
+
+# ---------------------------------------------------------------
+# Normalize Columns
+# ---------------------------------------------------------------
+for df in [skaters_df, shots_df, goalies_df, lines_df, teams_df]:
+    if not df.empty: df.columns = df.columns.str.lower().str.strip()
+
+team_col = next((c for c in skaters_df.columns if "team" in c), None)
+player_col = "name" if "name" in skaters_df.columns else None
+player_col_shots = next((c for c in shots_df.columns if "player" in c or "name" in c), None)
+shots_df = shots_df.rename(columns={player_col_shots: "player"})
+shots_df["player"] = shots_df["player"].astype(str).str.strip()
+game_col = next((c for c in shots_df.columns if "game" in c and "id" in c), None)
+
+# ---------------------------------------------------------------
+# Team Selection
+# ---------------------------------------------------------------
+teams = sorted(skaters_df[team_col].dropna().unique().tolist())
+col1, col2 = st.columns(2)
+with col1: team_a = st.selectbox("Select Team A", teams)
+with col2: team_b = st.selectbox("Select Team B", [t for t in teams if t != team_a])
+st.markdown("---")
+
+# ---------------------------------------------------------------
+# Build Model — Corrected Adj Direction
+# ---------------------------------------------------------------
+@st.cache_data(show_spinner=True)
+def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, teams_df, injuries_df):
+    results = []
+    skaters = skaters_df[skaters_df[team_col].isin([team_a, team_b])]
+    roster = skaters[[player_col, team_col]].rename(columns={player_col:"player", team_col:"team"}).drop_duplicates("player")
+    grouped = {n.lower():g.sort_values(game_col) for n,g in shots_df.groupby(shots_df["player"].str.lower())}
+
+    # --- Line Adjustment (flipped ratio) ---
+    line_adj = {}
+    if not lines_df.empty and "line pairings" in lines_df.columns:
+        l = lines_df.copy()
+        l["games"] = pd.to_numeric(l["games"], errors="coerce").fillna(0)
+        l["sog against"] = pd.to_numeric(l["sog against"], errors="coerce").fillna(0)
+        l = l.groupby(["line pairings","team"], as_index=False).agg({"games":"sum","sog against":"sum"})
+        l["sog_against_per_game"] = np.where(l["games"]>0, l["sog against"]/l["games"], np.nan)
+        team_avg = l.groupby("team")["sog_against_per_game"].mean()
+        league_avg = team_avg.mean()
+        # ✅ flipped ratio so >1 = easier matchup (boost)
+        l["line_factor"] = (l["sog_against_per_game"] / league_avg).clip(0.7,1.3)
+        line_adj = l.copy()
+
+    # --- Goalie Adjustment (flipped ratio) ---
+    goalie_adj = {}
+    if not goalies_df.empty and {"team","shots against","games"}.issubset(goalies_df.columns):
+        g = goalies_df.copy()
+        g["shots against"] = pd.to_numeric(g["shots against"], errors="coerce").fillna(0)
+        g["games"] = pd.to_numeric(g["games"], errors="coerce").fillna(1)
+        g["shots_per_game"] = g["shots against"] / g["games"]
+        league_avg_sa = g["shots_per_game"].mean()
+        # ✅ flipped ratio so >1 = weaker goalie (boost)
+        g["goalie_factor"] = (g["shots_per_game"] / league_avg_sa).clip(0.7,1.3)
+        goalie_adj = g.groupby("team")["goalie_factor"].mean().to_dict()
+
+    for row in roster.itertuples(index=False):
+        player, team = row.player, row.team
+        df_p = grouped.get(player.lower(), pd.DataFrame())
+        if df_p.empty: continue
+
+        game_sogs = df_p.groupby(game_col)[["sog","goal"]].sum().reset_index().sort_values(game_col)
+        sog_values = game_sogs["sog"].tolist()
+        if not sog_values: continue
+
+        l3 = np.mean(sog_values[-3:]) if len(sog_values)>=3 else np.mean(sog_values)
+        l5 = np.mean(sog_values[-5:]) if len(sog_values)>=5 else np.mean(sog_values)
+        l10 = np.mean(sog_values[-10:]) if len(sog_values)>=10 else np.mean(sog_values)
+        baseline = (0.45*l10) + (0.35*l5) + (0.20*l3)
+
+        # --- Line Adj (strong) ---
+        line_factor = 1.0
+        if not isinstance(line_adj,dict):
+            last_name = str(player).split()[-1].lower()
+            m = line_adj[line_adj["line pairings"].str.contains(last_name,case=False,na=False)]
+            if not m.empty:
+                line_factor = np.average(m["line_factor"],weights=m["games"])
+        line_effect = (line_factor - 1.0) * baseline * 1.0
+
+        # --- Goalie Adj (moderate) ---
+        opp_team = team_b if team == team_a else team_a
+        goalie_factor = goalie_adj.get(opp_team, 1.0)
+        goalie_effect = (goalie_factor - 1.0) * baseline * 0.4
+
+        # --- Form Adj ---
+        form_flag = "⚪ Neutral Form"
+        form_effect = 0
+        try:
+            season_toi = pd.to_numeric(skaters_df.loc[skaters_df[player_col].str.lower()==player.lower(), "icetime"], errors="coerce").mean()
+            games_played = pd.to_numeric(skaters_df.loc[skaters_df[player_col].str.lower()==player.lower(), "games"], errors="coerce").mean()
+            if season_toi > 0 and games_played >= 10:
+                avg_toi = (season_toi / games_played) / 60.0
+                sog_per60 = (np.mean(sog_values) / avg_toi) * 60
+                recent_per60 = (baseline / avg_toi) * 60 if avg_toi>0 else 0
+                usage_delta = (recent_per60 - sog_per60)/sog_per60 if sog_per60>0 else 0
+                if usage_delta > 0.10:
+                    form_flag = "🟢 Above-Baseline Form"
+                    form_effect = baseline * 0.10
+                elif usage_delta < -0.10:
+                    form_flag = "🔴 Below-Baseline Form"
+                    form_effect = -baseline * 0.10
+        except Exception: pass
+
+        lam = baseline + line_effect + goalie_effect + form_effect
+        lam = np.clip(lam, 0.1, None)
+        prob = 1 - poisson.cdf(np.floor(lam) - 1, mu=lam)
+        p = min(max(prob, 0.001), 0.999)
+        odds = -100*(p/(1-p)) if p>=0.5 else 100*((1-p)/p)
+        implied_odds = f"{'+' if odds>0 else ''}{int(odds)}"
+
+        results.append({
+            "Player":player,"Team":team,"Injury":"",
+            "Trend Score":round((l5 - l10)/l10 if l10>0 else 0,3),
+            "Final Projection":round(lam,2),
+            "Prob ≥ Projection (%) L5":round(p*100,1),
+            "Playable Odds":implied_odds,
+            "Season Avg":round(np.mean(sog_values),2),
+            "Line Adj":round(line_factor,2),
+            "Form Indicator":form_flag
+        })
+    return pd.DataFrame(results)
+
+# ---------------------------------------------------------------
+# Run + Display
+# ---------------------------------------------------------------
+if st.button("🚀 Run Model"):
+    st.info(f"Building model for matchup: **{team_a} vs {team_b}** …")
+    df = build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, teams_df, injuries_df)
+    if "Injury" not in df.columns: df["Injury"] = ""
+    df = df.sort_values("Final Projection", ascending=False).reset_index(drop=True)
+    st.session_state.results_raw = df.copy()
+    st.success("✅ Model built successfully!")
+
+if "results_raw" in st.session_state and not st.session_state.results_raw.empty:
+    df = st.session_state.results_raw.copy()
+
+    def trend_color(v):
+        if pd.isna(v): return "–"
+        if v > 0.05: color, symbol = "#00B140","▲"
+        elif v < -0.05: color, symbol = "#E63946","▼"
+        else: color, symbol = "#6C7A89","–"
+        return f"<div style='background:{color};color:#fff;font-weight:600;border-radius:6px;padding:4px 8px;text-align:center;'>{symbol}</div>"
+
+    df["Trend"] = df["Trend Score"].apply(trend_color)
+
+    cols = [
+        "Player","Team","Injury","Trend","Final Projection",
+        "Prob ≥ Projection (%) L5","Playable Odds",
+        "Season Avg","Line Adj","Form Indicator"
+    ]
+    vis = df[[c for c in cols if c in df.columns]]
+
+    html_table = vis.to_html(index=False, escape=False)
+    components.html(f"""
+        <style>
+        table {{
+            width:100%;border-collapse:collapse;font-family:'Source Sans Pro',sans-serif;color:#D6D6D6;
+        }}
+        th {{
+            background-color:#0A3A67;color:#FFFFFF;padding:6px;text-align:center;position:sticky;top:0;
+            border-bottom:2px solid #1E5A99;
+        }}
+        td:first-child,th:first-child {{
+            position:sticky;left:0;background-color:#1E5A99;color:#FFFFFF;font-weight:bold;
+        }}
+        td {{
+            background-color:#0F2743;color:#D6D6D6;padding:4px;text-align:center;
+        }}
+        tr:nth-child(even) td {{background-color:#142F52;}}
+        </style>
+        <div style='overflow-x:auto;height:620px;'>{html_table}</div>
+        """,height=650,scrolling=True)
