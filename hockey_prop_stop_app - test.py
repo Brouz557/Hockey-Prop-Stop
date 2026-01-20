@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Puck Shotz Hockey Analytics — L5 Probability Update (TEST MODE, Full UI Restored)
+# 🏒 Puck Shotz Hockey Analytics — L5 Probability Update (TEST MODE, Sorted by Line Adj)
 # ---------------------------------------------------------------
 
 import streamlit as st
@@ -25,7 +25,7 @@ st.markdown(
     </div>
     <h1 style='text-align:center;color:#1E5A99;'>Puck Shotz Hockey Analytics</h1>
     <p style='text-align:center;color:#D6D6D6;'>
-        Full UI restored — includes injury icons and L3/L5/L10 shot columns
+        Sorted by highest Line Adj — best matchups on top
     </p>
     """,
     unsafe_allow_html=True,
@@ -236,7 +236,6 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
                 safe = html.escape(tooltip)
                 injury_html = f"<span style='cursor:pointer;' onclick='alert({json.dumps(safe)})' title='Tap or click for injury info'>🚑</span>"
 
-        # --- Append results
         results.append({
             "Player":player,"Team":team,"Injury":injury_html,
             "Trend Score":round((l5 - l10)/l10 if l10>0 else 0,3),
@@ -258,7 +257,8 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
 if st.button("🚀 Run Model"):
     st.info(f"Building model for matchup: **{team_a} vs {team_b}** …")
     df = build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, teams_df, injuries_df)
-    df = df.sort_values("Final Projection", ascending=False).reset_index(drop=True)
+    # ✅ Sort by highest Line Adj
+    df = df.sort_values("Line Adj", ascending=False).reset_index(drop=True)
     st.session_state.results_raw = df.copy()
     st.success("✅ Model built successfully!")
 
