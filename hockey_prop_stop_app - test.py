@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Puck Shotz Hockey Analytics — L5 Probability Update (TEST MODE, Sorted by Final Projection then Line Adj)
+# 🏒 Puck Shotz Hockey Analytics — L5 Probability Update (TEST MODE + Signal Strength)
 # ---------------------------------------------------------------
 
 import streamlit as st
@@ -137,7 +137,6 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
     roster = skaters[[player_col, team_col]].rename(columns={player_col:"player", team_col:"team"}).drop_duplicates("player")
     grouped = {n.lower():g.sort_values(game_col) for n,g in shots_df.groupby(shots_df["player"].str.lower())}
 
-    # --- Line Adj
     line_adj = {}
     if not lines_df.empty and "line pairings" in lines_df.columns:
         l = lines_df.copy()
@@ -150,7 +149,6 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
         l["line_factor"] = (league_avg / l["sog_against_per_game"]).clip(0.7,1.3)
         line_adj = l.copy()
 
-    # --- Goalie Adjustment
     goalie_adj = {}
     if not goalies_df.empty and {"team","shots against","games"}.issubset(goalies_df.columns):
         g = goalies_df.copy()
@@ -161,7 +159,6 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
         g["goalie_factor"] = (g["shots_per_game"] / league_avg_sa).clip(0.7,1.3)
         goalie_adj = g.groupby("team")["goalie_factor"].mean().to_dict()
 
-    # --- Player loop
     for row in roster.itertuples(index=False):
         player, team = row.player, row.team
         df_p = grouped.get(player.lower(), pd.DataFrame())
@@ -176,7 +173,6 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
         l3, l5, l10 = np.mean(last3), np.mean(last5), np.mean(last10)
         baseline = (0.55*l10) + (0.30*l5) + (0.15*l3)
 
-        # --- Line factor
         line_factor_internal = 1.0
         if isinstance(line_adj, pd.DataFrame) and not line_adj.empty:
             last_name = str(player).split()[-1].lower()
@@ -184,12 +180,10 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
             if not m.empty:
                 line_factor_internal = np.average(m["line_factor"], weights=m["games"])
 
-        # --- Goalie factor
         opp_team = team_b if team == team_a else team_a
         goalie_factor = goalie_adj.get(opp_team, 1.0)
         goalie_term = (goalie_factor - 1.0) * 0.2
 
-        # --- Form
         form_flag, form_term = "⚪ Neutral Form", 0.0
         try:
             season_toi = pd.to_numeric(skaters_df.loc[skaters_df[player_col].str.lower()==player.lower(),"icetime"], errors="coerce").mean()
@@ -205,7 +199,6 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
                     form_flag, form_term = "🔴 Below-Baseline Form", -0.05
         except Exception: pass
 
-        # --- Final Projection
         lam_base = baseline * (1 + goalie_term + form_term)
         if line_factor_internal >= 1:
             scale = 1 + 7.0 * (line_factor_internal - 1.0) ** 1.5
@@ -218,7 +211,6 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
         odds = -100*(p/(1-p)) if p>=0.5 else 100*((1-p)/p)
         implied_odds = f"{'+' if odds>0 else ''}{int(odds)}"
 
-        # --- Injury clickable icon
         injury_html = ""
         if not injuries_df.empty and {"player","team"}.issubset(injuries_df.columns):
             player_lower = player.lower().strip()
@@ -257,7 +249,24 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
 if st.button("🚀 Run Model"):
     st.info(f"Building model for matchup: **{team_a} vs {team_b}** …")
     df = build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, teams_df, injuries_df)
-    # ✅ Sort by Final Projection first, then Line Adj
+
+    # ✅ Add Signal Strength column
+    if not df.empty:
+        max_proj = df["Final Projection"].max()
+        max_line = df["Line Adj"].max()
+        df["Signal Score"] = (
+            (df["Final Projection"]/max_proj)*0.5 +
+            (df["Line Adj"]/max_line)*0.3 +
+            (df["Prob ≥ Projection (%) L5"]/100)*0.2
+        )
+        def classify_strength(x):
+            if x >= 0.75: return "🟢 Strong"
+            elif x >= 0.45: return "🟡 Medium"
+            else: return "🔴 Weak"
+        df["Signal Strength"] = df["Signal Score"].apply(classify_strength)
+        df.drop(columns="Signal Score", inplace=True)
+
+    # ✅ Sort by Final Projection then Line Adj
     df = df.sort_values(["Final Projection", "Line Adj"], ascending=[False, False]).reset_index(drop=True)
     st.session_state.results_raw = df.copy()
     st.success("✅ Model built successfully!")
@@ -276,7 +285,7 @@ if "results_raw" in st.session_state and not st.session_state.results_raw.empty:
 
     cols = ["Player","Team","Injury","Trend","Final Projection",
             "Prob ≥ Projection (%) L5","Playable Odds",
-            "Season Avg","Line Adj","Form Indicator",
+            "Season Avg","Line Adj","Form Indicator","Signal Strength",
             "L3 Shots","L5 Shots","L10 Shots"]
     vis = df[[c for c in cols if c in df.columns]]
 
