@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Puck Shotz Hockey Analytics — L5 Probability Update (TEST MODE, Realistic Scaling)
+# 🏒 Puck Shotz Hockey Analytics — L5 Probability Update (TEST MODE, Enhanced Line Adj Impact)
 # ---------------------------------------------------------------
 
 import streamlit as st
@@ -25,7 +25,7 @@ st.markdown(
     </div>
     <h1 style='text-align:center;color:#1E5A99;'>Puck Shotz Hockey Analytics</h1>
     <p style='text-align:center;color:#D6D6D6;'>
-        Weighted L10/L5/L3 projections with realistic scaling and balanced adjustments
+        Weighted L10/L5/L3 projections with stronger Line Adj impact
     </p>
     """,
     unsafe_allow_html=True,
@@ -128,7 +128,7 @@ with col2: team_b = st.selectbox("Select Team B", [t for t in teams if t != team
 st.markdown("---")
 
 # ---------------------------------------------------------------
-# Build Model — Realistic Scaling
+# Build Model — Enhanced Line Adj Impact
 # ---------------------------------------------------------------
 @st.cache_data(show_spinner=True)
 def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, teams_df, injuries_df):
@@ -174,7 +174,7 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
         l10 = np.mean(sog_values[-10:]) if len(sog_values)>=10 else np.mean(sog_values)
         baseline = (0.55*l10) + (0.30*l5) + (0.15*l3)
 
-        # --- Line factor (soft nonlinear) ---
+        # --- Line factor (stronger nonlinear influence) ---
         line_factor_internal = 1.0
         if not isinstance(line_adj,dict):
             last_name = str(player).split()[-1].lower()
@@ -182,11 +182,11 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
             if not m.empty:
                 line_factor_internal = np.average(m["line_factor"],weights=m["games"])
         if line_factor_internal < 1:
-            line_term = -0.8 * (1 - line_factor_internal) ** 1.2
+            line_term = -1.3 * (1 - line_factor_internal) ** 1.5
         else:
-            line_term = 0.4 * (line_factor_internal - 1.0)
+            line_term = 0.8 * (line_factor_internal - 1.0) ** 1.2
 
-        # --- Goalie factor (small influence) ---
+        # --- Goalie factor ---
         opp_team = team_b if team == team_a else team_a
         goalie_factor = goalie_adj.get(opp_team, 1.0)
         goalie_term = (goalie_factor - 1.0) * 0.2
