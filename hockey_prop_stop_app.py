@@ -5,7 +5,7 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import os, contextlib, io, datetime, pytz, subprocess, html, json, base64
+import os, contextlib, io, datetime, pytz, subprocess, html, json
 from scipy.stats import poisson
 import streamlit.components.v1 as components
 
@@ -14,32 +14,13 @@ import streamlit.components.v1 as components
 # ---------------------------------------------------------------
 st.set_page_config(page_title="Puck Shotz Hockey Analytics", layout="wide", page_icon="🏒")
 
-# Sidebar uploader for logo (optional)
-st.sidebar.header("🏒 Brand Settings")
-logo_file = st.sidebar.file_uploader("Upload Logo (.png or .jpg)", type=["png", "jpg", "jpeg"])
-
-# If a logo is uploaded, display it centered at the top
-if logo_file is not None:
-    logo_bytes = logo_file.getvalue()
-    logo_b64 = base64.b64encode(logo_bytes).decode()
-    st.markdown(
-        f"""
-        <div style='text-align:center; margin-bottom:10px;'>
-            <img src='data:image/png;base64,{logo_b64}' width='220'>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-else:
-    # Default text title if no logo provided
-    st.markdown(
-        "<h1 style='text-align:center;color:#1E5A99;'>Puck Shotz Hockey Analytics</h1>",
-        unsafe_allow_html=True,
-    )
-
-# Subheading
+# Always display GitHub-hosted logo at top
 st.markdown(
     """
+    <div style='text-align:center; background-color:#0A3A67; padding:15px; border-radius:6px; margin-bottom:10px;'>
+        <img src='https://raw.githubusercontent.com/Brouz557/Hockey-Prop-Stop/694ae2a448204908099ce2899bd479052d01b518/modern%20hockey%20puck%20l.png' width='220'>
+    </div>
+    <h1 style='text-align:center;color:#1E5A99;'>Puck Shotz Hockey Analytics</h1>
     <p style='text-align:center;color:#D6D6D6;'>
         Team-vs-Team matchup analytics with blended regression and L5-based probabilities
     </p>
@@ -218,7 +199,6 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
         odds = -100*(p/(1-p)) if p>=0.5 else 100*((1-p)/p)
         implied_odds = f"{'+' if odds>0 else ''}{int(odds)}"
 
-        # Form Indicator
         form_flag = "⚪ Neutral Form"
         try:
             season_toi = pd.to_numeric(
@@ -239,7 +219,6 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
                 elif usage_delta < -0.10: form_flag = "🔴 Below-Baseline Form"
         except Exception: pass
 
-        # Injury clickable
         injury_html = ""
         if not injuries_df.empty and {"player","team"}.issubset(injuries_df.columns):
             player_lower = player.lower().strip()
@@ -290,21 +269,20 @@ if st.button("🚀 Run Model"):
 if "results_raw" in st.session_state and not st.session_state.results_raw.empty:
     df = st.session_state.results_raw.copy()
 
-    # Blue-themed trend indicator
     def trend_color(v):
         if pd.isna(v):
             return "–"
         v = max(min(v, 0.5), -0.5)
         if v > 0.05:
-            color = "#1E5A99"   # positive
+            color = "#1E5A99"
             txt = "#FFFFFF"
             symbol = "▲"
         elif v < -0.05:
-            color = "#0A3A67"   # negative
+            color = "#0A3A67"
             txt = "#FFFFFF"
             symbol = "▼"
         else:
-            color = "#6C7A89"   # neutral
+            color = "#6C7A89"
             txt = "#FFFFFF"
             symbol = "–"
         return f"<div style='background:{color};color:{txt};font-weight:600;border-radius:6px;padding:4px 8px;text-align:center;'>{symbol}</div>"
@@ -358,4 +336,3 @@ if "results_raw" in st.session_state and not st.session_state.results_raw.empty:
         st.success(f"✅ Saved projections to **{save_path}**")
         csv = df_to_save.to_csv(index=False).encode('utf-8')
         st.download_button("📥 Download Projections CSV", csv, filename, "text/csv")
-
