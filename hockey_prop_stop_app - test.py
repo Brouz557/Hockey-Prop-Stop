@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Puck Shotz Hockey Analytics — TEST MODE (Stronger Line Adj)
+# 🏒 Puck Shotz Hockey Analytics — TEST MODE (Stronger Line Adj + Sorted Output)
 # ---------------------------------------------------------------
 
 import streamlit as st
@@ -176,19 +176,19 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
 
         l3, l5, l10 = np.mean(last3), np.mean(last5), np.mean(last10)
 
-        # --- Weighted Baseline (less top-heavy) ---
+        # --- Weighted Baseline ---
         baseline = (0.45*l10) + (0.30*l5) + (0.25*l3)
 
-        # --- Line Adjustment (stronger emphasis) ---
+        # --- Line Adjustment (stronger) ---
         line_factor = 1.0
         if not isinstance(line_adj,dict):
             last_name = str(player).split()[-1].lower()
             m = line_adj[line_adj["line pairings"].str.contains(last_name,case=False,na=False)]
             if not m.empty:
                 line_factor = np.average(m["line_factor"],weights=m["games"])
-        line_effect = (line_factor - 1.0) * baseline * 1.0  # ← stronger
+        line_effect = (line_factor - 1.0) * baseline * 1.0  # stronger
 
-        # --- Goalie Adjustment (moderate) ---
+        # --- Goalie Adjustment ---
         opp_team = team_b if team == team_a else team_a
         goalie_factor = goalie_adj.get(opp_team, 1.0)
         goalie_effect = (goalie_factor - 1.0) * baseline * 0.4
@@ -254,6 +254,11 @@ if st.button("🚀 Run Model"):
 
 if "results_raw" in st.session_state and not st.session_state.results_raw.empty:
     df = st.session_state.results_raw.copy()
+
+    # 🔽 Sort by Final Projection descending
+    if "Final Projection" in df.columns:
+        df = df.sort_values("Final Projection", ascending=False).reset_index(drop=True)
+
     html_table = df.to_html(index=False, escape=False)
     components.html(f"""
         <style>
