@@ -151,7 +151,7 @@ with col2: team_b = st.selectbox("Select Team B", [t for t in teams if t != team
 st.markdown("---")
 
 # ---------------------------------------------------------------
-# Build Model
+# Build Model — Weighted Line Adjustment Added
 # ---------------------------------------------------------------
 @st.cache_data(show_spinner=True)
 def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, teams_df, injuries_df):
@@ -185,20 +185,30 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
         last5 = sog_values[-5:] if len(sog_values)>=5 else sog_values
         last10 = sog_values[-10:] if len(sog_values)>=10 else sog_values
 
-        l3, l5, l10 = np.mean(last3), np.mean(last5), np.mean(last10)
+        l5, l10 = np.mean(last5), np.mean(last10)
         season_avg = np.mean(sog_values)
         trend = (l5 - l10)/l10 if l10>0 else 0
 
+        # --- Weighted Line Adjustment ---
         line_factor = 1.0
-        if not isinstance(line_adj,dict):
+        if not isinstance(line_adj, dict):
             last_name = str(player).split()[-1].lower()
             m = line_adj[line_adj["line pairings"].str.contains(last_name,case=False,na=False)]
             if not m.empty:
                 line_factor = np.average(m["line_factor"],weights=m["games"])
             line_factor = np.clip(line_factor,0.7,1.3)
 
-        lam = l5
+        # Give more weight when >1, softer penalty when <1
+        if line_factor > 1:
+            adj_factor = 1 + (line_factor - 1) * 1.8
+        else:
+            adj_factor = 1 - (1 - line_factor) * 0.6
+        adj_factor = np.clip(adj_factor, 0.6, 1.7)
+
+        # Apply to projection
+        lam = l5 * adj_factor
         line = round(lam, 2)
+
         prob = 1 - poisson.cdf(np.floor(line) - 1, mu=lam)
         p = min(max(prob, 0.001), 0.999)
         odds = -100*(p/(1-p)) if p>=0.5 else 100*((1-p)/p)
@@ -244,7 +254,6 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
         results.append({
             "Player":player,"Team":team,"Injury":injury_html,
             "Season Avg":round(season_avg,2),
-            "L3 Shots":", ".join(map(str,last3)),
             "L5 Shots":", ".join(map(str,last5)),
             "L10 Shots":", ".join(map(str,last10)),
             "Trend Score":round(trend,3),
@@ -252,12 +261,13 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
             "Prob ≥ Projection (%) L5":round(p*100,1),
             "Playable Odds":implied_odds,
             "Line Adj":round(line_factor,2),
+            "Adj Factor Used":round(adj_factor,2),
             "Form Indicator":form_flag
         })
     return pd.DataFrame(results)
 
 # ---------------------------------------------------------------
-# Run Model
+# Run Model / Display Table + Save — same
 # ---------------------------------------------------------------
 if st.button("🚀 Run Model"):
     st.info(f"Building model for matchup: **{team_a} vs {team_b}** …")
@@ -268,39 +278,19 @@ if st.button("🚀 Run Model"):
     st.session_state.results_raw = df.copy()
     st.success("✅ Model built successfully!")
 
-# ---------------------------------------------------------------
-# Display Table + Save
-# ---------------------------------------------------------------
 if "results_raw" in st.session_state and not st.session_state.results_raw.empty:
     df = st.session_state.results_raw.copy()
 
-    # ✅ Fixed trend color — green for up, red for down
     def trend_color(v):
-        if pd.isna(v):
-            return "–"
-        v = max(min(v, 0.5), -0.5)
-        if v > 0.05:
-            color = "#00B140"  # green
-            txt = "#FFFFFF"
-            symbol = "▲"
-        elif v < -0.05:
-            color = "#E63946"  # red
-            txt = "#FFFFFF"
-            symbol = "▼"
-        else:
-            color = "#6C7A89"  # neutral gray
-            txt = "#FFFFFF"
-            symbol = "–"
-        return f"<div style='background:{color};color:{txt};font-weight:600;border-radius:6px;padding:4px 8px;text-align:center;'>{symbol}</div>"
+        if pd.isna(v): return "–"
+        if v > 0.05: color="#00B140"; symbol="▲"
+        elif v < -0.05: color="#E63946"; symbol="▼"
+        else: color="#6C7A89"; symbol="–"
+        return f"<div style='background:{color};color:#fff;font-weight:600;border-radius:6px;padding:4px 8px;text-align:center;'>{symbol}</div>"
 
     df["Trend"] = df["Trend Score"].apply(trend_color)
 
-    cols = [
-        "Player","Team","Injury","Trend","Final Projection",
-        "Prob ≥ Projection (%) L5","Playable Odds",
-        "Season Avg","Line Adj","Form Indicator",
-        "L3 Shots","L5 Shots","L10 Shots"
-    ]
+    cols = ["Player","Team","Injury","Trend","Final Projection","Prob ≥ Projection (%) L5","Playable Odds","Season Avg","Line Adj","Adj Factor Used","Form Indicator","L5 Shots","L10 Shots"]
     vis = df[[c for c in cols if c in df.columns]]
 
     html_table = vis.to_html(index=False, escape=False)
@@ -326,19 +316,3 @@ if "results_raw" in st.session_state and not st.session_state.results_raw.empty:
         </style>
         <div class='scrollable-table'>{html_table}</div>
         """,height=620,scrolling=True)
-
-    st.markdown("---")
-    st.subheader("💾 Save or Download Projections")
-    selected_date = st.date_input("Select game date:", datetime.date.today())
-
-    if st.button("💾 Save Projections for Selected Date"):
-        df_to_save = df.copy()
-        df_to_save["Date_Game"] = selected_date.strftime("%Y-%m-%d")
-        df_to_save["Matchup"] = f"{team_a} vs {team_b}"
-        os.makedirs("projections", exist_ok=True)
-        filename = f"{team_a}_vs_{team_b}_{selected_date.strftime('%Y-%m-%d')}.csv"
-        save_path = os.path.join("projections", filename)
-        df_to_save.to_csv(save_path, index=False)
-        st.success(f"✅ Saved projections to **{save_path}**")
-        csv = df_to_save.to_csv(index=False).encode('utf-8')
-        st.download_button("📥 Download Projections CSV", csv, filename, "text/csv")
