@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Puck Shotz Hockey Analytics — L5 Probability Update (TEST MODE, Additive Line Adj Impact)
+# 🏒 Puck Shotz Hockey Analytics — L5 Probability Update (TEST MODE, Strong Line Adj Impact)
 # ---------------------------------------------------------------
 
 import streamlit as st
@@ -25,7 +25,7 @@ st.markdown(
     </div>
     <h1 style='text-align:center;color:#1E5A99;'>Puck Shotz Hockey Analytics</h1>
     <p style='text-align:center;color:#D6D6D6;'>
-        Weighted L10/L5/L3 projections with additive Line Adj impact
+        Strong Line Adj scaling — lower adj = big drop, higher = strong boost
     </p>
     """,
     unsafe_allow_html=True,
@@ -137,7 +137,7 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
     roster = skaters[[player_col, team_col]].rename(columns={player_col:"player", team_col:"team"}).drop_duplicates("player")
     grouped = {n.lower():g.sort_values(game_col) for n,g in shots_df.groupby(shots_df["player"].str.lower())}
 
-    # --- Line Adjustment (kept identical to version you liked) ---
+    # --- Line Adj (same structure as you liked) ---
     line_adj = {}
     if not lines_df.empty and "line pairings" in lines_df.columns:
         l = lines_df.copy()
@@ -161,7 +161,7 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
         g["goalie_factor"] = (g["shots_per_game"] / league_avg_sa).clip(0.7,1.3)
         goalie_adj = g.groupby("team")["goalie_factor"].mean().to_dict()
 
-    # --- Player Loop ---
+    # --- Player loop ---
     for row in roster.itertuples(index=False):
         player, team = row.player, row.team
         df_p = grouped.get(player.lower(), pd.DataFrame())
@@ -188,32 +188,33 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
         goalie_factor = goalie_adj.get(opp_team, 1.0)
         goalie_term = (goalie_factor - 1.0) * 0.2
 
-        # --- Form factor ---
+        # --- Form term ---
         form_flag, form_term = "⚪ Neutral Form", 0.0
         try:
-            season_toi = pd.to_numeric(skaters_df.loc[skaters_df[player_col].str.lower()==player.lower(), "icetime"], errors="coerce").mean()
-            games_played = pd.to_numeric(skaters_df.loc[skaters_df[player_col].str.lower()==player.lower(), "games"], errors="coerce").mean()
-            if season_toi > 0 and games_played >= 10:
-                avg_toi = (season_toi / games_played) / 60.0
-                sog_per60 = (np.mean(sog_values) / avg_toi) * 60
-                recent_per60 = (baseline / avg_toi) * 60 if avg_toi>0 else 0
+            season_toi = pd.to_numeric(skaters_df.loc[skaters_df[player_col].str.lower()==player.lower(),"icetime"], errors="coerce").mean()
+            games_played = pd.to_numeric(skaters_df.loc[skaters_df[player_col].str.lower()==player.lower(),"games"], errors="coerce").mean()
+            if season_toi>0 and games_played>=10:
+                avg_toi = (season_toi / games_played)/60.0
+                sog_per60 = (np.mean(sog_values)/avg_toi)*60
+                recent_per60 = (baseline/avg_toi)*60 if avg_toi>0 else 0
                 usage_delta = (recent_per60 - sog_per60)/sog_per60 if sog_per60>0 else 0
-                if usage_delta > 0.10:
+                if usage_delta>0.10:
                     form_flag, form_term = "🟢 Above-Baseline Form", 0.05
-                elif usage_delta < -0.10:
+                elif usage_delta<-0.10:
                     form_flag, form_term = "🔴 Below-Baseline Form", -0.05
         except Exception: pass
 
-        # --- Final Projection: additive Line Adj impact ---
-        adj_strength = 3.0  # overall tuning factor
+        # --- Final Projection (Line Adj dominates) ---
         lam_base = baseline * (1 + goalie_term + form_term)
 
-        if line_factor_internal > 1:
-            # easier matchup → additive boost
-            lam = lam_base + adj_strength * (line_factor_internal - 1.0)
+        if line_factor_internal >= 1:
+            # Easier matchup → boost
+            scale = 1 + 3.0 * (line_factor_internal - 1.0) ** 1.5
         else:
-            # tough matchup → strong additive penalty
-            lam = lam_base - adj_strength * (1 - line_factor_internal) ** 1.8
+            # Tougher matchup → heavy suppression
+            scale = max(0.1, 1 - 6.0 * (1 - line_factor_internal) ** 2.0)
+
+        lam = lam_base * scale
 
         prob = 1 - poisson.cdf(np.floor(lam) - 1, mu=max(lam, 0.01))
         p = min(max(prob, 0.001), 0.999)
@@ -238,7 +239,6 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
 if st.button("🚀 Run Model"):
     st.info(f"Building model for matchup: **{team_a} vs {team_b}** …")
     df = build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, teams_df, injuries_df)
-    if "Injury" not in df.columns: df["Injury"] = ""
     df = df.sort_values("Final Projection", ascending=False).reset_index(drop=True)
     st.session_state.results_raw = df.copy()
     st.success("✅ Model built successfully!")
@@ -248,18 +248,16 @@ if "results_raw" in st.session_state and not st.session_state.results_raw.empty:
 
     def trend_color(v):
         if pd.isna(v): return "–"
-        if v > 0.05: color, symbol = "#00B140","▲"
-        elif v < -0.05: color, symbol = "#E63946","▼"
-        else: color, symbol = "#6C7A89","–"
+        if v>0.05: color,symbol="#00B140","▲"
+        elif v<-0.05: color,symbol="#E63946","▼"
+        else: color,symbol="#6C7A89","–"
         return f"<div style='background:{color};color:#fff;font-weight:600;border-radius:6px;padding:4px 8px;text-align:center;'>{symbol}</div>"
 
     df["Trend"] = df["Trend Score"].apply(trend_color)
 
-    cols = [
-        "Player","Team","Injury","Trend","Final Projection",
-        "Prob ≥ Projection (%) L5","Playable Odds",
-        "Season Avg","Line Adj","Form Indicator"
-    ]
+    cols = ["Player","Team","Injury","Trend","Final Projection",
+            "Prob ≥ Projection (%) L5","Playable Odds",
+            "Season Avg","Line Adj","Form Indicator"]
     vis = df[[c for c in cols if c in df.columns]]
 
     html_table = vis.to_html(index=False, escape=False)
