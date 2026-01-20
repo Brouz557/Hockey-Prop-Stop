@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Puck Shotz Hockey Analytics — L5 Probability Update (TEST MODE, Fixed Line Adj Direction)
+# 🏒 Puck Shotz Hockey Analytics — L5 Probability Update (TEST MODE, Amplified Line Adj)
 # ---------------------------------------------------------------
 
 import streamlit as st
@@ -25,7 +25,7 @@ st.markdown(
     </div>
     <h1 style='text-align:center;color:#1E5A99;'>Puck Shotz Hockey Analytics</h1>
     <p style='text-align:center;color:#D6D6D6;'>
-        Weighted L10/L5/L3 projections with corrected Line Adj direction
+        Weighted L10/L5/L3 projections with amplified Line Adj impact
     </p>
     """,
     unsafe_allow_html=True,
@@ -128,7 +128,7 @@ with col2: team_b = st.selectbox("Select Team B", [t for t in teams if t != team
 st.markdown("---")
 
 # ---------------------------------------------------------------
-# Build Model — Corrected Line Adj Direction
+# Build Model — Amplified Line Adj Effect
 # ---------------------------------------------------------------
 @st.cache_data(show_spinner=True)
 def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, teams_df, injuries_df):
@@ -137,7 +137,7 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
     roster = skaters[[player_col, team_col]].rename(columns={player_col:"player", team_col:"team"}).drop_duplicates("player")
     grouped = {n.lower():g.sort_values(game_col) for n,g in shots_df.groupby(shots_df["player"].str.lower())}
 
-    # --- Line Adjustment ---
+    # --- Line Adjustment (keep as liked) ---
     line_adj = {}
     if not lines_df.empty and "line pairings" in lines_df.columns:
         l = lines_df.copy()
@@ -147,8 +147,7 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
         l["sog_against_per_game"] = np.where(l["games"]>0, l["sog against"]/l["games"], np.nan)
         team_avg = l.groupby("team")["sog_against_per_game"].mean()
         league_avg = team_avg.mean()
-        # >1 = easier matchup, <1 = tougher matchup
-        l["line_factor"] = (l["sog_against_per_game"] / league_avg).clip(0.7,1.3)
+        l["line_factor"] = (league_avg / l["sog_against_per_game"]).clip(0.7,1.3)  # Keep original logic
         line_adj = l.copy()
 
     # --- Goalie Adjustment ---
@@ -175,17 +174,18 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
         l10 = np.mean(sog_values[-10:]) if len(sog_values)>=10 else np.mean(sog_values)
         baseline = (0.55*l10) + (0.30*l5) + (0.15*l3)
 
-        # --- Line factor (fixed direction) ---
+        # --- Line factor (amplified impact) ---
         line_factor_internal = 1.0
         if not isinstance(line_adj,dict):
             last_name = str(player).split()[-1].lower()
             m = line_adj[line_adj["line pairings"].str.contains(last_name,case=False,na=False)]
             if not m.empty:
                 line_factor_internal = np.average(m["line_factor"],weights=m["games"])
-        if line_factor_internal < 1:
-            line_term = -3.0 * (1 - line_factor_internal) ** 2.0   # harsher penalty
+        # Amplify good >1 and penalize <1
+        if line_factor_internal > 1:
+            line_term = 2.2 * (line_factor_internal - 1.0) ** 1.6
         else:
-            line_term = 0.6 * (line_factor_internal - 1.0) ** 1.2   # modest boost
+            line_term = -3.5 * (1 - line_factor_internal) ** 1.8
 
         # --- Goalie factor ---
         opp_team = team_b if team == team_a else team_a
@@ -209,10 +209,9 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
         except Exception: pass
 
         # --- Combined Projection ---
-        lam = baseline * (1 + goalie_term + form_term) * (1 + line_term * 2.0)
+        lam = baseline * (1 + goalie_term + form_term) * (1 + line_term * 2.5)
         lam = np.clip(lam, 0.1, 7.0)
 
-        # --- Probability & Odds ---
         prob = 1 - poisson.cdf(np.floor(lam) - 1, mu=lam)
         p = min(max(prob, 0.001), 0.999)
         odds = -100*(p/(1-p)) if p>=0.5 else 100*((1-p)/p)
