@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Puck Shotz Hockey Analytics — L5 Probability Update (TEST MODE, Corrected Line Adj Direction)
+# 🏒 Puck Shotz Hockey Analytics — L5 Probability Update (TEST MODE, Additive Line Adj Impact)
 # ---------------------------------------------------------------
 
 import streamlit as st
@@ -25,7 +25,7 @@ st.markdown(
     </div>
     <h1 style='text-align:center;color:#1E5A99;'>Puck Shotz Hockey Analytics</h1>
     <p style='text-align:center;color:#D6D6D6;'>
-        Weighted L10/L5/L3 projections with corrected Line Adj impact
+        Weighted L10/L5/L3 projections with additive Line Adj impact
     </p>
     """,
     unsafe_allow_html=True,
@@ -137,7 +137,7 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
     roster = skaters[[player_col, team_col]].rename(columns={player_col:"player", team_col:"team"}).drop_duplicates("player")
     grouped = {n.lower():g.sort_values(game_col) for n,g in shots_df.groupby(shots_df["player"].str.lower())}
 
-    # --- Line Adjustment (unchanged column math) ---
+    # --- Line Adjustment (kept identical to version you liked) ---
     line_adj = {}
     if not lines_df.empty and "line pairings" in lines_df.columns:
         l = lines_df.copy()
@@ -175,20 +175,13 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
         l10 = np.mean(sog_values[-10:]) if len(sog_values)>=10 else np.mean(sog_values)
         baseline = (0.55*l10) + (0.30*l5) + (0.15*l3)
 
-        # --- Line factor impact (corrected direction) ---
+        # --- Line factor internal ---
         line_factor_internal = 1.0
         if isinstance(line_adj, pd.DataFrame) and not line_adj.empty:
             last_name = str(player).split()[-1].lower()
             m = line_adj[line_adj["line pairings"].str.contains(last_name, case=False, na=False)]
             if not m.empty:
                 line_factor_internal = np.average(m["line_factor"], weights=m["games"])
-
-        if line_factor_internal > 1:
-            # Easier matchup → boost
-            line_term = 2.8 * (line_factor_internal - 1.0) ** 1.7
-        else:
-            # Tougher matchup → drop
-            line_term = -7.0 * (1 - line_factor_internal) ** 2.3
 
         # --- Goalie factor ---
         opp_team = team_b if team == team_a else team_a
@@ -211,73 +204,18 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
                     form_flag, form_term = "🔴 Below-Baseline Form", -0.05
         except Exception: pass
 
-        # --- Combined Projection ---
-        lam = baseline * (1 + goalie_term + form_term) * (1 + line_term * 3.0)
+        # --- Final Projection: additive Line Adj impact ---
+        adj_strength = 3.0  # overall tuning factor
+        lam_base = baseline * (1 + goalie_term + form_term)
+
+        if line_factor_internal > 1:
+            # easier matchup → additive boost
+            lam = lam_base + adj_strength * (line_factor_internal - 1.0)
+        else:
+            # tough matchup → strong additive penalty
+            lam = lam_base - adj_strength * (1 - line_factor_internal) ** 1.8
 
         prob = 1 - poisson.cdf(np.floor(lam) - 1, mu=max(lam, 0.01))
         p = min(max(prob, 0.001), 0.999)
         odds = -100*(p/(1-p)) if p>=0.5 else 100*((1-p)/p)
-        implied_odds = f"{'+' if odds>0 else ''}{int(odds)}"
-
-        results.append({
-            "Player":player,"Team":team,"Injury":"",
-            "Trend Score":round((l5 - l10)/l10 if l10>0 else 0,3),
-            "Final Projection":round(lam,2),
-            "Prob ≥ Projection (%) L5":round(p*100,1),
-            "Playable Odds":implied_odds,
-            "Season Avg":round(np.mean(sog_values),2),
-            "Line Adj":round(line_factor_internal,2),
-            "Form Indicator":form_flag
-        })
-    return pd.DataFrame(results)
-
-# ---------------------------------------------------------------
-# Run + Display
-# ---------------------------------------------------------------
-if st.button("🚀 Run Model"):
-    st.info(f"Building model for matchup: **{team_a} vs {team_b}** …")
-    df = build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, teams_df, injuries_df)
-    if "Injury" not in df.columns: df["Injury"] = ""
-    df = df.sort_values("Final Projection", ascending=False).reset_index(drop=True)
-    st.session_state.results_raw = df.copy()
-    st.success("✅ Model built successfully!")
-
-if "results_raw" in st.session_state and not st.session_state.results_raw.empty:
-    df = st.session_state.results_raw.copy()
-
-    def trend_color(v):
-        if pd.isna(v): return "–"
-        if v > 0.05: color, symbol = "#00B140","▲"
-        elif v < -0.05: color, symbol = "#E63946","▼"
-        else: color, symbol = "#6C7A89","–"
-        return f"<div style='background:{color};color:#fff;font-weight:600;border-radius:6px;padding:4px 8px;text-align:center;'>{symbol}</div>"
-
-    df["Trend"] = df["Trend Score"].apply(trend_color)
-
-    cols = [
-        "Player","Team","Injury","Trend","Final Projection",
-        "Prob ≥ Projection (%) L5","Playable Odds",
-        "Season Avg","Line Adj","Form Indicator"
-    ]
-    vis = df[[c for c in cols if c in df.columns]]
-
-    html_table = vis.to_html(index=False, escape=False)
-    components.html(f"""
-        <style>
-        table {{
-            width:100%;border-collapse:collapse;font-family:'Source Sans Pro',sans-serif;color:#D6D6D6;
-        }}
-        th {{
-            background-color:#0A3A67;color:#FFFFFF;padding:6px;text-align:center;position:sticky;top:0;
-            border-bottom:2px solid #1E5A99;
-        }}
-        td:first-child,th:first-child {{
-            position:sticky;left:0;background-color:#1E5A99;color:#FFFFFF;font-weight:bold;
-        }}
-        td {{
-            background-color:#0F2743;color:#D6D6D6;padding:4px;text-align:center;
-        }}
-        tr:nth-child(even) td {{background-color:#142F52;}}
-        </style>
-        <div style='overflow-x:auto;height:620px;'>{html_table}</div>
-        """,height=650,scrolling=True)
+        implied_odds = f"{'+' if odds>_
