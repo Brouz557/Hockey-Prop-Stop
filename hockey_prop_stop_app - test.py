@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Puck Shotz Hockey Analytics — L5 Probability Update (TEST MODE, Stronger Line Adj Penalty)
+# 🏒 Puck Shotz Hockey Analytics — L5 Probability Update (TEST MODE, Fixed Line Adj Direction)
 # ---------------------------------------------------------------
 
 import streamlit as st
@@ -25,7 +25,7 @@ st.markdown(
     </div>
     <h1 style='text-align:center;color:#1E5A99;'>Puck Shotz Hockey Analytics</h1>
     <p style='text-align:center;color:#D6D6D6;'>
-        Weighted L10/L5/L3 projections with strong asymmetric Line Adj impact
+        Weighted L10/L5/L3 projections with corrected Line Adj direction
     </p>
     """,
     unsafe_allow_html=True,
@@ -128,7 +128,7 @@ with col2: team_b = st.selectbox("Select Team B", [t for t in teams if t != team
 st.markdown("---")
 
 # ---------------------------------------------------------------
-# Build Model — Strong Asymmetric Line Adj Impact
+# Build Model — Corrected Line Adj Direction
 # ---------------------------------------------------------------
 @st.cache_data(show_spinner=True)
 def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, teams_df, injuries_df):
@@ -137,7 +137,7 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
     roster = skaters[[player_col, team_col]].rename(columns={player_col:"player", team_col:"team"}).drop_duplicates("player")
     grouped = {n.lower():g.sort_values(game_col) for n,g in shots_df.groupby(shots_df["player"].str.lower())}
 
-    # Line adjustment
+    # --- Line Adjustment ---
     line_adj = {}
     if not lines_df.empty and "line pairings" in lines_df.columns:
         l = lines_df.copy()
@@ -147,10 +147,11 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
         l["sog_against_per_game"] = np.where(l["games"]>0, l["sog against"]/l["games"], np.nan)
         team_avg = l.groupby("team")["sog_against_per_game"].mean()
         league_avg = team_avg.mean()
+        # >1 = easier matchup, <1 = tougher matchup
         l["line_factor"] = (l["sog_against_per_game"] / league_avg).clip(0.7,1.3)
         line_adj = l.copy()
 
-    # Goalie adjustment
+    # --- Goalie Adjustment ---
     goalie_adj = {}
     if not goalies_df.empty and {"team","shots against","games"}.issubset(goalies_df.columns):
         g = goalies_df.copy()
@@ -174,7 +175,7 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
         l10 = np.mean(sog_values[-10:]) if len(sog_values)>=10 else np.mean(sog_values)
         baseline = (0.55*l10) + (0.30*l5) + (0.15*l3)
 
-        # --- Line factor (steeper penalty, softer boost) ---
+        # --- Line factor (fixed direction) ---
         line_factor_internal = 1.0
         if not isinstance(line_adj,dict):
             last_name = str(player).split()[-1].lower()
@@ -182,9 +183,9 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
             if not m.empty:
                 line_factor_internal = np.average(m["line_factor"],weights=m["games"])
         if line_factor_internal < 1:
-            line_term = -3.0 * (1 - line_factor_internal) ** 2.0  # very strong penalty
+            line_term = -3.0 * (1 - line_factor_internal) ** 2.0   # harsher penalty
         else:
-            line_term = 0.6 * (line_factor_internal - 1.0) ** 1.2  # modest boost
+            line_term = 0.6 * (line_factor_internal - 1.0) ** 1.2   # modest boost
 
         # --- Goalie factor ---
         opp_team = team_b if team == team_a else team_a
@@ -217,8 +218,6 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
         odds = -100*(p/(1-p)) if p>=0.5 else 100*((1-p)/p)
         implied_odds = f"{'+' if odds>0 else ''}{int(odds)}"
 
-        display_line_adj = 1 / line_factor_internal if line_factor_internal != 0 else 1.0
-
         results.append({
             "Player":player,"Team":team,"Injury":"",
             "Trend Score":round((l5 - l10)/l10 if l10>0 else 0,3),
@@ -226,7 +225,7 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
             "Prob ≥ Projection (%) L5":round(p*100,1),
             "Playable Odds":implied_odds,
             "Season Avg":round(np.mean(sog_values),2),
-            "Line Adj":round(display_line_adj,2),
+            "Line Adj":round(line_factor_internal,2),
             "Form Indicator":form_flag
         })
     return pd.DataFrame(results)
