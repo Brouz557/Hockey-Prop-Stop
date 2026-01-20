@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Puck Shotz Hockey Analytics — L5 Probability Update (TEST MODE, Amplified Line Adj)
+# 🏒 Puck Shotz Hockey Analytics — L5 Probability Update (TEST MODE, Stronger Bad-Matchup Penalty)
 # ---------------------------------------------------------------
 
 import streamlit as st
@@ -25,7 +25,7 @@ st.markdown(
     </div>
     <h1 style='text-align:center;color:#1E5A99;'>Puck Shotz Hockey Analytics</h1>
     <p style='text-align:center;color:#D6D6D6;'>
-        Weighted L10/L5/L3 projections with amplified Line Adj impact
+        Weighted L10/L5/L3 projections with stronger bad-matchup penalty
     </p>
     """,
     unsafe_allow_html=True,
@@ -128,7 +128,7 @@ with col2: team_b = st.selectbox("Select Team B", [t for t in teams if t != team
 st.markdown("---")
 
 # ---------------------------------------------------------------
-# Build Model — Amplified Line Adj Effect
+# Build Model — Stronger Bad-Matchup Penalty
 # ---------------------------------------------------------------
 @st.cache_data(show_spinner=True)
 def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, teams_df, injuries_df):
@@ -147,7 +147,7 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
         l["sog_against_per_game"] = np.where(l["games"]>0, l["sog against"]/l["games"], np.nan)
         team_avg = l.groupby("team")["sog_against_per_game"].mean()
         league_avg = team_avg.mean()
-        l["line_factor"] = (league_avg / l["sog_against_per_game"]).clip(0.7,1.3)  # Keep original logic
+        l["line_factor"] = (league_avg / l["sog_against_per_game"]).clip(0.7,1.3)  # original logic
         line_adj = l.copy()
 
     # --- Goalie Adjustment ---
@@ -174,18 +174,18 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
         l10 = np.mean(sog_values[-10:]) if len(sog_values)>=10 else np.mean(sog_values)
         baseline = (0.55*l10) + (0.30*l5) + (0.15*l3)
 
-        # --- Line factor (amplified impact) ---
+        # --- Line factor (stronger suppression below 1) ---
         line_factor_internal = 1.0
         if not isinstance(line_adj,dict):
             last_name = str(player).split()[-1].lower()
             m = line_adj[line_adj["line pairings"].str.contains(last_name,case=False,na=False)]
             if not m.empty:
                 line_factor_internal = np.average(m["line_factor"],weights=m["games"])
-        # Amplify good >1 and penalize <1
+
         if line_factor_internal > 1:
             line_term = 2.2 * (line_factor_internal - 1.0) ** 1.6
         else:
-            line_term = -3.5 * (1 - line_factor_internal) ** 1.8
+            line_term = -5.5 * (1 - line_factor_internal) ** 2.3  # 🔥 stronger drop
 
         # --- Goalie factor ---
         opp_team = team_b if team == team_a else team_a
