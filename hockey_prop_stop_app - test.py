@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Puck Shotz Hockey Analytics — L5 Probability Update (TEST MODE, Stronger Bad-Matchup Penalty)
+# 🏒 Puck Shotz Hockey Analytics — L5 Probability Update (TEST MODE, Extreme Line Adj Penalty)
 # ---------------------------------------------------------------
 
 import streamlit as st
@@ -25,7 +25,7 @@ st.markdown(
     </div>
     <h1 style='text-align:center;color:#1E5A99;'>Puck Shotz Hockey Analytics</h1>
     <p style='text-align:center;color:#D6D6D6;'>
-        Weighted L10/L5/L3 projections with stronger bad-matchup penalty
+        Weighted L10/L5/L3 projections with extreme bad-matchup penalty
     </p>
     """,
     unsafe_allow_html=True,
@@ -128,7 +128,7 @@ with col2: team_b = st.selectbox("Select Team B", [t for t in teams if t != team
 st.markdown("---")
 
 # ---------------------------------------------------------------
-# Build Model — Stronger Bad-Matchup Penalty
+# Build Model
 # ---------------------------------------------------------------
 @st.cache_data(show_spinner=True)
 def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, teams_df, injuries_df):
@@ -137,7 +137,7 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
     roster = skaters[[player_col, team_col]].rename(columns={player_col:"player", team_col:"team"}).drop_duplicates("player")
     grouped = {n.lower():g.sort_values(game_col) for n,g in shots_df.groupby(shots_df["player"].str.lower())}
 
-    # --- Line Adjustment (keep as liked) ---
+    # --- Line Adjustment (unchanged, as you liked) ---
     line_adj = {}
     if not lines_df.empty and "line pairings" in lines_df.columns:
         l = lines_df.copy()
@@ -147,7 +147,7 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
         l["sog_against_per_game"] = np.where(l["games"]>0, l["sog against"]/l["games"], np.nan)
         team_avg = l.groupby("team")["sog_against_per_game"].mean()
         league_avg = team_avg.mean()
-        l["line_factor"] = (league_avg / l["sog_against_per_game"]).clip(0.7,1.3)  # original logic
+        l["line_factor"] = (league_avg / l["sog_against_per_game"]).clip(0.7,1.3)
         line_adj = l.copy()
 
     # --- Goalie Adjustment ---
@@ -161,6 +161,7 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
         g["goalie_factor"] = (g["shots_per_game"] / league_avg_sa).clip(0.7,1.3)
         goalie_adj = g.groupby("team")["goalie_factor"].mean().to_dict()
 
+    # --- Player Loop ---
     for row in roster.itertuples(index=False):
         player, team = row.player, row.team
         df_p = grouped.get(player.lower(), pd.DataFrame())
@@ -174,18 +175,20 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
         l10 = np.mean(sog_values[-10:]) if len(sog_values)>=10 else np.mean(sog_values)
         baseline = (0.55*l10) + (0.30*l5) + (0.15*l3)
 
-        # --- Line factor (stronger suppression below 1) ---
+        # --- Line factor (extreme penalty/boost) ---
         line_factor_internal = 1.0
-        if not isinstance(line_adj,dict):
+        if isinstance(line_adj, pd.DataFrame) and not line_adj.empty:
             last_name = str(player).split()[-1].lower()
-            m = line_adj[line_adj["line pairings"].str.contains(last_name,case=False,na=False)]
+            m = line_adj[line_adj["line pairings"].str.contains(last_name, case=False, na=False)]
             if not m.empty:
-                line_factor_internal = np.average(m["line_factor"],weights=m["games"])
+                line_factor_internal = np.average(m["line_factor"], weights=m["games"])
 
         if line_factor_internal > 1:
-            line_term = 2.2 * (line_factor_internal - 1.0) ** 1.6
+            # easier matchup → slightly more boost
+            line_term = 2.8 * (line_factor_internal - 1.0) ** 1.7
         else:
-            line_term = -5.5 * (1 - line_factor_internal) ** 2.3  # 🔥 stronger drop
+            # tougher matchup → significantly more deduction
+            line_term = -9.5 * (1 - line_factor_internal) ** 2.8
 
         # --- Goalie factor ---
         opp_team = team_b if team == team_a else team_a
@@ -208,11 +211,10 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
                     form_flag, form_term = "🔴 Below-Baseline Form", -0.05
         except Exception: pass
 
-        # --- Combined Projection ---
-        lam = baseline * (1 + goalie_term + form_term) * (1 + line_term * 2.5)
-        lam = np.clip(lam, 0.1, 7.0)
+        # --- Combined Projection (no clipping) ---
+        lam = baseline * (1 + goalie_term + form_term) * (1 + line_term * 3.0)
 
-        prob = 1 - poisson.cdf(np.floor(lam) - 1, mu=lam)
+        prob = 1 - poisson.cdf(np.floor(lam) - 1, mu=max(lam, 0.01))
         p = min(max(prob, 0.001), 0.999)
         odds = -100*(p/(1-p)) if p>=0.5 else 100*((1-p)/p)
         implied_odds = f"{'+' if odds>0 else ''}{int(odds)}"
@@ -279,4 +281,3 @@ if "results_raw" in st.session_state and not st.session_state.results_raw.empty:
         </style>
         <div style='overflow-x:auto;height:620px;'>{html_table}</div>
         """,height=650,scrolling=True)
-
