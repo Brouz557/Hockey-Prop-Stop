@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Puck Shotz Hockey Analytics — L5 Probability Update (TEST MODE, Sorted by Line Adj)
+# 🏒 Puck Shotz Hockey Analytics — L5 Probability Update (TEST MODE, Sorted by Final Projection then Line Adj)
 # ---------------------------------------------------------------
 
 import streamlit as st
@@ -25,7 +25,7 @@ st.markdown(
     </div>
     <h1 style='text-align:center;color:#1E5A99;'>Puck Shotz Hockey Analytics</h1>
     <p style='text-align:center;color:#D6D6D6;'>
-        Sorted by highest Line Adj — best matchups on top
+        Sorted by Final Projection, then Line Adj
     </p>
     """,
     unsafe_allow_html=True,
@@ -205,7 +205,7 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
                     form_flag, form_term = "🔴 Below-Baseline Form", -0.05
         except Exception: pass
 
-        # --- Final Projection: boosted easy matchups
+        # --- Final Projection
         lam_base = baseline * (1 + goalie_term + form_term)
         if line_factor_internal >= 1:
             scale = 1 + 7.0 * (line_factor_internal - 1.0) ** 1.5
@@ -257,8 +257,8 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
 if st.button("🚀 Run Model"):
     st.info(f"Building model for matchup: **{team_a} vs {team_b}** …")
     df = build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, teams_df, injuries_df)
-    # ✅ Sort by highest Line Adj
-    df = df.sort_values("Line Adj", ascending=False).reset_index(drop=True)
+    # ✅ Sort by Final Projection first, then Line Adj
+    df = df.sort_values(["Final Projection", "Line Adj"], ascending=[False, False]).reset_index(drop=True)
     st.session_state.results_raw = df.copy()
     st.success("✅ Model built successfully!")
 
