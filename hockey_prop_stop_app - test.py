@@ -279,3 +279,4 @@ if "results_raw" in st.session_state and not st.session_state.results_raw.empty:
         </style>
         <div style='overflow-x:auto;height:620px;'>{html_table}</div>
         """,height=650,scrolling=True)
+
