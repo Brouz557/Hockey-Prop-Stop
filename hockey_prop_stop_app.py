@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 
+# 🏒 Puck Shotz Hockey Analytics — L5 Probability Update
 # ---------------------------------------------------------------
 
 import streamlit as st
@@ -12,7 +12,7 @@ import streamlit.components.v1 as components
 # ---------------------------------------------------------------
 # Page Setup — Puck Shotz Hockey Analytics
 # ---------------------------------------------------------------
-st.set_page_config()
+st.set_page_config(page_title="Puck Shotz Hockey Analytics", layout="wide", page_icon="🏒")
 
 # Always display GitHub-hosted logo at top
 st.markdown(
@@ -336,9 +336,3 @@ if "results_raw" in st.session_state and not st.session_state.results_raw.empty:
         st.success(f"✅ Saved projections to **{save_path}**")
         csv = df_to_save.to_csv(index=False).encode('utf-8')
         st.download_button("📥 Download Projections CSV", csv, filename, "text/csv")
-
-
-
-
-
-
