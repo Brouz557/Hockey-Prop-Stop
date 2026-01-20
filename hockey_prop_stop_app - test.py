@@ -151,7 +151,7 @@ with col2: team_b = st.selectbox("Select Team B", [t for t in teams if t != team
 st.markdown("---")
 
 # ---------------------------------------------------------------
-# Build Model — Weighted Line Adjustment Added
+# Build Model — Weighted Line Adjustment + L3/L5/L10 Blend
 # ---------------------------------------------------------------
 @st.cache_data(show_spinner=True)
 def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, teams_df, injuries_df):
@@ -185,7 +185,7 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
         last5 = sog_values[-5:] if len(sog_values)>=5 else sog_values
         last10 = sog_values[-10:] if len(sog_values)>=10 else sog_values
 
-        l5, l10 = np.mean(last5), np.mean(last10)
+        l3, l5, l10 = np.mean(last3), np.mean(last5), np.mean(last10)
         season_avg = np.mean(sog_values)
         trend = (l5 - l10)/l10 if l10>0 else 0
 
@@ -198,15 +198,18 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
                 line_factor = np.average(m["line_factor"],weights=m["games"])
             line_factor = np.clip(line_factor,0.7,1.3)
 
-        # Give more weight when >1, softer penalty when <1
+        # More boost when >1, gentle penalty when <1
         if line_factor > 1:
             adj_factor = 1 + (line_factor - 1) * 1.8
         else:
             adj_factor = 1 - (1 - line_factor) * 0.6
         adj_factor = np.clip(adj_factor, 0.6, 1.7)
 
-        # Apply to projection
-        lam = l5 * adj_factor
+        # --- Weighted blend of L3/L5/L10 ---
+        blended = (0.2 * l3) + (0.35 * l5) + (0.45 * l10)
+
+        # Apply matchup adjustment
+        lam = blended * adj_factor
         line = round(lam, 2)
 
         prob = 1 - poisson.cdf(np.floor(line) - 1, mu=lam)
@@ -214,6 +217,7 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
         odds = -100*(p/(1-p)) if p>=0.5 else 100*((1-p)/p)
         implied_odds = f"{'+' if odds>0 else ''}{int(odds)}"
 
+        # --- Form flag logic (unchanged) ---
         form_flag = "⚪ Neutral Form"
         try:
             season_toi = pd.to_numeric(
@@ -227,13 +231,14 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
             if season_toi > 0 and games_played >= 10:
                 avg_toi = (season_toi / games_played) / 60.0
                 sog_per60 = (season_avg / avg_toi) * 60
-                blended_recent = 0.7 * l5 + 0.3 * l10
+                blended_recent = blended
                 recent_per60 = (blended_recent / avg_toi) * 60 if avg_toi>0 else 0
                 usage_delta = (recent_per60 - sog_per60)/sog_per60 if sog_per60>0 else 0
                 if usage_delta > 0.10: form_flag = "🟢 Above-Baseline Form"
                 elif usage_delta < -0.10: form_flag = "🔴 Below-Baseline Form"
         except Exception: pass
 
+        # --- Injury info ---
         injury_html = ""
         if not injuries_df.empty and {"player","team"}.issubset(injuries_df.columns):
             player_lower = player.lower().strip()
@@ -254,6 +259,7 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
         results.append({
             "Player":player,"Team":team,"Injury":injury_html,
             "Season Avg":round(season_avg,2),
+            "L3 Shots":", ".join(map(str,last3)),
             "L5 Shots":", ".join(map(str,last5)),
             "L10 Shots":", ".join(map(str,last10)),
             "Trend Score":round(trend,3),
@@ -267,7 +273,7 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
     return pd.DataFrame(results)
 
 # ---------------------------------------------------------------
-# Run Model / Display Table + Save — same
+# Run Model and Display
 # ---------------------------------------------------------------
 if st.button("🚀 Run Model"):
     st.info(f"Building model for matchup: **{team_a} vs {team_b}** …")
@@ -290,7 +296,7 @@ if "results_raw" in st.session_state and not st.session_state.results_raw.empty:
 
     df["Trend"] = df["Trend Score"].apply(trend_color)
 
-    cols = ["Player","Team","Injury","Trend","Final Projection","Prob ≥ Projection (%) L5","Playable Odds","Season Avg","Line Adj","Adj Factor Used","Form Indicator","L5 Shots","L10 Shots"]
+    cols = ["Player","Team","Injury","Trend","Final Projection","Prob ≥ Projection (%) L5","Playable Odds","Season Avg","Line Adj","Adj Factor Used","Form Indicator","L3 Shots","L5 Shots","L10 Shots"]
     vis = df[[c for c in cols if c in df.columns]]
 
     html_table = vis.to_html(index=False, escape=False)
