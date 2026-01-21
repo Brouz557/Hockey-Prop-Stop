@@ -228,7 +228,7 @@ if run_model:
         st.warning("No valid data generated.")
 
 # ---------------------------------------------------------------
-# Display Buttons + Filtered Table  ✅ Fully Clickable + Highlighted
+# Display Buttons + Filtered Table  ✅ With "Click to view"
 # ---------------------------------------------------------------
 if "results" in st.session_state:
     df = st.session_state.results.copy()
@@ -258,22 +258,31 @@ if "results" in st.session_state:
             cursor:pointer;
             box-shadow:{glow};
             display:flex;
+            flex-direction:column;
             align-items:center;
             justify-content:center;
-            gap:6px;
+            gap:4px;
             transition:all 0.15s ease-in-out;
         }}
         .match-btn-{i}:hover {{
             background-color:#1E5A99;
             box-shadow:0 0 10px #1E5A99;
         }}
+        .match-btn-{i} span.view {{
+            font-size:12px;
+            color:#CCCCCC;
+            font-weight:400;
+        }}
         </style>
         <button class="match-btn-{i}" type="submit" name="match_click" value="{match_id}">
-            <img src="{m['away_logo']}" height="22">
-            <span>{m['away']}</span>
-            <span style="color:#D6D6D6;">@</span>
-            <span>{m['home']}</span>
-            <img src="{m['home_logo']}" height="22">
+            <div style="display:flex;align-items:center;gap:6px;">
+                <img src="{m['away_logo']}" height="22">
+                <span>{m['away']}</span>
+                <span style="color:#D6D6D6;">@</span>
+                <span>{m['home']}</span>
+                <img src="{m['home_logo']}" height="22">
+            </div>
+            <span class="view">Click to view</span>
         </button>
         """
 
