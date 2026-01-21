@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Puck Shotz Hockey Analytics — Auto Matchup + Form + Trend + Season Avg
+# 🏒 Puck Shotz Hockey Analytics — Auto Matchup + Reactive Line Test
 # ---------------------------------------------------------------
 
 import streamlit as st
@@ -10,7 +10,7 @@ from scipy.stats import poisson
 import streamlit.components.v1 as components
 
 st.set_page_config(page_title="Puck Shotz Hockey Analytics (Test)", layout="wide", page_icon="🏒")
-st.warning("🧪 TEST MODE — Sandbox version with Form, Trend, and Season Avg restored.")
+st.warning("🧪 TEST MODE — Reactive Line Testing enabled.")
 
 # ---------------------------------------------------------------
 # Header
@@ -21,7 +21,7 @@ st.markdown(
         <img src='https://raw.githubusercontent.com/Brouz557/Hockey-Prop-Stop/694ae2a448204908099ce2899bd479052d01b518/modern%20hockey%20puck%20l.png' width='220'>
     </div>
     <h1 style='text-align:center;color:#1E5A99;'>Puck Shotz Hockey Analytics</h1>
-    <p style='text-align:center;color:#D6D6D6;'>Form, Trend, and Season Avg columns re-added — auto runs all NHL matchups.</p>
+    <p style='text-align:center;color:#D6D6D6;'>Automatic ESPN matchup model with Form, Trend, Season Avg, and live line testing.</p>
     """,
     unsafe_allow_html=True,
 )
@@ -137,7 +137,7 @@ def fetch_espn_games():
 # Build Model
 # ---------------------------------------------------------------
 @st.cache_data(show_spinner=True)
-def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, teams_df, injuries_df):
+def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, teams_df):
     results = []
     team_col = next((c for c in skaters_df.columns if "team" in c), None)
     player_col = "name" if "name" in skaters_df.columns else "player"
@@ -147,7 +147,7 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
     roster = skaters[[player_col, team_col]].rename(columns={player_col:"player", team_col:"team"}).drop_duplicates("player")
     grouped = {n.lower():g.sort_values(game_col) for n,g in shots_df.groupby(shots_df["player"].str.lower())}
 
-    # Line + Goalie adjustments
+    # Line adjustment
     line_adj = {}
     if not lines_df.empty and "line pairings" in lines_df.columns:
         l = lines_df.copy()
@@ -160,6 +160,7 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
         l["line_factor"] = (league_avg / l["sog_against_per_game"]).clip(0.7,1.3)
         line_adj = l.copy()
 
+    # Goalie adjustment
     goalie_adj = {}
     if not goalies_df.empty and {"team","shots against","games"}.issubset(goalies_df.columns):
         g = goalies_df.copy()
@@ -170,7 +171,6 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
         g["goalie_factor"] = (g["shots_per_game"] / league_avg_sa).clip(0.7,1.3)
         goalie_adj = g.groupby("team")["goalie_factor"].mean().to_dict()
 
-    # Player loop
     for row in roster.itertuples(index=False):
         player, team = row.player, row.team
         df_p = grouped.get(player.lower(), pd.DataFrame())
@@ -186,7 +186,6 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
         l3, l5, l10 = np.mean(last3), np.mean(last5), np.mean(last10)
         baseline = (0.55*l10 + 0.30*l5 + 0.15*l3)
 
-        # Line & Goalie influence
         line_factor_internal = 1.0
         if isinstance(line_adj, pd.DataFrame) and not line_adj.empty:
             last_name = str(player).split()[-1].lower()
@@ -222,12 +221,6 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
         trend = (l5 - l10)/l10 if l10>0 else 0
         trend_cell = "▲" if trend>0.05 else ("▼" if trend<-0.05 else "–")
 
-        # Prob + Odds
-        prob = 1 - poisson.cdf(np.floor(lam) - 1, mu=max(lam,0.01))
-        prob = float(np.clip(prob, 0.001, 0.999))
-        odds = -100*(prob/(1-prob)) if prob>=0.5 else 100*((1-prob)/prob)
-        odds = float(np.clip(odds, -5000, 5000))
-
         results.append({
             "Player": player,
             "Team": team,
@@ -235,17 +228,12 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
             "Trend": trend_cell,
             "Form Indicator": form_flag,
             "Final Projection": round(lam,2),
-            "Prob ≥ Projection (%) L5": round(prob*100,1),
-            "Playable Odds": f"{'+' if odds>0 else ''}{int(odds)}",
             "Line Adj": round(line_factor_internal,2),
-            "L3 Shots": ", ".join(map(str,last3)),
-            "L5 Shots": ", ".join(map(str,last5)),
-            "L10 Shots": ", ".join(map(str,last10))
         })
     return pd.DataFrame(results)
 
 # ---------------------------------------------------------------
-# Run + Display
+# Run + Reactive Update
 # ---------------------------------------------------------------
 if run_model:
     games = fetch_espn_games()
@@ -265,17 +253,34 @@ if run_model:
 
         combined = pd.DataFrame()
         for g in games:
-            df = build_model(g["away"], g["home"], skaters_df, shots_df, goalies_df, lines_df, teams_df, injuries_df)
+            df = build_model(g["away"], g["home"], skaters_df, shots_df, goalies_df, lines_df, teams_df)
             combined = pd.concat([combined, df], ignore_index=True)
 
         if not combined.empty:
-            combined = combined.sort_values(["Team","Final Projection"], ascending=[True,False]).reset_index(drop=True)
-            st.session_state.results_raw = combined.copy()
+            st.session_state.results_base = combined.sort_values(["Team","Final Projection"], ascending=[True,False]).reset_index(drop=True)
             st.success("✅ All games processed successfully!")
 
-if "results_raw" in st.session_state:
-    df = st.session_state.results_raw.copy()
-    html_table = df.to_html(index=False, escape=False)
+# ---------------------------------------------------------------
+# Reactive Line Update
+# ---------------------------------------------------------------
+if "results_base" in st.session_state:
+    df = st.session_state.results_base.copy()
+
+    # compute probability and odds dynamically for current test line
+    lam_vals = df["Final Projection"].astype(float)
+    probs = 1 - poisson.cdf(line_test - 1, mu=lam_vals.clip(lower=0.01))
+    df[f"Prob ≥ {line_test} (%)"] = (probs*100).round(1)
+    odds = np.where(probs>=0.5, -100*(probs/(1-probs)), 100*((1-probs)/probs))
+    odds = np.clip(odds, -5000, 5000)
+    df[f"Playable Odds ({line_test})"] = [f"{'+' if o>0 else ''}{int(o)}" for o in odds]
+
+    vis_cols = [
+        "Player","Team","Season Avg","Trend","Form Indicator",
+        "Final Projection",f"Prob ≥ {line_test} (%)",f"Playable Odds ({line_test})","Line Adj"
+    ]
+    vis = df[[c for c in vis_cols if c in df.columns]]
+    html_table = vis.to_html(index=False, escape=False)
+
     components.html(f"""
         <style>
         table {{
