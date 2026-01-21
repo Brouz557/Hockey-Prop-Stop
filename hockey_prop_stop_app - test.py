@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Puck Shotz Hockey Analytics — L5 Probability Update (TEST MODE + Signal Strength)
+# 🏒 Puck Shotz Hockey Analytics — L5 Probability Update (TEST MODE + Hybrid Probability)
 # ---------------------------------------------------------------
 
 import streamlit as st
@@ -25,7 +25,7 @@ st.markdown(
     </div>
     <h1 style='text-align:center;color:#1E5A99;'>Puck Shotz Hockey Analytics</h1>
     <p style='text-align:center;color:#D6D6D6;'>
-        Sorted by Final Projection, then Line Adj
+        Hybrid Probability: 60% Poisson + 40% Weighted Empirical (L10/L5/L3)
     </p>
     """,
     unsafe_allow_html=True,
@@ -206,8 +206,15 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
             scale = max(0.05, line_factor_internal ** 3.5)
         lam = lam_base * scale
 
-        prob = 1 - poisson.cdf(np.floor(lam) - 1, mu=max(lam, 0.01))
-        p = min(max(prob, 0.001), 0.999)
+        # --- Hybrid probability system ---
+        poisson_prob = 1 - poisson.cdf(np.floor(lam) - 1, mu=max(lam, 0.01))
+        hit_l3  = np.mean(np.array(last3)  >= lam) if len(last3)>0 else np.nan
+        hit_l5  = np.mean(np.array(last5)  >= lam) if len(last5)>0 else np.nan
+        hit_l10 = np.mean(np.array(last10) >= lam) if len(last10)>0 else np.nan
+        empirical_prob = np.nanmean([0.55*hit_l10 + 0.30*hit_l5 + 0.15*hit_l3])
+        final_prob = np.nanmean([0.6 * poisson_prob + 0.4 * empirical_prob])
+
+        p = min(max(final_prob, 0.001), 0.999)
         odds = -100*(p/(1-p)) if p>=0.5 else 100*((1-p)/p)
         implied_odds = f"{'+' if odds>0 else ''}{int(odds)}"
 
@@ -250,23 +257,6 @@ if st.button("🚀 Run Model"):
     st.info(f"Building model for matchup: **{team_a} vs {team_b}** …")
     df = build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, teams_df, injuries_df)
 
-    # ✅ Add Signal Strength column
-    if not df.empty:
-        max_proj = df["Final Projection"].max()
-        max_line = df["Line Adj"].max()
-        df["Signal Score"] = (
-            (df["Final Projection"]/max_proj)*0.5 +
-            (df["Line Adj"]/max_line)*0.3 +
-            (df["Prob ≥ Projection (%) L5"]/100)*0.2
-        )
-        def classify_strength(x):
-            if x >= 0.75: return "🟢 Strong"
-            elif x >= 0.45: return "🟡 Medium"
-            else: return "🔴 Weak"
-        df["Signal Strength"] = df["Signal Score"].apply(classify_strength)
-        df.drop(columns="Signal Score", inplace=True)
-
-    # ✅ Sort by Final Projection then Line Adj
     df = df.sort_values(["Final Projection", "Line Adj"], ascending=[False, False]).reset_index(drop=True)
     st.session_state.results_raw = df.copy()
     st.success("✅ Model built successfully!")
@@ -285,7 +275,7 @@ if "results_raw" in st.session_state and not st.session_state.results_raw.empty:
 
     cols = ["Player","Team","Injury","Trend","Final Projection",
             "Prob ≥ Projection (%) L5","Playable Odds",
-            "Season Avg","Line Adj","Form Indicator","Signal Strength",
+            "Season Avg","Line Adj","Form Indicator",
             "L3 Shots","L5 Shots","L10 Shots"]
     vis = df[[c for c in cols if c in df.columns]]
 
