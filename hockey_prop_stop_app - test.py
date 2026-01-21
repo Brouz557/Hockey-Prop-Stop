@@ -1,39 +1,37 @@
 # ---------------------------------------------------------------
-# Simple Login System
+# Simple Login System (stable Streamlit version)
 # ---------------------------------------------------------------
 import streamlit as st
 
-# Define user credentials (add or change as needed)
 USERS = {
     "admin": "test123",
     "guest": "demo456"
 }
 
-# Session-based authentication
+# Initialize login state
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 
-# If not logged in, show login screen
+# If not authenticated, show login form and stop execution
 if not st.session_state.authenticated:
     st.title("🔒 Puck Shotz Login")
 
-    username = st.text_input("Username")
-    password = st.text_input("Password", type="password")
-    login_btn = st.button("Login")
+    with st.form("login_form", clear_on_submit=False):
+        username = st.text_input("Username")
+        password = st.text_input("Password", type="password")
+        submitted = st.form_submit_button("Login")
 
-    if login_btn:
+    if submitted:
         if username in USERS and USERS[username] == password:
             st.session_state.authenticated = True
-            st.session_state.show_main = True  # ✅ new flag
             st.success("✅ Login successful!")
+            st.experimental_rerun()
         else:
             st.error("❌ Invalid username or password")
     st.stop()
 
-# ✅ Fix: controlled rerun once after login
-if st.session_state.get("show_main"):
-    st.session_state.pop("show_main")
-    st.experimental_rerun()
+# Optional logout button once inside
+st.sidebar.button("Logout", on_click=lambda: st.session_state.update(authenticated=False))
 
 # ---------------------------------------------------------------
 # 🏒 Puck Shotz Hockey Analytics — Test Mode (Instant Filter + Logos)
@@ -174,4 +172,4 @@ with col_line:
         if "results" in st.session_state:
             st.rerun()
 
-# (💡 The rest of your app code remains exactly as before)
+# (💡 The rest of your app code continues below exactly as before)
