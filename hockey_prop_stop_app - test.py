@@ -23,7 +23,7 @@ st.markdown("""
     <img src='https://raw.githubusercontent.com/Brouz557/Hockey-Prop-Stop/694ae2a448204908099ce2899bd479052d01b518/modern%20hockey%20puck%20l.png' width='220'>
 </div>
 <h1 style='text-align:center;color:#1E5A99;'>Puck Shotz Hockey Analytics</h1>
-<p style='text-align:center;color:#D6D6D6;'>Live matchup analytics — full model with form, line, and trend.</p>
+<p style='text-align:center;color:#D6D6D6;'>Live matchup analytics — full model with form, line, and trend indicators.</p>
 """, unsafe_allow_html=True)
 
 # ---------------------------------------------------------------
@@ -108,7 +108,10 @@ game_col = next((c for c in shots_df.columns if "game" in c and "id" in c), None
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_todays_matchups():
     url = "https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard"
-    data = requests.get(url).json()
+    try:
+        data = requests.get(url).json()
+    except Exception:
+        return []
     games = []
     for g in data.get("events", []):
         if "competitions" in g:
@@ -129,27 +132,25 @@ if not games:
     st.warning("No NHL games found for today.")
 else:
     st.subheader("🏒 Today's Matchups")
-    cols = st.columns(min(4, len(games)))
     for i, m in enumerate(games):
-        col = cols[i % len(cols)]
-        html_block = f"""
-        <div style='text-align:center; padding:8px; border-radius:10px; background-color:#0F2743;
-                    transition:0.3s; border:2px solid transparent;'
-             onmouseover="this.style.borderColor='#1E5A99';"
-             onmouseout="this.style.borderColor='transparent';">
-            <div style='display:flex;justify-content:space-around;align-items:center;'>
-                <div><img src='{m["away_logo"]}' width='45'><div style='color:#D6D6D6;font-size:13px;'>{m["away"]}</div></div>
-                <div style='color:#D6D6D6;'>@</div>
-                <div><img src='{m["home_logo"]}' width='45'><div style='color:#D6D6D6;font-size:13px;'>{m["home"]}</div></div>
-            </div>
-        </div>
-        """
         if st.button(f"{m['away']}@{m['home']}", key=f"matchup_{i}"):
             st.session_state.selected_matchup = (m["away"], m["home"])
-        col.markdown(html_block, unsafe_allow_html=True)
+        st.markdown(f"""
+        <div style='display:flex;justify-content:center;align-items:center;background-color:#0F2743;
+                    border-radius:10px;margin:6px 0;padding:6px;border:2px solid transparent;
+                    box-shadow:0 0 8px #1E5A99AA;'>
+            <div style='text-align:center;width:40%;'>
+                <img src='{m["away_logo"]}' width='48'><br><span style='color:#D6D6D6;font-weight:600;'>{m["away"]}</span>
+            </div>
+            <div style='color:#D6D6D6;font-size:20px;font-weight:600;'>@</div>
+            <div style='text-align:center;width:40%;'>
+                <img src='{m["home_logo"]}' width='48'><br><span style='color:#D6D6D6;font-weight:600;'>{m["home"]}</span>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
 
 # ---------------------------------------------------------------
-# Line Input + Run
+# Run + Line Input
 # ---------------------------------------------------------------
 col_run, col_line = st.columns([3,1])
 with col_run:
@@ -164,6 +165,8 @@ with col_line:
 def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, teams_df, injuries_df):
     results = []
     skaters = skaters_df[skaters_df[team_col].isin([team_a, team_b])]
+    if skaters.empty:
+        return pd.DataFrame()
     roster = skaters[[player_col, team_col]].rename(columns={player_col:"player", team_col:"team"}).drop_duplicates("player")
     grouped = {n.lower():g.sort_values(game_col) for n,g in shots_df.groupby(shots_df["player"].str.lower())}
 
@@ -209,8 +212,7 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
         goalie_factor = goalie_adj.get(opp_team, 1.0)
         goalie_term = (goalie_factor - 1.0) * 0.2
         lam_base = baseline * (1 + goalie_term)
-        if line_factor_internal >= 1: scale = 1 + 7.0 * (line_factor_internal - 1.0)**1.5
-        else: scale = max(0.05, line_factor_internal**3.5)
+        scale = (1 + 7*(line_factor_internal - 1)**1.5) if line_factor_internal >= 1 else max(0.05, line_factor_internal**3.5)
         lam = lam_base * scale
         trend = (l5 - l10)/l10 if l10>0 else 0
         poisson_prob = 1 - poisson.cdf(np.floor(line_test)-1, mu=max(lam,0.01))
@@ -239,17 +241,21 @@ if run_model:
     combined = []
     for m in games:
         df = build_model(m["away"], m["home"], skaters_df, shots_df, goalies_df, lines_df, teams_df, injuries_df)
-        combined.append(df)
-    combined = pd.concat(combined, ignore_index=True)
-    combined = combined.sort_values(["team","final projection","line adj"], ascending=[True,False,False])
-    st.session_state.results_base = combined
-    st.success("✅ Model built successfully!")
+        if not df.empty:
+            combined.append(df)
+    if combined:
+        combined = pd.concat(combined, ignore_index=True)
+        combined = combined.sort_values(["team","final projection","line adj"], ascending=[True,False,False])
+        st.session_state.results_base = combined
+        st.success("✅ Model built successfully!")
 
 # ---------------------------------------------------------------
 # Display Table
 # ---------------------------------------------------------------
 if "results_base" in st.session_state:
     df = st.session_state.results_base.copy()
+    if "Trend Score" not in df.columns:
+        df["Trend Score"] = np.nan
     def trend_color(v):
         if pd.isna(v): return "–"
         if v>0.05: color,txt,sym="#00B140","#fff","▲"
