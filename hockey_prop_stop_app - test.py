@@ -263,3 +263,87 @@ if run_model:
         st.success("✅ Model built for all games.")
     else:
         st.warning("No valid data generated.")
+
+# ---------------------------------------------------------------
+# Display Buttons + Table
+# ---------------------------------------------------------------
+if "results" in st.session_state:
+    df = st.session_state.results.copy()
+    games = st.session_state.matchups
+
+    cols = st.columns(3)
+    for i, m in enumerate(games):
+        match_id = f"{m['away']}@{m['home']}"
+        is_selected = st.session_state.get("selected_match") == match_id
+        btn_color = "#1E5A99" if is_selected else "#0A3A67"
+        border = "2px solid #FF4B4B" if is_selected else "1px solid #1E5A99"
+
+        with cols[i % 3]:
+            clicked = st.button(f"Select {match_id}", key=f"match_{i}", use_container_width=True)
+
+            html_btn = f"""
+            <div style="
+                display:flex;
+                align-items:center;
+                justify-content:center;
+                gap:6px;
+                background-color:{btn_color};
+                border:{border};
+                border-radius:8px;
+                padding:8px 12px;
+                margin:-54px 0 10px 0;
+                width:100%;
+                color:#fff;
+                font-weight:600;
+                font-size:15px;
+                cursor:pointer;
+            ">
+                <img src="{m['away_logo']}" height="22">
+                <span>{m['away']}</span>
+                <span style="color:#D6D6D6;">@</span>
+                <span>{m['home']}</span>
+                <img src="{m['home_logo']}" height="22">
+            </div>
+            """
+            st.markdown(html_btn, unsafe_allow_html=True)
+
+            if clicked:
+                if is_selected:
+                    st.session_state.selected_match = None
+                else:
+                    st.session_state.selected_match = match_id
+                st.rerun()
+
+    sel_match = st.session_state.get("selected_match")
+    if sel_match:
+        away, home = sel_match.split("@")
+        df = df[df["Team"].isin([away, home])]
+
+    df["Trend"] = df["Trend Score"].apply(lambda v: "▲" if v > 0.05 else ("▼" if v < -0.05 else "–"))
+    df = df.sort_values(["Team", "Final Projection", "Line Adj"], ascending=[True, False, False])
+
+    html_table = df[[
+        "Player","Team","Trend","Final Projection","Prob ≥ Projection (%) L5",
+        "Playable Odds","Season Avg","Line Adj","Form Indicator",
+        "L3 Shots","L5 Shots","L10 Shots"
+    ]].to_html(index=False, escape=False)
+
+    components.html(f"""
+    <style>
+    table {{
+        width:100%;border-collapse:collapse;font-family:'Source Sans Pro',sans-serif;color:#D6D6D6;
+    }}
+    th {{
+        background-color:#0A3A67;color:#FFFFFF;padding:6px;text-align:center;position:sticky;top:0;
+        border-bottom:2px solid #1E5A99;
+    }}
+    td:first-child,th:first-child {{
+        position:sticky;left:0;background-color:#1E5A99;color:#FFFFFF;font-weight:bold;
+    }}
+    td {{
+        background-color:#0F2743;color:#D6D6D6;padding:4px;text-align:center;
+    }}
+    tr:nth-child(even) td {{background-color:#142F52;}}
+    </style>
+    <div style='overflow-x:auto;height:650px;'>{html_table}</div>
+    """, height=700, scrolling=True)
