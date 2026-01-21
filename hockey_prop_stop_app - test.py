@@ -306,3 +306,4 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
             "L10 Shots": ", ".join(map(str,last10))
         })
     return pd.DataFrame(results)
+
