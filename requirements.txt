@@ -13,3 +13,4 @@ streamlit
 plotly
 streamlit-authenticator
 pytz
+requests
