@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Puck Shotz Hockey Analytics — Auto Matchup Model (Fixed ESPN)
+# 🏒 Puck Shotz Hockey Analytics — Auto Matchup Model (Fixed ESPN + Player Column)
 # ---------------------------------------------------------------
 
 import streamlit as st
@@ -104,6 +104,19 @@ if skaters_df.empty or shots_df.empty:
 st.success("✅ Data loaded successfully.")
 
 # ---------------------------------------------------------------
+# Normalize Columns
+# ---------------------------------------------------------------
+for df in [skaters_df, shots_df, goalies_df, lines_df, teams_df]:
+    if not df.empty: df.columns = df.columns.str.lower().str.strip()
+
+# Fix missing player column in shots_df
+if "player" not in shots_df.columns:
+    candidate = next((c for c in shots_df.columns if "player" in c or "name" in c or "skater" in c), None)
+    if candidate:
+        shots_df = shots_df.rename(columns={candidate: "player"})
+shots_df["player"] = shots_df["player"].astype(str).str.strip()
+
+# ---------------------------------------------------------------
 # Run Button + Line Input
 # ---------------------------------------------------------------
 col_run, col_line = st.columns([3,1])
@@ -146,8 +159,6 @@ def fetch_espn_games():
 @st.cache_data(show_spinner=True)
 def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, teams_df, injuries_df):
     results = []
-    skaters_df.columns = skaters_df.columns.str.lower().str.strip()
-    shots_df.columns = shots_df.columns.str.lower().str.strip()
     team_col = next((c for c in skaters_df.columns if "team" in c), None)
     player_col = "name" if "name" in skaters_df.columns else "player"
     game_col = next((c for c in shots_df.columns if "game" in c and "id" in c), None)
@@ -156,7 +167,6 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
     roster = skaters[[player_col, team_col]].rename(columns={player_col:"player", team_col:"team"}).drop_duplicates("player")
     grouped = {n.lower():g.sort_values(game_col) for n,g in shots_df.groupby(shots_df["player"].str.lower())}
 
-    # Line + Goalie adjustments
     line_adj = {}
     if not lines_df.empty and "line pairings" in lines_df.columns:
         l = lines_df.copy()
@@ -193,7 +203,6 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
         l3, l5, l10 = np.mean(last3), np.mean(last5), np.mean(last10)
         baseline = (0.55*l10 + 0.30*l5 + 0.15*l3)
 
-        # Adjustments
         line_factor_internal = 1.0
         if isinstance(line_adj, pd.DataFrame) and not line_adj.empty:
             last_name = str(player).split()[-1].lower()
@@ -210,7 +219,6 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
             scale = max(0.05, line_factor_internal ** 3.5)
         lam = lam_base * scale
 
-        trend = (l5 - l10)/l10 if l10>0 else 0
         prob = 1 - poisson.cdf(np.floor(lam) - 1, mu=max(lam,0.01))
         odds = -100*(prob/(1-prob)) if prob>=0.5 else 100*((1-prob)/prob)
 
@@ -263,7 +271,6 @@ if run_model:
 # ---------------------------------------------------------------
 if "results_raw" in st.session_state:
     df = st.session_state.results_raw.copy()
-
     html_table = df.to_html(index=False, escape=False)
     components.html(f"""
         <style>
