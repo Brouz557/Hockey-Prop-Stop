@@ -8,7 +8,37 @@ import os, requests
 from scipy.stats import poisson
 import streamlit.components.v1 as components
 
+# ✅ Must be first Streamlit command
 st.set_page_config(page_title="Puck Shotz Hockey Analytics (Test)", layout="wide", page_icon="🏒")
+
+# ---------------------------------------------------------------
+# Simple Login System (stable)
+# ---------------------------------------------------------------
+USERS = {"admin": "test123", "guest": "demo456"}
+
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
+
+if not st.session_state.authenticated:
+    st.title("🔒 Puck Shotz Login")
+    with st.form("login_form", clear_on_submit=False):
+        username = st.text_input("Username")
+        password = st.text_input("Password", type="password")
+        submitted = st.form_submit_button("Login")
+    if submitted:
+        if username in USERS and USERS[username] == password:
+            st.session_state.authenticated = True
+            st.success("✅ Login successful!")
+            st.experimental_rerun()
+        else:
+            st.error("❌ Invalid username or password")
+    st.stop()
+
+st.sidebar.button("Logout", on_click=lambda: st.session_state.update(authenticated=False))
+
+# ---------------------------------------------------------------
+# Main App Start
+# ---------------------------------------------------------------
 st.warning("🧪 TEST MODE — Sandbox version. Changes here won’t affect your main app.")
 
 # ---------------------------------------------------------------
@@ -128,13 +158,14 @@ if not games:
 # Run Button / Line Input
 # ---------------------------------------------------------------
 col_run,col_line=st.columns([3,1])
-with col_run: run_model=st.button("🚀 Run Model (All Games)")
+with col_run:
+    run_model = st.button("🚀 Run Model (All Games)")
 with col_line:
-    line_test=st.number_input("Line to Test",0.0,10.0,3.5,0.5,key="line_test")
+    line_test = st.number_input("Line to Test (Probability Update)", 0.0, 10.0, 3.5, 0.5, key="line_test")
     if "line_test_val" not in st.session_state:
-        st.session_state.line_test_val=line_test
-    elif st.session_state.line_test_val!=line_test:
-        st.session_state.line_test_val=line_test
+        st.session_state.line_test_val = line_test
+    elif st.session_state.line_test_val != line_test:
+        st.session_state.line_test_val = line_test
         if "results" in st.session_state:
             st.rerun()
 
@@ -183,6 +214,14 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
         l3, l5, l10 = np.mean(last3), np.mean(last5), np.mean(last10)
         baseline = (0.55 * l10) + (0.3 * l5) + (0.15 * l3)
 
+        trend = (l5 - l10) / l10 if l10 > 0 else 0
+        if trend > 0.05:
+            form_flag = "🟢 Above Baseline"
+        elif trend < -0.05:
+            form_flag = "🔴 Below Baseline"
+        else:
+            form_flag = "⚪ Neutral"
+
         line_factor_internal = 1.0
         if isinstance(line_adj, pd.DataFrame) and not line_adj.empty:
             last_name = str(player).split()[-1].lower()
@@ -197,8 +236,6 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
         odds = -100 * (poisson_prob / (1 - poisson_prob)) if poisson_prob >= 0.5 else 100 * ((1 - poisson_prob) / poisson_prob)
         odds = float(np.clip(odds, -10000, 10000))
         playable_odds = f"{'+' if odds > 0 else ''}{int(odds)}"
-        trend = (l5 - l10) / l10 if l10 > 0 else 0
-        form_flag = "⚪ Neutral Form"
 
         results.append({
             "Player": player, "Team": team, "Trend Score": round(trend,3),
@@ -218,24 +255,24 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
 # Run Model + Combine Games
 # ---------------------------------------------------------------
 if run_model:
-    all_tables = []
+    all_tables=[]
     for m in games:
-        team_a, team_b = m["away"], m["home"]
-        df_match = build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, teams_df, injuries_df)
-        if not df_match.empty:
-            df_match["Matchup"] = f"{team_a}@{team_b}"
-            all_tables.append(df_match)
-
+        team_a,team_b=m["away"],m["home"]
+        df=build_model(team_a,team_b,skaters_df,shots_df,goalies_df,lines_df,teams_df,injuries_df)
+        if not df.empty:
+            df["Matchup"]=f"{team_a}@{team_b}"
+            all_tables.append(df)
     if all_tables:
-        combined = pd.concat(all_tables, ignore_index=True)
-        st.session_state.results = combined
-        st.session_state.matchups = games
+        combined=pd.concat(all_tables,ignore_index=True)
+        st.session_state.results=combined
+        st.session_state.matchups=games
         st.success("✅ Model built for all games.")
+        st.experimental_rerun()
     else:
-        st.warning("⚠️ No valid data generated.")
+        st.warning("No valid data generated.")
 
 # ---------------------------------------------------------------
-# Display Buttons + Filtered Table
+# Display Buttons + Table
 # ---------------------------------------------------------------
 if "results" in st.session_state:
     df = st.session_state.results.copy()
@@ -243,83 +280,64 @@ if "results" in st.session_state:
 
     cols = st.columns(3)
     for i, m in enumerate(games):
-        team_a, team_b = m["away"], m["home"]
-        match_id = f"{team_a}@{team_b}"
+        match_id = f"{m['away']}@{m['home']}"
         is_selected = st.session_state.get("selected_match") == match_id
-
-        btn_color = "#2F7DEB" if is_selected else "#1C5FAF"
-        border = "2px solid #FF4B4B" if is_selected else "1px solid #1C5FAF"
-        glow = "0 0 12px #FF4B4B" if is_selected else "none"
+        btn_color = "#1E5A99" if is_selected else "#0A3A67"
+        border = "2px solid #FF4B4B" if is_selected else "1px solid #1E5A99"
 
         with cols[i % 3]:
-            form_key = f"form_{i}"
-            with st.form(form_key):
-                st.markdown(f"""
-                <div style="
-                    background-color:{btn_color};
-                    border:{border};
-                    border-radius:8px 8px 0 0;
-                    color:#fff;
-                    font-weight:600;
-                    font-size:15px;
-                    padding:10px 14px;
-                    width:100%;
-                    box-shadow:{glow};
-                    display:flex;
-                    align-items:center;
-                    justify-content:center;
-                    gap:6px;
-                ">
-                    <img src="{m['away_logo']}" height="22">
-                    <span>{m['away']}</span>
-                    <span style="color:#D6D6D6;">@</span>
-                    <span>{m['home']}</span>
-                    <img src="{m['home_logo']}" height="22">
-                </div>
-                """, unsafe_allow_html=True)
+            clicked = st.button(f"Select {match_id}", key=f"match_{i}", use_container_width=True)
+            html_btn = f"""
+            <div style="display:flex;align-items:center;justify-content:center;gap:6px;
+                        background-color:{btn_color};border:{border};border-radius:8px;
+                        padding:8px 12px;margin:-54px 0 10px 0;width:100%;
+                        color:#fff;font-weight:600;font-size:15px;cursor:pointer;">
+                <img src="{m['away_logo']}" height="22">
+                <span>{m['away']}</span>
+                <span style="color:#D6D6D6;">@</span>
+                <span>{m['home']}</span>
+                <img src="{m['home_logo']}" height="22">
+            </div>
+            """
+            st.markdown(html_btn, unsafe_allow_html=True)
+            if clicked:
+                if is_selected:
+                    st.session_state.selected_match = None
+                else:
+                    st.session_state.selected_match = match_id
+                st.rerun()
 
-                clicked = st.form_submit_button("Click to view", use_container_width=True, type="secondary")
-                if clicked:
-                    if is_selected:
-                        st.session_state.selected_match = None
-                        st.session_state.selected_teams = None
-                    else:
-                        st.session_state.selected_match = match_id
-                        st.session_state.selected_teams = {team_a, team_b}
-                    st.rerun()
+    sel_match = st.session_state.get("selected_match")
+    if sel_match:
+        away, home = sel_match.split("@")
+        df = df[df["Team"].isin([away, home])]
 
-    sel_teams = st.session_state.get("selected_teams")
-    if sel_teams:
-        df = df[df["Team"].isin(sel_teams)]
-        st.markdown(f"### Showing results for: **{' vs '.join(sel_teams)}**")
-    else:
-        st.markdown("### Showing results for: **All Teams**")
+    def color_trend(v):
+        if v > 0.05:
+            return "<span style='color:#00FF00;font-weight:bold;'>▲</span>"
+        elif v < -0.05:
+            return "<span style='color:#FF4B4B;font-weight:bold;'>▼</span>"
+        else:
+            return "<span style='color:#D6D6D6;'>–</span>"
 
-    df["Trend"] = df["Trend Score"].apply(lambda v: "▲" if v > 0.05 else ("▼" if v < -0.05 else "–"))
-    df = df.sort_values(["Team","Final Projection","Line Adj"],ascending=[True,False,False])
+    def color_form(v):
+        if "Above" in v:
+            return "<span style='color:#00FF00;font-weight:bold;'>🟢 Above Baseline</span>"
+        elif "Below" in v:
+            return "<span style='color:#FF4B4B;font-weight:bold;'>🔴 Below Baseline</span>"
+        else:
+            return "<span style='color:#D6D6D6;'>⚪ Neutral</span>"
 
-    if "line_test_val" in st.session_state:
-        test_line = st.session_state.line_test_val
-        df["Prob ≥ Line (%)"] = df["Final Projection"].apply(
-            lambda lam: round((1 - poisson.cdf(test_line - 1, mu=max(lam, 0.01))) * 100, 1)
-        )
+    df["Trend"] = df["Trend Score"].apply(color_trend)
+    df["Form Indicator"] = df["Form Indicator"].apply(color_form)
 
-        # ✅ Safe odds calculation (no divide by zero)
-        def safe_odds(p):
-            p = np.clip(p, 0.1, 99.9)
-            if p >= 50:
-                odds_val = -100 * ((p/100) / (1 - p/100))
-            else:
-                odds_val = 100 * ((1 - p/100) / (p/100))
-            return f"{'+' if odds_val > 0 else ''}{int(round(odds_val))}"
+    df = df.sort_values(["Team", "Final Projection", "Line Adj"], ascending=[True, False, False])
 
-        df["Playable Odds"] = df["Prob ≥ Line (%)"].apply(safe_odds)
-
-    html_table = df[
-        ["Player","Team","Trend","Final Projection","Prob ≥ Line (%)",
-         "Playable Odds","Season Avg","Line Adj","Form Indicator",
-         "L3 Shots","L5 Shots","L10 Shots"]
-    ].to_html(index=False,escape=False)
+    html_table = df[[
+        "Player","Team","Trend","Final Projection","Prob ≥ Projection (%) L5",
+        "Playable Odds","Season Avg","Line Adj","Form Indicator",
+        "L3 Shots","L5 Shots","L10 Shots"
+    ]].to_html(index=False, escape=False)
 
     components.html(f"""
     <style>
@@ -339,4 +357,4 @@ if "results" in st.session_state:
     tr:nth-child(even) td {{background-color:#142F52;}}
     </style>
     <div style='overflow-x:auto;height:650px;'>{html_table}</div>
-    """,height=700,scrolling=True)
+    """, height=700, scrolling=True)
