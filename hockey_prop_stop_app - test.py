@@ -221,7 +221,6 @@ if run_model:
     all_tables = []
     for m in games:
         team_a, team_b = m["away"], m["home"]
-
         df_match = build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, teams_df, injuries_df)
         if not df_match.empty:
             df_match["Matchup"] = f"{team_a}@{team_b}"
@@ -304,10 +303,17 @@ if "results" in st.session_state:
         df["Prob ≥ Line (%)"] = df["Final Projection"].apply(
             lambda lam: round((1 - poisson.cdf(test_line - 1, mu=max(lam, 0.01))) * 100, 1)
         )
-        df["Playable Odds"] = df["Prob ≥ Line (%)"].apply(lambda p: (
-            f"-{int(round(100 * (p/100) / (1 - p/100)))}" if p >= 50
-            else f"+{int(round(100 * ((1 - p/100) / (p/100))))}"
-        ))
+
+        # ✅ Safe odds calculation (no divide by zero)
+        def safe_odds(p):
+            p = np.clip(p, 0.1, 99.9)
+            if p >= 50:
+                odds_val = -100 * ((p/100) / (1 - p/100))
+            else:
+                odds_val = 100 * ((1 - p/100) / (p/100))
+            return f"{'+' if odds_val > 0 else ''}{int(round(odds_val))}"
+
+        df["Playable Odds"] = df["Prob ≥ Line (%)"].apply(safe_odds)
 
     html_table = df[
         ["Player","Team","Trend","Final Projection","Prob ≥ Line (%)",
