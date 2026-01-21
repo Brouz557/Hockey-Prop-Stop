@@ -243,23 +243,27 @@ if "results" in st.session_state:
         border = "2px solid #FF4B4B" if is_selected else "1px solid #1E5A99"
 
         with cols[i % 3]:
-            clicked = st.button(match_id, key=f"match_{i}", use_container_width=True)
-            html_btn = f"""
-            <div style="
-                display:flex;align-items:center;justify-content:center;gap:6px;
-                background-color:{btn_color};border:{border};
-                border-radius:8px;padding:8px 12px;margin:-54px 0 10px 0;width:100%;
-                cursor:pointer;color:#fff;font-weight:600;font-size:15px;
-                pointer-events:none; /* ✅ allows clicks through overlay */
-            ">
-                <img src='{m["away_logo"]}' height='22'>
-                <span>{m["away"]}</span>
-                <span style='color:#D6D6D6;'>@</span>
-                <span>{m["home"]}</span>
-                <img src='{m["home_logo"]}' height='22'>
+            html_content = f"""
+            <div style='display:flex;align-items:center;justify-content:center;gap:6px;'>
+                <img src="{m['away_logo']}" height="20">
+                <span style="font-weight:600;color:#fff;">{m['away']}</span>
+                <span style="color:#D6D6D6;">@</span>
+                <span style="font-weight:600;color:#fff;">{m['home']}</span>
+                <img src="{m['home_logo']}" height="20">
             </div>
             """
-            st.markdown(html_btn, unsafe_allow_html=True)
+            clicked = st.button(html_content, key=f"match_{i}", use_container_width=True)
+            st.markdown(f"""
+                <style>
+                div[data-testid="stButton"][key="match_{i}"] button {{
+                    background-color:{btn_color};
+                    border:{border};
+                    border-radius:8px;
+                    height:50px;
+                }}
+                </style>
+            """, unsafe_allow_html=True)
+
             if clicked:
                 st.session_state.selected_match = None if is_selected else match_id
 
