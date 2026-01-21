@@ -8,37 +8,7 @@ import os, requests
 from scipy.stats import poisson
 import streamlit.components.v1 as components
 
-# ✅ Must be first Streamlit command
 st.set_page_config(page_title="Puck Shotz Hockey Analytics (Test)", layout="wide", page_icon="🏒")
-
-# ---------------------------------------------------------------
-# Simple Login System (stable)
-# ---------------------------------------------------------------
-USERS = {"admin": "test123", "guest": "demo456"}
-
-if "authenticated" not in st.session_state:
-    st.session_state.authenticated = False
-
-if not st.session_state.authenticated:
-    st.title("🔒 Puck Shotz Login")
-    with st.form("login_form", clear_on_submit=False):
-        username = st.text_input("Username")
-        password = st.text_input("Password", type="password")
-        submitted = st.form_submit_button("Login")
-    if submitted:
-        if username in USERS and USERS[username] == password:
-            st.session_state.authenticated = True
-            st.success("✅ Login successful!")
-            st.experimental_rerun()
-        else:
-            st.error("❌ Invalid username or password")
-    st.stop()
-
-st.sidebar.button("Logout", on_click=lambda: st.session_state.update(authenticated=False))
-
-# ---------------------------------------------------------------
-# Main App Start
-# ---------------------------------------------------------------
 st.warning("🧪 TEST MODE — Sandbox version. Changes here won’t affect your main app.")
 
 # ---------------------------------------------------------------
