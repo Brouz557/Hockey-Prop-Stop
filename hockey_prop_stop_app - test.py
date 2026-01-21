@@ -13,6 +13,7 @@ USERS = {
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 
+# If not logged in, show login screen
 if not st.session_state.authenticated:
     st.title("🔒 Puck Shotz Login")
 
@@ -23,17 +24,16 @@ if not st.session_state.authenticated:
     if login_btn:
         if username in USERS and USERS[username] == password:
             st.session_state.authenticated = True
+            st.session_state.show_main = True  # ✅ new flag
             st.success("✅ Login successful!")
-            st.rerun()
         else:
             st.error("❌ Invalid username or password")
+    st.stop()
 
-    st.stop()  # Stop app execution until logged in
-
-# ✅ Fix: ensure buttons work immediately after login
-if st.session_state.authenticated and "just_logged_in" not in st.session_state:
-    st.session_state.just_logged_in = True
-    st.rerun()
+# ✅ Fix: controlled rerun once after login
+if st.session_state.get("show_main"):
+    st.session_state.pop("show_main")
+    st.experimental_rerun()
 
 # ---------------------------------------------------------------
 # 🏒 Puck Shotz Hockey Analytics — Test Mode (Instant Filter + Logos)
@@ -174,4 +174,4 @@ with col_line:
         if "results" in st.session_state:
             st.rerun()
 
-# (💡 rest of your app code continues below, unchanged)
+# (💡 The rest of your app code remains exactly as before)
