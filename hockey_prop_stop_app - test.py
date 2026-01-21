@@ -242,12 +242,10 @@ if "results" in st.session_state:
         border = "2px solid #FF4B4B" if is_selected else "1px solid #1E5A99"
 
         with cols[i % 3]:
-            # Invisible clickable button
-            clicked = st.button(match_id, key=f"match_{i}", use_container_width=True)
-            if clicked:
-                st.session_state.selected_match = None if is_selected else match_id
+            # Real clickable button
+            clicked = st.button(f"Select {match_id}", key=f"match_{i}", use_container_width=True)
 
-            # Visible HTML visual overlay
+            # HTML visual overlay
             html_btn = f"""
             <div style="
                 display:flex;
@@ -273,6 +271,14 @@ if "results" in st.session_state:
             </div>
             """
             st.markdown(html_btn, unsafe_allow_html=True)
+
+            # Handle click toggle + force rerun
+            if clicked:
+                if is_selected:
+                    st.session_state.selected_match = None
+                else:
+                    st.session_state.selected_match = match_id
+                st.rerun()
 
     sel_match=st.session_state.get("selected_match")
     if sel_match:
