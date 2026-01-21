@@ -130,7 +130,15 @@ if not games:
 # ---------------------------------------------------------------
 col_run,col_line=st.columns([3,1])
 with col_run: run_model=st.button("🚀 Run Model (All Games)")
-with col_line: line_test=st.number_input("Line to Test",0.0,10.0,3.5,0.5)
+with col_line:
+    line_test=st.number_input("Line to Test",0.0,10.0,3.5,0.5,key="line_test")
+    # ensure updates trigger dynamic recalculation
+    if "line_test_val" not in st.session_state:
+        st.session_state.line_test_val=line_test
+    elif st.session_state.line_test_val!=line_test:
+        st.session_state.line_test_val=line_test
+        if "results" in st.session_state:
+            st.rerun()
 
 # ---------------------------------------------------------------
 # Build Model
@@ -228,7 +236,6 @@ if "results" in st.session_state:
     df=st.session_state.results.copy()
     games=st.session_state.matchups
 
-    # matchup buttons with logos (instant filtering)
     cols = st.columns(3)
     for i, m in enumerate(games):
         match_id = f"{m['away']}@{m['home']}"
@@ -242,14 +249,14 @@ if "results" in st.session_state:
             <div style="
                 display:flex;align-items:center;justify-content:center;gap:6px;
                 background-color:{btn_color};border:{border};
-                border-radius:8px;padding:8px 12px;margin:-36px 0 10px 0;width:100%;
+                border-radius:8px;padding:8px 12px;margin:-28px 0 10px 0;width:100%;
                 cursor:pointer;color:#fff;font-weight:600;font-size:15px;
             ">
-                <img src='{m["away_logo"]}' height='20'>
+                <img src='{m["away_logo"]}' height='22'>
                 <span>{m["away"]}</span>
                 <span style='color:#D6D6D6;'>@</span>
                 <span>{m["home"]}</span>
-                <img src='{m["home_logo"]}' height='20'>
+                <img src='{m["home_logo"]}' height='22'>
             </div>
             """
             st.markdown(html_btn, unsafe_allow_html=True)
