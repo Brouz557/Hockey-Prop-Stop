@@ -5,8 +5,8 @@ import streamlit as st
 
 # Define user credentials (add or change as needed)
 USERS = {
-    "admin": "test123",
-    "guest": "demo456"
+    "admin": "test",
+    "guest": "shots"
 }
 
 # Session-based authentication
@@ -170,3 +170,4 @@ with col_line:
             st.rerun()
 
 # (💡 The rest of your app code stays exactly the same below)
+
