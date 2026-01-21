@@ -247,7 +247,9 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
             "Signal Strength":"",
             "L3 Shots":", ".join(map(str,last3)),
             "L5 Shots":", ".join(map(str,last5)),
-            "L10 Shots":", ".join(map(str,last10))
+            "L10 Shots":", ".join(map(str,last10)),
+            "Pace Factor": round(pace_factor, 3),
+
         })
     return pd.DataFrame(results)
 
@@ -315,4 +317,5 @@ if "results_base" in st.session_state:
         </style>
         <div style='overflow-x:auto;height:620px;'>{html_table}</div>
         """,height=650,scrolling=True)
+
 
