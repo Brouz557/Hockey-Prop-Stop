@@ -130,7 +130,7 @@ with col_line:
 # ---------------------------------------------------------------
 @st.cache_data(show_spinner=False)
 def get_todays_matchups():
-    today = datetime.datetime.now().strftime("%Y-%m-%d")
+    today = "2026-01-21"
     try:
         resp = requests.get(f"https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard?dates={today}", timeout=10)
         data = resp.json()
@@ -295,3 +295,4 @@ if "results_base" in st.session_state:
         </style>
         <div style='overflow-x:auto;height:620px;'>{html_table}</div>
         """,height=650,scrolling=True)
+
