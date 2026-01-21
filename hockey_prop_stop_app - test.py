@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Puck Shotz Hockey Analytics — Fixed Overlay + Inline Buttons
+# 🏒 Puck Shotz Hockey Analytics — Clean Overlay Buttons
 # ---------------------------------------------------------------
 import streamlit as st
 import pandas as pd
@@ -8,22 +8,25 @@ import os, contextlib, io, requests, html, json
 from scipy.stats import poisson
 import streamlit.components.v1 as components
 
+# ---------------------------------------------------------------
+# PAGE SETUP
+# ---------------------------------------------------------------
 st.set_page_config(page_title="Puck Shotz Hockey Analytics (Test)", layout="wide", page_icon="🏒")
 st.warning("🧪 TEST MODE — Sandbox version. Changes here won’t affect your main app.")
 
 # ---------------------------------------------------------------
-# Header
+# HEADER
 # ---------------------------------------------------------------
 st.markdown("""
 <div style='text-align:center; background-color:#0A3A67; padding:15px; border-radius:6px; margin-bottom:10px;'>
   <img src='https://raw.githubusercontent.com/Brouz557/Hockey-Prop-Stop/694ae2a448204908099ce2899bd479052d01b518/modern%20hockey%20puck%20l.png' width='220'>
 </div>
 <h1 style='text-align:center;color:#1E5A99;'>Puck Shotz Hockey Analytics</h1>
-<p style='text-align:center;color:#D6D6D6;'>Automatic matchup analytics with clickable logo buttons + live line updates.</p>
+<p style='text-align:center;color:#D6D6D6;'>Automatic matchup analytics with logo-overlay buttons and live line testing.</p>
 """, unsafe_allow_html=True)
 
 # ---------------------------------------------------------------
-# Sidebar Uploaders
+# SIDEBAR
 # ---------------------------------------------------------------
 st.sidebar.header("📂 Upload Data Files (.xlsx or .csv)")
 skaters_file = st.sidebar.file_uploader("Skaters", type=["xlsx","csv"])
@@ -34,7 +37,7 @@ teams_file   = st.sidebar.file_uploader("TEAMS", type=["xlsx","csv"])
 injuries_file= st.sidebar.file_uploader("INJURIES", type=["xlsx","csv"])
 
 # ---------------------------------------------------------------
-# Helper Functions
+# LOADERS
 # ---------------------------------------------------------------
 def load_file(f):
     if not f: return pd.DataFrame()
@@ -50,11 +53,6 @@ def safe_read(path):
     except Exception:
         return pd.DataFrame()
 
-def load_data(file_uploader, default_path):
-    if file_uploader is not None:
-        return load_file(file_uploader)
-    return safe_read(default_path)
-
 @st.cache_data(show_spinner=False)
 def load_all(skaters_file, shots_file, goalies_file, lines_file, teams_file, injuries_file):
     base_paths=[".","data","/mount/src/hockey-prop-stop/data"]
@@ -63,35 +61,27 @@ def load_all(skaters_file, shots_file, goalies_file, lines_file, teams_file, inj
             fp=os.path.join(p,name)
             if os.path.exists(fp): return fp
         return None
-    skaters=load_data(skaters_file, find_file("Skaters.xlsx") or "Skaters.xlsx")
-    shots  =load_data(shots_file,   find_file("SHOT DATA.xlsx") or "SHOT DATA.xlsx")
-    goalies=load_data(goalies_file, find_file("GOALTENDERS.xlsx") or "GOALTENDERS.xlsx")
-    lines  =load_data(lines_file,   find_file("LINE DATA.xlsx") or "LINE DATA.xlsx")
-    teams  =load_data(teams_file,   find_file("TEAMS.xlsx") or "TEAMS.xlsx")
-    injuries=pd.DataFrame()
-    for p in ["injuries.xlsx","Injuries.xlsx","data/injuries.xlsx"]:
-        if os.path.exists(p):
-            injuries=load_file(open(p,"rb"));break
-    if injuries.empty:
-        injuries=load_file(injuries_file)
-    if not injuries.empty:
-        injuries.columns=injuries.columns.str.lower().str.strip()
-        if "player" in injuries.columns:
-            injuries["player"]=injuries["player"].astype(str).str.strip().str.lower()
+    skaters=load_file(skaters_file or find_file("Skaters.xlsx"))
+    shots  =load_file(shots_file   or find_file("SHOT DATA.xlsx"))
+    goalies=load_file(goalies_file or find_file("GOALTENDERS.xlsx"))
+    lines  =load_file(lines_file   or find_file("LINE DATA.xlsx"))
+    teams  =load_file(teams_file   or find_file("TEAMS.xlsx"))
+    injuries=load_file(injuries_file or find_file("injuries.xlsx"))
     return skaters,shots,goalies,lines,teams,injuries
 
 # ---------------------------------------------------------------
-# Load Data
+# LOAD DATA
 # ---------------------------------------------------------------
 skaters_df, shots_df, goalies_df, lines_df, teams_df, injuries_df = load_all(
     skaters_file, shots_file, goalies_file, lines_file, teams_file, injuries_file)
 if skaters_df.empty or shots_df.empty:
-    st.warning("⚠️ Missing data. Upload required files.")
+    st.warning("⚠️ Missing required data files.")
     st.stop()
 st.success("✅ Data loaded successfully.")
 
 for df in [skaters_df, shots_df, goalies_df, lines_df, teams_df]:
     if not df.empty: df.columns=df.columns.str.lower().str.strip()
+
 team_col=next((c for c in skaters_df.columns if "team" in c),None)
 player_col="name" if "name" in skaters_df.columns else None
 shots_df=shots_df.rename(columns={next((c for c in shots_df.columns if "player" in c or "name" in c),"player"):"player"})
@@ -99,7 +89,7 @@ shots_df["player"]=shots_df["player"].astype(str).str.strip()
 game_col=next((c for c in shots_df.columns if "game" in c and "id" in c),None)
 
 # ---------------------------------------------------------------
-# ESPN Matchup Pull
+# ESPN MATCHUP FETCH
 # ---------------------------------------------------------------
 @st.cache_data(ttl=300)
 def get_todays_games():
@@ -125,7 +115,7 @@ if not games:
     st.stop()
 
 # ---------------------------------------------------------------
-# Run Button / Line Input
+# RUN + LINE INPUT
 # ---------------------------------------------------------------
 col_run,col_line=st.columns([3,1])
 with col_run:
@@ -134,7 +124,7 @@ with col_line:
     line_test=st.number_input("Line to Test",0.0,10.0,3.5,0.5,key="line_test")
 
 # ---------------------------------------------------------------
-# Build Model (Simplified for display)
+# MODEL
 # ---------------------------------------------------------------
 @st.cache_data(show_spinner=False)
 def build_model(team_a,team_b,skaters_df,shots_df,goalies_df,lines_df,teams_df,injuries_df):
@@ -164,7 +154,7 @@ def build_model(team_a,team_b,skaters_df,shots_df,goalies_df,lines_df,teams_df,i
     return pd.DataFrame(results)
 
 # ---------------------------------------------------------------
-# Run Model
+# RUN MODEL
 # ---------------------------------------------------------------
 if run_model:
     all_tables=[]
@@ -181,39 +171,47 @@ if run_model:
         st.success("✅ Model built for all games.")
 
 # ---------------------------------------------------------------
-# Display Matchups + Table
+# DISPLAY MATCHUPS + TABLE
 # ---------------------------------------------------------------
 if "results" in st.session_state:
     df=st.session_state.results.copy()
     games=st.session_state.matchups
 
     st.markdown("<h3 style='color:#1E5A99;'>Today's Matchups</h3>",unsafe_allow_html=True)
+
     cols=st.columns(3)
     for i,m in enumerate(games):
         match_id=f"{m['away']}@{m['home']}"
-        selected=st.session_state.get("selected_match")==match_id
+        selected=(st.session_state.get("selected_match")==match_id)
+
         bg="#1E5A99" if selected else "#0A3A67"
         border="3px solid #FF4B4B" if selected else "1px solid #1E5A99"
-        html_button=f"""
-        <button style='display:flex;align-items:center;justify-content:center;
-            background:{bg};border:{border};border-radius:10px;
-            padding:10px;margin:6px;width:100%;color:white;font-weight:600;
-            font-size:15px;cursor:pointer;'
-            onclick="fetch('/_stcore/streamlit/re-run?match={match_id}')">
-            <img src='{m['away_logo']}' height='20'>
-            <span style='margin:0 6px;'>{m['away']}</span>
-            <span style='color:#D6D6D6;'>@</span>
-            <span style='margin:0 6px;'>{m['home']}</span>
-            <img src='{m['home_logo']}' height='20'>
+
+        # --- SINGLE OVERLAY BUTTON ---
+        button_html=f"""
+        <form action="" method="get">
+        <button name="match" value="{match_id}"
+            style="position:relative;display:flex;align-items:center;justify-content:center;
+                   background:{bg};border:{border};border-radius:12px;
+                   padding:12px;margin:8px;width:100%;color:white;font-weight:600;
+                   font-size:16px;cursor:pointer;overflow:hidden;">
+            <img src="{m['away_logo']}" height="28" style="margin-right:10px;">
+            <span>{m['away']}</span>
+            <span style="color:#D6D6D6;margin:0 10px;">@</span>
+            <span>{m['home']}</span>
+            <img src="{m['home_logo']}" height="28" style="margin-left:10px;">
         </button>
+        </form>
         """
         with cols[i%3]:
-            if st.button(match_id,key=f"match_{i}",use_container_width=True):
-                st.session_state.selected_match=None if selected else match_id
-            st.markdown(html_button,unsafe_allow_html=True)
+            st.markdown(button_html, unsafe_allow_html=True)
 
-    sel=st.session_state.get("selected_match")
-    if sel: df=df[df["Matchup"]==sel]
+    sel=st.query_params.get("match",[None])[0] if "match" in st.query_params else None
+    if sel:
+        st.session_state.selected_match=sel
+        df=df[df["Matchup"]==sel]
+    else:
+        st.session_state.selected_match=None
 
     lam_vals=df["Final Projection"].astype(float)
     probs=1-poisson.cdf(line_test-1,mu=lam_vals.clip(lower=0.01))
