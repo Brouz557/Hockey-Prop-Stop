@@ -5,8 +5,8 @@ import streamlit as st
 
 # Define user credentials (add or change as needed)
 USERS = {
-    "admin": "test",
-    "guest": "shots"
+    "admin": "test123",
+    "guest": "demo456"
 }
 
 # Session-based authentication
@@ -29,6 +29,11 @@ if not st.session_state.authenticated:
             st.error("❌ Invalid username or password")
 
     st.stop()  # Stop app execution until logged in
+
+# ✅ Fix: ensure buttons work immediately after login
+if st.session_state.authenticated and "just_logged_in" not in st.session_state:
+    st.session_state.just_logged_in = True
+    st.rerun()
 
 # ---------------------------------------------------------------
 # 🏒 Puck Shotz Hockey Analytics — Test Mode (Instant Filter + Logos)
@@ -169,5 +174,4 @@ with col_line:
         if "results" in st.session_state:
             st.rerun()
 
-# (💡 The rest of your app code stays exactly the same below)
-
+# (💡 rest of your app code continues below, unchanged)
