@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Puck Shotz Hockey Analytics — Auto Matchup + Reactive Line Test
+# 🏒 Puck Shotz Hockey Analytics — Clickable Matchup Toggle + Live Line Test
 # ---------------------------------------------------------------
 
 import streamlit as st
@@ -10,7 +10,7 @@ from scipy.stats import poisson
 import streamlit.components.v1 as components
 
 st.set_page_config(page_title="Puck Shotz Hockey Analytics (Test)", layout="wide", page_icon="🏒")
-st.warning("🧪 TEST MODE — Reactive Line Testing enabled.")
+st.warning("🧪 TEST MODE — Clickable Matchups + Live Line Testing enabled.")
 
 # ---------------------------------------------------------------
 # Header
@@ -21,7 +21,7 @@ st.markdown(
         <img src='https://raw.githubusercontent.com/Brouz557/Hockey-Prop-Stop/694ae2a448204908099ce2899bd479052d01b518/modern%20hockey%20puck%20l.png' width='220'>
     </div>
     <h1 style='text-align:center;color:#1E5A99;'>Puck Shotz Hockey Analytics</h1>
-    <p style='text-align:center;color:#D6D6D6;'>Automatic ESPN matchup model with Form, Trend, Season Avg, and live line testing.</p>
+    <p style='text-align:center;color:#D6D6D6;'>Clickable matchups with Form, Trend, Season Avg, and live line testing.</p>
     """,
     unsafe_allow_html=True,
 )
@@ -202,7 +202,6 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
             scale = max(0.05, line_factor_internal ** 3.5)
         lam = lam_base * scale
 
-        # Form + Trend
         form_flag = "⚪ Neutral Form"
         try:
             season_toi = pd.to_numeric(skaters_df.loc[skaters_df[player_col].str.lower()==player.lower(),"icetime"], errors="coerce").mean()
@@ -233,7 +232,7 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
     return pd.DataFrame(results)
 
 # ---------------------------------------------------------------
-# Run + Reactive Update
+# Run Model + Matchup Toggles
 # ---------------------------------------------------------------
 if run_model:
     games = fetch_espn_games()
@@ -241,32 +240,41 @@ if run_model:
         st.warning("⚠️ No NHL games found for today.")
     else:
         st.subheader("🏒 Today's Matchups")
-        for g in games:
-            st.markdown(
-                f"<div style='display:flex;align-items:center;justify-content:center;gap:20px;'>"
-                f"<img src='{g['away_logo']}' width='50'>"
-                f"<b>{g['away_full']}</b>  @  <b>{g['home_full']}</b>"
-                f"<img src='{g['home_logo']}' width='50'>"
-                f"</div>",
-                unsafe_allow_html=True
-            )
+
+        if "selected_game" not in st.session_state:
+            st.session_state.selected_game = None
 
         combined = pd.DataFrame()
         for g in games:
             df = build_model(g["away"], g["home"], skaters_df, shots_df, goalies_df, lines_df, teams_df)
+            df["Matchup"] = f"{g['away']} @ {g['home']}"
             combined = pd.concat([combined, df], ignore_index=True)
 
-        if not combined.empty:
-            st.session_state.results_base = combined.sort_values(["Team","Final Projection"], ascending=[True,False]).reset_index(drop=True)
-            st.success("✅ All games processed successfully!")
+        st.session_state.results_base = combined.sort_values(["Team","Final Projection"], ascending=[True,False]).reset_index(drop=True)
+        st.session_state.matchups = games
+        st.success("✅ All games processed successfully!")
 
 # ---------------------------------------------------------------
-# Reactive Line Update
+# Matchup Buttons + Filter Logic
 # ---------------------------------------------------------------
 if "results_base" in st.session_state:
-    df = st.session_state.results_base.copy()
+    games = st.session_state.matchups
+    base_df = st.session_state.results_base.copy()
 
-    # compute probability and odds dynamically for current test line
+    cols = st.columns(min(len(games), 4))
+    for idx, g in enumerate(games):
+        with cols[idx % len(cols)]:
+            label = f"{g['away']} @ {g['home']}"
+            active = st.session_state.selected_game == label
+            if st.button(label, type="primary" if active else "secondary"):
+                st.session_state.selected_game = None if active else label
+                st.rerun()
+
+    df = base_df
+    if st.session_state.selected_game:
+        away, home = st.session_state.selected_game.split(" @ ")
+        df = df[df["Team"].isin([away, home])]
+
     lam_vals = df["Final Projection"].astype(float)
     probs = 1 - poisson.cdf(line_test - 1, mu=lam_vals.clip(lower=0.01))
     df[f"Prob ≥ {line_test} (%)"] = (probs*100).round(1)
