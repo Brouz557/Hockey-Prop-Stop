@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Puck Shotz Hockey Analytics — Auto Matchup Model (Overflow Fix)
+# 🏒 Puck Shotz Hockey Analytics — Auto Matchup + Form & Trend
 # ---------------------------------------------------------------
 
 import streamlit as st
@@ -10,7 +10,7 @@ from scipy.stats import poisson
 import streamlit.components.v1 as components
 
 st.set_page_config(page_title="Puck Shotz Hockey Analytics (Test)", layout="wide", page_icon="🏒")
-st.warning("🧪 TEST MODE — Sandbox version. Safe for testing.")
+st.warning("🧪 TEST MODE — Safe sandbox version. Nothing you change here affects your main app.")
 
 # ---------------------------------------------------------------
 # Header
@@ -21,7 +21,7 @@ st.markdown(
         <img src='https://raw.githubusercontent.com/Brouz557/Hockey-Prop-Stop/694ae2a448204908099ce2899bd479052d01b518/modern%20hockey%20puck%20l.png' width='220'>
     </div>
     <h1 style='text-align:center;color:#1E5A99;'>Puck Shotz Hockey Analytics</h1>
-    <p style='text-align:center;color:#D6D6D6;'>Automatically runs all of today’s NHL matchups with projection and odds models.</p>
+    <p style='text-align:center;color:#D6D6D6;'>Full model with Form, Trend, and Odds integrated for today’s NHL matchups.</p>
     """,
     unsafe_allow_html=True,
 )
@@ -38,7 +38,7 @@ teams_file   = st.sidebar.file_uploader("TEAMS", type=["xlsx","csv"])
 injuries_file = st.sidebar.file_uploader("INJURIES", type=["xlsx","csv"])
 
 # ---------------------------------------------------------------
-# Load + Helpers
+# Helper Loaders
 # ---------------------------------------------------------------
 def load_file(file):
     if not file: return pd.DataFrame()
@@ -102,7 +102,7 @@ st.success("✅ Data loaded successfully.")
 for df in [skaters_df, shots_df, goalies_df, lines_df, teams_df]:
     if not df.empty: df.columns = df.columns.str.lower().str.strip()
 
-# Fix missing player column
+# Fix player column name
 if "player" not in shots_df.columns:
     candidate = next((c for c in shots_df.columns if "player" in c or "name" in c or "skater" in c), None)
     if candidate:
@@ -160,7 +160,7 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
     roster = skaters[[player_col, team_col]].rename(columns={player_col:"player", team_col:"team"}).drop_duplicates("player")
     grouped = {n.lower():g.sort_values(game_col) for n,g in shots_df.groupby(shots_df["player"].str.lower())}
 
-    # Line adj + goalie adj
+    # Line adjustment
     line_adj = {}
     if not lines_df.empty and "line pairings" in lines_df.columns:
         l = lines_df.copy()
@@ -173,6 +173,7 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
         l["line_factor"] = (league_avg / l["sog_against_per_game"]).clip(0.7,1.3)
         line_adj = l.copy()
 
+    # Goalie adjustment
     goalie_adj = {}
     if not goalies_df.empty and {"team","shots against","games"}.issubset(goalies_df.columns):
         g = goalies_df.copy()
@@ -214,15 +215,42 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
             scale = max(0.05, line_factor_internal ** 3.5)
         lam = lam_base * scale
 
-        # Safe probability + odds calc
+        # Form indicator
+        form_flag = "⚪ Neutral Form"
+        try:
+            season_toi = pd.to_numeric(skaters_df.loc[skaters_df[player_col].str.lower()==player.lower(),"icetime"], errors="coerce").mean()
+            games_played = pd.to_numeric(skaters_df.loc[skaters_df[player_col].str.lower()==player.lower(),"games"], errors="coerce").mean()
+            if season_toi>0 and games_played>=10:
+                avg_toi = (season_toi/games_played)/60.0
+                sog_per60 = (np.mean(sog_values)/avg_toi)*60
+                blended_recent = 0.7*l5+0.3*l10
+                recent_per60 = (blended_recent/avg_toi)*60 if avg_toi>0 else 0
+                usage_delta = (recent_per60-sog_per60)/sog_per60 if sog_per60>0 else 0
+                if usage_delta>0.10: form_flag="🟢 Above-Baseline Form"
+                elif usage_delta<-0.10: form_flag="🔴 Below-Baseline Form"
+        except Exception:
+            pass
+
+        # Trend + probabilities
+        trend = (l5 - l10)/l10 if l10>0 else 0
         prob = 1 - poisson.cdf(np.floor(lam) - 1, mu=max(lam,0.01))
-        prob = float(np.clip(prob, 0.001, 0.999))  # <-- clamp
+        prob = float(np.clip(prob, 0.001, 0.999))
         odds = -100*(prob/(1-prob)) if prob>=0.5 else 100*((1-prob)/prob)
-        odds = float(np.clip(odds, -5000, 5000))   # <-- clamp extreme odds
+        odds = float(np.clip(odds, -5000, 5000))
+
+        # Trend visuals
+        if trend>0.05:
+            trend_cell = "▲"
+        elif trend<-0.05:
+            trend_cell = "▼"
+        else:
+            trend_cell = "–"
 
         results.append({
             "Player": player,
             "Team": team,
+            "Trend": trend_cell,
+            "Form Indicator": form_flag,
             "Final Projection": round(lam,2),
             "Prob ≥ Projection (%) L5": round(prob*100,1),
             "Playable Odds": f"{'+' if odds>0 else ''}{int(odds)}",
