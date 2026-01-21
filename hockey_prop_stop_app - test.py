@@ -315,3 +315,4 @@ if "results_base" in st.session_state:
         </style>
         <div style='overflow-x:auto;height:620px;'>{html_table}</div>
         """,height=650,scrolling=True)
+
