@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Puck Shotz Hockey Analytics — L5 Probability Update (TEST MODE + Hybrid Probability)
+# 🏒 Puck Shotz Hockey Analytics — Test Mode + Interactive Line Testing
 # ---------------------------------------------------------------
 
 import streamlit as st
@@ -25,14 +25,14 @@ st.markdown(
     </div>
     <h1 style='text-align:center;color:#1E5A99;'>Puck Shotz Hockey Analytics</h1>
     <p style='text-align:center;color:#D6D6D6;'>
-        Hybrid Probability: 60% Poisson + 40% Weighted Empirical (L10/L5/L3)
+        Interactive line testing — adjust the line value to see probability and odds change.
     </p>
     """,
     unsafe_allow_html=True,
 )
 
 # ---------------------------------------------------------------
-# Sidebar Uploaders
+# Sidebar Uploaders + Line Input
 # ---------------------------------------------------------------
 st.sidebar.header("📂 Upload Data Files (.xlsx or .csv)")
 skaters_file = st.sidebar.file_uploader("Skaters", type=["xlsx","csv"])
@@ -41,6 +41,9 @@ goalies_file = st.sidebar.file_uploader("GOALTENDERS", type=["xlsx","csv"])
 lines_file   = st.sidebar.file_uploader("LINE DATA", type=["xlsx","csv"])
 teams_file   = st.sidebar.file_uploader("TEAMS", type=["xlsx","csv"])
 injuries_file = st.sidebar.file_uploader("INJURIES", type=["xlsx","csv"])
+
+# 🔢 New interactive line testing input
+line_test = st.sidebar.number_input("📊 Enter line to test", min_value=0.0, max_value=10.0, value=2.5, step=0.5)
 
 # ---------------------------------------------------------------
 # Helper Functions
@@ -131,7 +134,7 @@ st.markdown("---")
 # Build Model
 # ---------------------------------------------------------------
 @st.cache_data(show_spinner=True)
-def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, teams_df, injuries_df):
+def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, teams_df, injuries_df, line_test):
     results = []
     skaters = skaters_df[skaters_df[team_col].isin([team_a, team_b])]
     roster = skaters[[player_col, team_col]].rename(columns={player_col:"player", team_col:"team"}).drop_duplicates("player")
@@ -184,66 +187,26 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
         goalie_factor = goalie_adj.get(opp_team, 1.0)
         goalie_term = (goalie_factor - 1.0) * 0.2
 
-        form_flag, form_term = "⚪ Neutral Form", 0.0
-        try:
-            season_toi = pd.to_numeric(skaters_df.loc[skaters_df[player_col].str.lower()==player.lower(),"icetime"], errors="coerce").mean()
-            games_played = pd.to_numeric(skaters_df.loc[skaters_df[player_col].str.lower()==player.lower(),"games"], errors="coerce").mean()
-            if season_toi>0 and games_played>=10:
-                avg_toi = (season_toi / games_played)/60.0
-                sog_per60 = (np.mean(sog_values)/avg_toi)*60
-                recent_per60 = (baseline/avg_toi)*60 if avg_toi>0 else 0
-                usage_delta = (recent_per60 - sog_per60)/sog_per60 if sog_per60>0 else 0
-                if usage_delta>0.10:
-                    form_flag, form_term = "🟢 Above-Baseline Form", 0.05
-                elif usage_delta<-0.10:
-                    form_flag, form_term = "🔴 Below-Baseline Form", -0.05
-        except Exception: pass
-
-        lam_base = baseline * (1 + goalie_term + form_term)
+        lam_base = baseline * (1 + goalie_term)
         if line_factor_internal >= 1:
             scale = 1 + 7.0 * (line_factor_internal - 1.0) ** 1.5
         else:
             scale = max(0.05, line_factor_internal ** 3.5)
         lam = lam_base * scale
 
-        # --- Hybrid probability system ---
-        poisson_prob = 1 - poisson.cdf(np.floor(lam) - 1, mu=max(lam, 0.01))
-        hit_l3  = np.mean(np.array(last3)  >= lam) if len(last3)>0 else np.nan
-        hit_l5  = np.mean(np.array(last5)  >= lam) if len(last5)>0 else np.nan
-        hit_l10 = np.mean(np.array(last10) >= lam) if len(last10)>0 else np.nan
-        empirical_prob = np.nanmean([0.55*hit_l10 + 0.30*hit_l5 + 0.15*hit_l3])
-        final_prob = np.nanmean([0.6 * poisson_prob + 0.4 * empirical_prob])
-
-        p = min(max(final_prob, 0.001), 0.999)
+        # --- Use user-entered test line ---
+        prob = 1 - poisson.cdf(line_test - 1, mu=max(lam, 0.01))
+        p = min(max(prob, 0.001), 0.999)
         odds = -100*(p/(1-p)) if p>=0.5 else 100*((1-p)/p)
         implied_odds = f"{'+' if odds>0 else ''}{int(odds)}"
 
-        injury_html = ""
-        if not injuries_df.empty and {"player","team"}.issubset(injuries_df.columns):
-            player_lower = player.lower().strip()
-            last_name = player_lower.split()[-1]
-            team_lower = team.lower().strip()
-            match = injuries_df[
-                injuries_df["team"].str.lower().str.strip().eq(team_lower)
-                & injuries_df["player"].str.lower().str.endswith(last_name)
-            ]
-            if not match.empty:
-                note = str(match.iloc[0].get("injury note","")).strip()
-                injury_type = str(match.iloc[0].get("injury type","")).strip()
-                date_injury = str(match.iloc[0].get("date of injury","")).strip()
-                tooltip = "\n".join([p for p in [injury_type,note,date_injury] if p]) or "Injury info unavailable"
-                safe = html.escape(tooltip)
-                injury_html = f"<span style='cursor:pointer;' onclick='alert({json.dumps(safe)})' title='Tap or click for injury info'>🚑</span>"
-
         results.append({
-            "Player":player,"Team":team,"Injury":injury_html,
-            "Trend Score":round((l5 - l10)/l10 if l10>0 else 0,3),
+            "Player":player,"Team":team,
             "Final Projection":round(lam,2),
-            "Prob ≥ Projection (%) L5":round(p*100,1),
-            "Playable Odds":implied_odds,
+            f"Prob ≥ {line_test} (%)":round(p*100,1),
+            f"Playable Odds ({line_test})":implied_odds,
             "Season Avg":round(np.mean(sog_values),2),
             "Line Adj":round(line_factor_internal,2),
-            "Form Indicator":form_flag,
             "L3 Shots":", ".join(map(str,last3)),
             "L5 Shots":", ".join(map(str,last5)),
             "L10 Shots":", ".join(map(str,last10))
@@ -254,9 +217,8 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
 # Run + Display
 # ---------------------------------------------------------------
 if st.button("🚀 Run Model"):
-    st.info(f"Building model for matchup: **{team_a} vs {team_b}** …")
-    df = build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, teams_df, injuries_df)
-
+    st.info(f"Building model for matchup: **{team_a} vs {team_b}** with line {line_test} …")
+    df = build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, teams_df, injuries_df, line_test)
     df = df.sort_values(["Final Projection", "Line Adj"], ascending=[False, False]).reset_index(drop=True)
     st.session_state.results_raw = df.copy()
     st.success("✅ Model built successfully!")
@@ -264,19 +226,9 @@ if st.button("🚀 Run Model"):
 if "results_raw" in st.session_state and not st.session_state.results_raw.empty:
     df = st.session_state.results_raw.copy()
 
-    def trend_color(v):
-        if pd.isna(v): return "–"
-        if v>0.05: color,symbol="#00B140","▲"
-        elif v<-0.05: color,symbol="#E63946","▼"
-        else: color,symbol="#6C7A89","–"
-        return f"<div style='background:{color};color:#fff;font-weight:600;border-radius:6px;padding:4px 8px;text-align:center;'>{symbol}</div>"
-
-    df["Trend"] = df["Trend Score"].apply(trend_color)
-
-    cols = ["Player","Team","Injury","Trend","Final Projection",
-            "Prob ≥ Projection (%) L5","Playable Odds",
-            "Season Avg","Line Adj","Form Indicator",
-            "L3 Shots","L5 Shots","L10 Shots"]
+    cols = ["Player","Team","Final Projection",
+            f"Prob ≥ {line_test} (%)", f"Playable Odds ({line_test})",
+            "Season Avg","Line Adj","L3 Shots","L5 Shots","L10 Shots"]
     vis = df[[c for c in cols if c in df.columns]]
 
     html_table = vis.to_html(index=False, escape=False)
