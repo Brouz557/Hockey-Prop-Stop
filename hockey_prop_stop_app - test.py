@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Puck Shotz Hockey Analytics — Auto Matchup Test Mode
+# 🏒 Puck Shotz Hockey Analytics — Auto Matchup Model (Fixed ESPN)
 # ---------------------------------------------------------------
 
 import streamlit as st
@@ -13,7 +13,7 @@ import streamlit.components.v1 as components
 # Page Setup
 # ---------------------------------------------------------------
 st.set_page_config(page_title="Puck Shotz Hockey Analytics (Test)", layout="wide", page_icon="🏒")
-st.warning("🧪 TEST MODE — Auto mode: pulls today's NHL games directly from ESPN")
+st.warning("🧪 TEST MODE — You’re editing and running the sandbox version. Changes here will NOT affect your main app.")
 
 # ---------------------------------------------------------------
 # Header
@@ -104,20 +104,7 @@ if skaters_df.empty or shots_df.empty:
 st.success("✅ Data loaded successfully.")
 
 # ---------------------------------------------------------------
-# Normalize Columns
-# ---------------------------------------------------------------
-for df in [skaters_df, shots_df, goalies_df, lines_df, teams_df]:
-    if not df.empty: df.columns = df.columns.str.lower().str.strip()
-
-team_col = next((c for c in skaters_df.columns if "team" in c), None)
-player_col = "name" if "name" in skaters_df.columns else None
-player_col_shots = next((c for c in shots_df.columns if "player" in c or "name" in c), None)
-shots_df = shots_df.rename(columns={player_col_shots: "player"})
-shots_df["player"] = shots_df["player"].astype(str).str.strip()
-game_col = next((c for c in shots_df.columns if "game" in c and "id" in c), None)
-
-# ---------------------------------------------------------------
-# Line Input + Run Button
+# Run Button + Line Input
 # ---------------------------------------------------------------
 col_run, col_line = st.columns([3,1])
 with col_run:
@@ -126,40 +113,50 @@ with col_line:
     line_test = st.number_input("Line to Test", min_value=0.0, max_value=10.0, value=3.5, step=0.5)
 
 # ---------------------------------------------------------------
-# Get Today's NHL Matchups
+# Fetch Today’s ESPN Matchups (Correct Format)
 # ---------------------------------------------------------------
-@st.cache_data(show_spinner=False)
-def get_todays_matchups():
-    today = "2026-01-21"
+def fetch_espn_games():
+    today = datetime.datetime.now().strftime("%Y%m%d")  # ESPN format
+    url = f"https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard?dates={today}"
     try:
-        resp = requests.get(f"https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard?dates={today}", timeout=10)
-        data = resp.json()
+        data = requests.get(url, timeout=10).json()
         games = []
-        for ev in data.get("events", []):
-            c = ev["competitions"][0]["competitors"]
-            home = next(x for x in c if x["homeAway"] == "home")
-            away = next(x for x in c if x["homeAway"] == "away")
-            games.append({
-                "home": home["team"]["displayName"],
-                "away": away["team"]["displayName"],
-                "home_logo": home["team"]["logo"],
-                "away_logo": away["team"]["logo"]
-            })
+        for event in data.get("events", []):
+            c = event.get("competitions", [{}])[0]
+            teams = c.get("competitors", [])
+            if len(teams) == 2:
+                home = teams[0]["team"]
+                away = teams[1]["team"]
+                games.append({
+                    "home": home["abbreviation"],
+                    "away": away["abbreviation"],
+                    "home_full": home["displayName"],
+                    "away_full": away["displayName"],
+                    "home_logo": home["logo"],
+                    "away_logo": away["logo"]
+                })
         return games
-    except Exception:
+    except Exception as e:
+        st.error(f"Could not fetch today's games: {e}")
         return []
 
 # ---------------------------------------------------------------
-# Build Model Function (unchanged)
+# Build Player Model
 # ---------------------------------------------------------------
 @st.cache_data(show_spinner=True)
 def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, teams_df, injuries_df):
     results = []
+    skaters_df.columns = skaters_df.columns.str.lower().str.strip()
+    shots_df.columns = shots_df.columns.str.lower().str.strip()
+    team_col = next((c for c in skaters_df.columns if "team" in c), None)
+    player_col = "name" if "name" in skaters_df.columns else "player"
+    game_col = next((c for c in shots_df.columns if "game" in c and "id" in c), None)
+
     skaters = skaters_df[skaters_df[team_col].isin([team_a, team_b])]
     roster = skaters[[player_col, team_col]].rename(columns={player_col:"player", team_col:"team"}).drop_duplicates("player")
     grouped = {n.lower():g.sort_values(game_col) for n,g in shots_df.groupby(shots_df["player"].str.lower())}
 
-    # --- Line Adjustments ---
+    # Line + Goalie adjustments
     line_adj = {}
     if not lines_df.empty and "line pairings" in lines_df.columns:
         l = lines_df.copy()
@@ -172,7 +169,6 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
         l["line_factor"] = (league_avg / l["sog_against_per_game"]).clip(0.7,1.3)
         line_adj = l.copy()
 
-    # --- Goalie Adjustments ---
     goalie_adj = {}
     if not goalies_df.empty and {"team","shots against","games"}.issubset(goalies_df.columns):
         g = goalies_df.copy()
@@ -183,7 +179,6 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
         g["goalie_factor"] = (g["shots_per_game"] / league_avg_sa).clip(0.7,1.3)
         goalie_adj = g.groupby("team")["goalie_factor"].mean().to_dict()
 
-    # --- Player Loop ---
     for row in roster.itertuples(index=False):
         player, team = row.player, row.team
         df_p = grouped.get(player.lower(), pd.DataFrame())
@@ -196,8 +191,9 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
         last5 = sog_values[-5:] if len(sog_values)>=5 else sog_values
         last10 = sog_values[-10:] if len(sog_values)>=10 else sog_values
         l3, l5, l10 = np.mean(last3), np.mean(last5), np.mean(last10)
-        baseline = (0.55*l10) + (0.30*l5) + (0.15*l3)
+        baseline = (0.55*l10 + 0.30*l5 + 0.15*l3)
 
+        # Adjustments
         line_factor_internal = 1.0
         if isinstance(line_adj, pd.DataFrame) and not line_adj.empty:
             last_name = str(player).split()[-1].lower()
@@ -207,74 +203,67 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
 
         opp_team = team_b if team == team_a else team_a
         goalie_factor = goalie_adj.get(opp_team, 1.0)
-        goalie_term = (goalie_factor - 1.0) * 0.2
-
-        lam_base = baseline * (1 + goalie_term)
+        lam_base = baseline * (1 + (goalie_factor - 1.0) * 0.2)
         if line_factor_internal >= 1:
             scale = 1 + 7.0 * (line_factor_internal - 1.0) ** 1.5
         else:
             scale = max(0.05, line_factor_internal ** 3.5)
         lam = lam_base * scale
 
-        poisson_prob = 1 - poisson.cdf(np.floor(lam) - 1, mu=max(lam, 0.01))
-        final_prob = poisson_prob
+        trend = (l5 - l10)/l10 if l10>0 else 0
+        prob = 1 - poisson.cdf(np.floor(lam) - 1, mu=max(lam,0.01))
+        odds = -100*(prob/(1-prob)) if prob>=0.5 else 100*((1-prob)/prob)
 
         results.append({
-            "Player": player, "Team": team, "Final Projection": round(lam, 2),
-            "Prob ≥ Projection (%) L5": round(final_prob*100, 1), "Line Adj": round(line_factor_internal, 2)
+            "Player": player,
+            "Team": team,
+            "Final Projection": round(lam,2),
+            "Prob ≥ Projection (%) L5": round(prob*100,1),
+            "Playable Odds": f"{'+' if odds>0 else ''}{int(odds)}",
+            "Line Adj": round(line_factor_internal,2),
+            "L3 Shots": ", ".join(map(str,last3)),
+            "L5 Shots": ", ".join(map(str,last5)),
+            "L10 Shots": ", ".join(map(str,last10))
         })
     return pd.DataFrame(results)
 
 # ---------------------------------------------------------------
-# TEAM NAME MAPPING
-# ---------------------------------------------------------------
-TEAM_MAP = {
-    "Anaheim Ducks": "ANA","Arizona Coyotes": "ARI","Boston Bruins": "BOS","Buffalo Sabres": "BUF",
-    "Calgary Flames": "CGY","Carolina Hurricanes": "CAR","Chicago Blackhawks": "CHI","Colorado Avalanche": "COL",
-    "Columbus Blue Jackets": "CBJ","Dallas Stars": "DAL","Detroit Red Wings": "DET","Edmonton Oilers": "EDM",
-    "Florida Panthers": "FLA","Los Angeles Kings": "LAK","Minnesota Wild": "MIN","Montréal Canadiens": "MTL",
-    "Montreal Canadiens": "MTL","Nashville Predators": "NSH","New Jersey Devils": "NJD","New York Islanders": "NYI",
-    "New York Rangers": "NYR","Ottawa Senators": "OTT","Philadelphia Flyers": "PHI","Pittsburgh Penguins": "PIT",
-    "San Jose Sharks": "SJS","Seattle Kraken": "SEA","St. Louis Blues": "STL","Tampa Bay Lightning": "TBL",
-    "Toronto Maple Leafs": "TOR","Vancouver Canucks": "VAN","Vegas Golden Knights": "VGK","Washington Capitals": "WSH",
-    "Winnipeg Jets": "WPG"
-}
-
-# ---------------------------------------------------------------
-# RUN MODEL AUTOMATICALLY FOR ALL MATCHUPS
+# Run Model on All Games
 # ---------------------------------------------------------------
 if run_model:
-    matchups = get_todays_matchups()
-    if not matchups:
+    games = fetch_espn_games()
+    if not games:
         st.warning("⚠️ No NHL games found for today.")
     else:
-        st.subheader("🏒 Today's NHL Matchups")
-        matchup_html = "".join(
-            [f"<div style='text-align:center;margin:6px 0;'><img src='{m['away_logo']}' width='50'> "
-             f"{m['away']}  🆚  <img src='{m['home_logo']}' width='50'> {m['home']}</div>" for m in matchups]
-        )
-        st.markdown(matchup_html, unsafe_allow_html=True)
+        st.subheader("🏒 Today's Matchups")
+        for g in games:
+            st.markdown(
+                f"<div style='display:flex;align-items:center;justify-content:center;gap:20px;'>"
+                f"<img src='{g['away_logo']}' width='50'>"
+                f"<b>{g['away_full']}</b>  @  "
+                f"<b>{g['home_full']}</b>"
+                f"<img src='{g['home_logo']}' width='50'>"
+                f"</div>",
+                unsafe_allow_html=True
+            )
 
-        all_results = []
-        for m in matchups:
-            team_a = TEAM_MAP.get(m["away"], m["away"])
-            team_b = TEAM_MAP.get(m["home"], m["home"])
+        combined = pd.DataFrame()
+        for g in games:
+            team_a, team_b = g["away"], g["home"]
             df = build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, teams_df, injuries_df)
-            if not df.empty:
-                df["Matchup"] = f"{team_a} vs {team_b}"
-                all_results.append(df)
+            combined = pd.concat([combined, df], ignore_index=True)
 
-        if all_results:
-            combined = pd.concat(all_results, ignore_index=True)
-            combined = combined.sort_values(["Matchup", "Final Projection"], ascending=[True, False]).reset_index(drop=True)
-            st.session_state.results_base = combined.copy()
-            st.success("✅ Model built successfully for all matchups!")
+        if not combined.empty:
+            combined = combined.sort_values(["Team","Final Projection"], ascending=[True,False]).reset_index(drop=True)
+            st.session_state.results_raw = combined.copy()
+            st.success("✅ All games processed successfully!")
 
 # ---------------------------------------------------------------
-# DISPLAY TABLE
+# Display Table
 # ---------------------------------------------------------------
-if "results_base" in st.session_state:
-    df = st.session_state.results_base.copy()
+if "results_raw" in st.session_state:
+    df = st.session_state.results_raw.copy()
+
     html_table = df.to_html(index=False, escape=False)
     components.html(f"""
         <style>
@@ -294,5 +283,4 @@ if "results_base" in st.session_state:
         tr:nth-child(even) td {{background-color:#142F52;}}
         </style>
         <div style='overflow-x:auto;height:620px;'>{html_table}</div>
-        """,height=650,scrolling=True)
-
+        """, height=650, scrolling=True)
