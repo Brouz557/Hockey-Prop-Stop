@@ -151,14 +151,15 @@ if "results" in st.session_state:
         match_id = f"{team_a}@{team_b}"
         is_selected = st.session_state.get("selected_match") == match_id
 
-        btn_color = "#1E5A99" if is_selected else "#0A3A67"
-        border = "2px solid #FF4B4B" if is_selected else "1px solid #1E5A99"
+        # ✅ Updated lighter blue colors
+        btn_color = "#2F7DEB" if is_selected else "#1C5FAF"
+        border = "2px solid #FF4B4B" if is_selected else "1px solid #1C5FAF"
         glow = "0 0 12px #FF4B4B" if is_selected else "none"
 
         with cols[i % 3]:
             form_key = f"form_{i}"
             with st.form(form_key):
-                # --- Top blue logo bar (unchanged) ---
+                # --- Top blue logo bar ---
                 st.markdown(f"""
                 <div style="
                     background-color:{btn_color};
