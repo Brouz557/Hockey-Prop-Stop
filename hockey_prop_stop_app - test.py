@@ -1,8 +1,19 @@
 # ---------------------------------------------------------------
-# Simple Login System (stable Streamlit version)
+# 🏒 Puck Shotz Hockey Analytics — Test Mode (Instant Filter + Logos)
 # ---------------------------------------------------------------
 import streamlit as st
+import pandas as pd
+import numpy as np
+import os, requests
+from scipy.stats import poisson
+import streamlit.components.v1 as components
 
+# ✅ set_page_config must be the first Streamlit command
+st.set_page_config(page_title="Puck Shotz Hockey Analytics (Test)", layout="wide", page_icon="🏒")
+
+# ---------------------------------------------------------------
+# Simple Login System (stable Streamlit version)
+# ---------------------------------------------------------------
 USERS = {
     "admin": "test123",
     "guest": "demo456"
@@ -34,15 +45,8 @@ if not st.session_state.authenticated:
 st.sidebar.button("Logout", on_click=lambda: st.session_state.update(authenticated=False))
 
 # ---------------------------------------------------------------
-# 🏒 Puck Shotz Hockey Analytics — Test Mode (Instant Filter + Logos)
+# Main App Start
 # ---------------------------------------------------------------
-import pandas as pd
-import numpy as np
-import os, requests
-from scipy.stats import poisson
-import streamlit.components.v1 as components
-
-st.set_page_config(page_title="Puck Shotz Hockey Analytics (Test)", layout="wide", page_icon="🏒")
 st.warning("🧪 TEST MODE — Sandbox version. Changes here won’t affect your main app.")
 
 # ---------------------------------------------------------------
