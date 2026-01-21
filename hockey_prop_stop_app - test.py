@@ -1,11 +1,11 @@
 # ---------------------------------------------------------------
-# 🏒 Puck Shotz Hockey Analytics — Test Mode (Interactive Line)
+# 🏒 Puck Shotz Hockey Analytics — Test Mode (Auto NHL Matchups)
 # ---------------------------------------------------------------
 
 import streamlit as st
 import pandas as pd
 import numpy as np
-import os, contextlib, io, datetime, pytz, subprocess, html, json
+import os, contextlib, io, datetime, pytz, subprocess, html, json, requests
 from scipy.stats import poisson
 import streamlit.components.v1 as components
 
@@ -117,13 +117,29 @@ shots_df["player"] = shots_df["player"].astype(str).str.strip()
 game_col = next((c for c in shots_df.columns if "game" in c and "id" in c), None)
 
 # ---------------------------------------------------------------
-# Team Selection
+# Fetch Today's NHL Games
 # ---------------------------------------------------------------
-teams = sorted(skaters_df[team_col].dropna().unique().tolist())
-col1, col2 = st.columns(2)
-with col1: team_a = st.selectbox("Select Team A", teams)
-with col2: team_b = st.selectbox("Select Team B", [t for t in teams if t != team_a])
-st.markdown("---")
+def get_todays_matchups():
+    today = datetime.date.today().strftime("%Y-%m-%d")
+    url = f"https://statsapi.web.nhl.com/api/v1/schedule?date={today}"
+    try:
+        r = requests.get(url, timeout=10)
+        data = r.json()
+        games = []
+        for day in data.get("dates", []):
+            for g in day.get("games", []):
+                home = g["teams"]["home"]["team"]
+                away = g["teams"]["away"]["team"]
+                games.append({
+                    "home": home["name"],
+                    "away": away["name"],
+                    "home_logo": f"https://www-league.nhlstatic.com/images/logos/teams-current-primary-light/{home['id']}.svg",
+                    "away_logo": f"https://www-league.nhlstatic.com/images/logos/teams-current-primary-light/{away['id']}.svg"
+                })
+        return games
+    except Exception as e:
+        st.error(f"Could not fetch today's games: {e}")
+        return []
 
 # ---------------------------------------------------------------
 # Run Button + Line Input
@@ -144,6 +160,7 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
     roster = skaters[[player_col, team_col]].rename(columns={player_col:"player", team_col:"team"}).drop_duplicates("player")
     grouped = {n.lower():g.sort_values(game_col) for n,g in shots_df.groupby(shots_df["player"].str.lower())}
 
+    # --- Line Adjustment ---
     line_adj = {}
     if not lines_df.empty and "line pairings" in lines_df.columns:
         l = lines_df.copy()
@@ -156,6 +173,7 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
         l["line_factor"] = (league_avg / l["sog_against_per_game"]).clip(0.7,1.3)
         line_adj = l.copy()
 
+    # --- Goalie Adjustment ---
     goalie_adj = {}
     if not goalies_df.empty and {"team","shots against","games"}.issubset(goalies_df.columns):
         g = goalies_df.copy()
@@ -198,7 +216,7 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
             scale = max(0.05, line_factor_internal ** 3.5)
         lam = lam_base * scale
 
-        # --- Compute empirical + poisson hybrid probability ---
+        # --- Probabilities ---
         hit_l3  = np.mean(np.array(last3)  >= lam)
         hit_l5  = np.mean(np.array(last5)  >= lam)
         hit_l10 = np.mean(np.array(last10) >= lam)
@@ -206,6 +224,7 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
         poisson_prob = 1 - poisson.cdf(np.floor(lam) - 1, mu=max(lam, 0.01))
         final_prob = 0.6 * poisson_prob + 0.4 * empirical_prob
 
+        # --- Form Indicator ---
         form_flag = "⚪ Neutral Form"
         try:
             season_toi = pd.to_numeric(skaters_df.loc[skaters_df[player_col].str.lower()==player.lower(),"icetime"], errors="coerce").mean()
@@ -240,7 +259,7 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
             "Trend Score":round(trend,3),
             "Final Projection":round(lam,2),
             "Prob ≥ Projection (%) L5":round(final_prob*100,1),
-            "Playable Odds":"", # dynamic
+            "Playable Odds":"",
             "Season Avg":round(np.mean(sog_values),2),
             "Line Adj":round(line_factor_internal,2),
             "Form Indicator":form_flag,
@@ -252,13 +271,30 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
     return pd.DataFrame(results)
 
 # ---------------------------------------------------------------
-# Run Model
+# Run Model + Display Matchups
 # ---------------------------------------------------------------
 if run_model:
-    df = build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, teams_df, injuries_df)
-    df = df.sort_values(["Final Projection","Line Adj"], ascending=[False,False]).reset_index(drop=True)
-    st.session_state.results_base = df.copy()
-    st.success("✅ Model built successfully!")
+    matchups = get_todays_matchups()
+    if not matchups:
+        st.warning("No NHL games found for today.")
+    else:
+        st.subheader("🏒 Today's NHL Matchups")
+        matchup_html = "".join(
+            [f"<div style='text-align:center;margin:6px 0;'><img src='{m['away_logo']}' width='50'> "
+             f"{m['away']}  🆚  <img src='{m['home_logo']}' width='50'> {m['home']}</div>" for m in matchups]
+        )
+        st.markdown(matchup_html, unsafe_allow_html=True)
+
+        all_results = []
+        for m in matchups:
+            team_a, team_b = m["away"], m["home"]
+            df_game = build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, teams_df, injuries_df)
+            all_results.append(df_game)
+        if all_results:
+            df = pd.concat(all_results, ignore_index=True)
+            df = df.sort_values(["Team","Final Projection"], ascending=[True,False]).reset_index(drop=True)
+            st.session_state.results_base = df.copy()
+            st.success("✅ Model built successfully for all games!")
 
 # ---------------------------------------------------------------
 # Reactive Table Update
@@ -290,29 +326,4 @@ if "results_base" in st.session_state:
     ).apply(lambda s: "🟢 Strong" if s>=0.75 else ("🟡 Medium" if s>=0.45 else "🔴 Weak"))
 
     cols = ["Player","Team","Injury","Trend","Final Projection",
-            f"Prob ≥ {line_test} (%)",f"Playable Odds ({line_test})",
-            "Season Avg","Line Adj","Form Indicator","Signal Strength",
-            "L3 Shots","L5 Shots","L10 Shots"]
-    vis = df[[c for c in cols if c in df.columns]]
-
-    html_table = vis.to_html(index=False, escape=False)
-    components.html(f"""
-        <style>
-        table {{
-            width:100%;border-collapse:collapse;font-family:'Source Sans Pro',sans-serif;color:#D6D6D6;
-        }}
-        th {{
-            background-color:#0A3A67;color:#FFFFFF;padding:6px;text-align:center;position:sticky;top:0;
-            border-bottom:2px solid #1E5A99;
-        }}
-        td:first-child,th:first-child {{
-            position:sticky;left:0;background-color:#1E5A99;color:#FFFFFF;font-weight:bold;
-        }}
-        td {{
-            background-color:#0F2743;color:#D6D6D6;padding:4px;text-align:center;
-        }}
-        tr:nth-child(even) td {{background-color:#142F52;}}
-        </style>
-        <div style='overflow-x:auto;height:620px;'>{html_table}</div>
-        """,height=650,scrolling=True)
-
+            f"Prob ≥ {line_test} (%)",f"Playable
