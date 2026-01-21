@@ -228,7 +228,7 @@ if run_model:
         st.warning("No valid data generated.")
 
 # ---------------------------------------------------------------
-# Display Buttons + Filtered Table  ✅ "Click to view" on button
+# Display Buttons + Filtered Table (logos + "Click to view")
 # ---------------------------------------------------------------
 if "results" in st.session_state:
     df = st.session_state.results.copy()
@@ -240,26 +240,67 @@ if "results" in st.session_state:
         match_id = f"{team_a}@{team_b}"
         is_selected = st.session_state.get("selected_match") == match_id
 
-        label = f"{team_a} @ {team_b} — Click to view"
-        clicked = cols[i % 3].button(label, key=f"match_{i}", use_container_width=True)
+        btn_color = "#1E5A99" if is_selected else "#0A3A67"
+        border = "2px solid #FF4B4B" if is_selected else "1px solid #1E5A99"
+        glow = "0 0 12px #FF4B4B" if is_selected else "none"
 
-        if clicked:
-            if is_selected:
-                st.session_state.selected_match = None
-                st.session_state.selected_teams = None
-            else:
-                st.session_state.selected_match = match_id
-                st.session_state.selected_teams = {team_a, team_b}
-            st.rerun()
+        button_html = f"""
+        <style>
+        .match-btn-{i} {{
+            background-color:{btn_color};
+            border:{border};
+            border-radius:8px;
+            color:#fff;
+            font-weight:600;
+            font-size:15px;
+            padding:10px 14px;
+            width:100%;
+            cursor:pointer;
+            box-shadow:{glow};
+            display:flex;
+            flex-direction:column;
+            align-items:center;
+            justify-content:center;
+            gap:4px;
+            transition:all 0.15s ease-in-out;
+        }}
+        .match-btn-{i}:hover {{
+            background-color:#1E5A99;
+            box-shadow:0 0 10px #1E5A99;
+        }}
+        .match-btn-{i} span.view {{
+            font-size:12px;
+            color:#CCCCCC;
+            font-weight:400;
+        }}
+        </style>
+        <button class="match-btn-{i}" type="submit" name="match_click" value="{match_id}">
+            <div style="display:flex;align-items:center;gap:6px;">
+                <img src="{m['away_logo']}" height="22">
+                <span>{m['away']}</span>
+                <span style="color:#D6D6D6;">@</span>
+                <span>{m['home']}</span>
+                <img src="{m['home_logo']}" height="22">
+            </div>
+            <span class="view">Click to view</span>
+        </button>
+        """
 
-        if is_selected:
-            cols[i % 3].markdown(
-                f"<div style='text-align:center; margin-top:-8px; color:#FF4B4B; font-weight:bold;'>"
-                f"Selected: {team_a} vs {team_b}</div>",
-                unsafe_allow_html=True,
-            )
+        with cols[i % 3]:
+            form_key = f"form_{i}"
+            with st.form(form_key):
+                st.markdown(button_html, unsafe_allow_html=True)
+                submitted = st.form_submit_button("", use_container_width=True)
+                if submitted:
+                    if is_selected:
+                        st.session_state.selected_match = None
+                        st.session_state.selected_teams = None
+                    else:
+                        st.session_state.selected_match = match_id
+                        st.session_state.selected_teams = {team_a, team_b}
+                    st.rerun()
 
-    # --- Apply filter ---
+    # --- Filter ---
     sel_teams = st.session_state.get("selected_teams")
     if sel_teams:
         df = df[df["Team"].isin(sel_teams)]
