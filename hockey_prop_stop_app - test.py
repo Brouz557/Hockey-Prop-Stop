@@ -146,7 +146,6 @@ def build_model(team_a,team_b,skaters_df,shots_df,goalies_df,lines_df,teams_df,i
     results=[]
     skaters=skaters_df[skaters_df[team_col].isin([team_a,team_b])]
     roster=skaters[[player_col,team_col]].rename(columns={player_col:"player",team_col:"team"}).drop_duplicates("player")
-    # ✅ Fixed parenthesis here
     grouped = {n.lower(): g for n, g in shots_df.groupby(shots_df["player"].str.lower())}
     line_adj={}
     if not lines_df.empty and "line pairings" in lines_df.columns:
@@ -245,9 +244,10 @@ if "results" in st.session_state:
         border = "2px solid #FF4B4B" if is_selected else "1px solid #1E5A99"
         glow = "0 0 12px #FF4B4B" if is_selected else "none"
 
+        # two parts: top = blue logos, bottom = white click area
         button_html = f"""
         <style>
-        .match-btn-{i} {{
+        .match-top-{i} {{
             background-color:{btn_color};
             border:{border};
             border-radius:8px 8px 0 0;
@@ -256,19 +256,13 @@ if "results" in st.session_state:
             font-size:15px;
             padding:10px 14px;
             width:100%;
-            cursor:pointer;
             box-shadow:{glow};
             display:flex;
             align-items:center;
             justify-content:center;
             gap:6px;
-            transition:all 0.15s ease-in-out;
         }}
-        .match-btn-{i}:hover {{
-            background-color:#1E5A99;
-            box-shadow:0 0 10px #1E5A99;
-        }}
-        .click-box-{i} {{
+        .click-bottom-{i} {{
             width:100%;
             background-color:#FFFFFF0A;
             border:1px solid #1E5A99;
@@ -277,19 +271,24 @@ if "results" in st.session_state:
             color:#D6D6D6;
             font-size:13px;
             text-align:center;
-            padding:6px 0;
+            padding:8px 0;
+            font-weight:500;
             cursor:pointer;
+        }}
+        .click-bottom-{i}:hover {{
+            background-color:#1E5A99;
+            color:#FFFFFF;
         }}
         </style>
 
-        <button class="match-btn-{i}" type="submit" name="match_click" value="{match_id}">
+        <div class="match-top-{i}">
             <img src="{m['away_logo']}" height="22">
             <span>{m['away']}</span>
             <span style="color:#D6D6D6;">@</span>
             <span>{m['home']}</span>
             <img src="{m['home_logo']}" height="22">
-        </button>
-        <div class="click-box-{i}">Click to view</div>
+        </div>
+        <button class="click-bottom-{i}" type="submit" name="match_click" value="{match_id}">Click to view</button>
         """
 
         with cols[i % 3]:
@@ -342,3 +341,5 @@ if "results" in st.session_state:
     </style>
     <div style='overflow-x:auto;height:650px;'>{html_table}</div>
     """,height=700,scrolling=True)
+
+
