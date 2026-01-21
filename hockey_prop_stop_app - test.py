@@ -211,8 +211,19 @@ if "results" in st.session_state:
     df["Trend"] = df["Trend Score"].apply(lambda v: "▲" if v > 0.05 else ("▼" if v < -0.05 else "–"))
     df = df.sort_values(["Team","Final Projection","Line Adj"],ascending=[True,False,False])
 
+    # ✅ Dynamically recalc probability and odds when line changes
+    if "line_test_val" in st.session_state:
+        test_line = st.session_state.line_test_val
+        df["Prob ≥ Line (%)"] = df["Final Projection"].apply(
+            lambda lam: round((1 - poisson.cdf(test_line - 1, mu=max(lam, 0.01))) * 100, 1)
+        )
+        df["Playable Odds"] = df["Prob ≥ Line (%)"].apply(lambda p: (
+            f"-{int(round(100 * (p/100) / (1 - p/100)))}" if p >= 50
+            else f"+{int(round(100 * ((1 - p/100) / (p/100))))}"
+        ))
+
     html_table = df[
-        ["Player","Team","Trend","Final Projection","Prob ≥ Projection (%) L5",
+        ["Player","Team","Trend","Final Projection","Prob ≥ Line (%)",
          "Playable Odds","Season Avg","Line Adj","Form Indicator",
          "L3 Shots","L5 Shots","L10 Shots"]
     ].to_html(index=False,escape=False)
