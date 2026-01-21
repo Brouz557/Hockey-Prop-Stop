@@ -132,7 +132,6 @@ col_run,col_line=st.columns([3,1])
 with col_run: run_model=st.button("🚀 Run Model (All Games)")
 with col_line:
     line_test=st.number_input("Line to Test",0.0,10.0,3.5,0.5,key="line_test")
-    # ensure updates trigger dynamic recalculation
     if "line_test_val" not in st.session_state:
         st.session_state.line_test_val=line_test
     elif st.session_state.line_test_val!=line_test:
@@ -251,6 +250,7 @@ if "results" in st.session_state:
                 background-color:{btn_color};border:{border};
                 border-radius:8px;padding:8px 12px;margin:-54px 0 10px 0;width:100%;
                 cursor:pointer;color:#fff;font-weight:600;font-size:15px;
+                pointer-events:none; /* ✅ allows clicks through overlay */
             ">
                 <img src='{m["away_logo"]}' height='22'>
                 <span>{m["away"]}</span>
@@ -292,6 +292,3 @@ if "results" in st.session_state:
     </style>
     <div style='overflow-x:auto;height:650px;'>{html_table}</div>
     """,height=700,scrolling=True)
-
-
-
