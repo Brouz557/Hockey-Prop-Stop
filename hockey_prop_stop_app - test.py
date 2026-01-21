@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Puck Shotz Hockey Analytics — Auto Matchup Model (Fixed ESPN + Player Column)
+# 🏒 Puck Shotz Hockey Analytics — Auto Matchup Model (Overflow Fix)
 # ---------------------------------------------------------------
 
 import streamlit as st
@@ -9,11 +9,8 @@ import os, contextlib, io, datetime, pytz, subprocess, html, json, requests
 from scipy.stats import poisson
 import streamlit.components.v1 as components
 
-# ---------------------------------------------------------------
-# Page Setup
-# ---------------------------------------------------------------
 st.set_page_config(page_title="Puck Shotz Hockey Analytics (Test)", layout="wide", page_icon="🏒")
-st.warning("🧪 TEST MODE — You’re editing and running the sandbox version. Changes here will NOT affect your main app.")
+st.warning("🧪 TEST MODE — Sandbox version. Safe for testing.")
 
 # ---------------------------------------------------------------
 # Header
@@ -24,7 +21,7 @@ st.markdown(
         <img src='https://raw.githubusercontent.com/Brouz557/Hockey-Prop-Stop/694ae2a448204908099ce2899bd479052d01b518/modern%20hockey%20puck%20l.png' width='220'>
     </div>
     <h1 style='text-align:center;color:#1E5A99;'>Puck Shotz Hockey Analytics</h1>
-    <p style='text-align:center;color:#D6D6D6;'>Automatically runs all of today’s NHL matchups — fully integrated player projections.</p>
+    <p style='text-align:center;color:#D6D6D6;'>Automatically runs all of today’s NHL matchups with projection and odds models.</p>
     """,
     unsafe_allow_html=True,
 )
@@ -41,7 +38,7 @@ teams_file   = st.sidebar.file_uploader("TEAMS", type=["xlsx","csv"])
 injuries_file = st.sidebar.file_uploader("INJURIES", type=["xlsx","csv"])
 
 # ---------------------------------------------------------------
-# Helper Functions
+# Load + Helpers
 # ---------------------------------------------------------------
 def load_file(file):
     if not file: return pd.DataFrame()
@@ -62,9 +59,6 @@ def load_data(file_uploader, default_path):
         return load_file(file_uploader)
     return safe_read(default_path)
 
-# ---------------------------------------------------------------
-# Cached Data Load
-# ---------------------------------------------------------------
 @st.cache_data(show_spinner=False)
 def load_all_data(skaters_file, shots_file, goalies_file, lines_file, teams_file, injuries_file):
     base_paths = [".", "data", "/mount/src/hockey-prop-stop/data"]
@@ -73,6 +67,7 @@ def load_all_data(skaters_file, shots_file, goalies_file, lines_file, teams_file
             full = os.path.join(p, name)
             if os.path.exists(full): return full
         return None
+
     with contextlib.redirect_stdout(io.StringIO()):
         skaters = load_data(skaters_file, find_file("Skaters.xlsx") or "Skaters.xlsx")
         shots   = load_data(shots_file,   find_file("SHOT DATA.xlsx") or "SHOT DATA.xlsx")
@@ -103,13 +98,11 @@ if skaters_df.empty or shots_df.empty:
     st.stop()
 st.success("✅ Data loaded successfully.")
 
-# ---------------------------------------------------------------
-# Normalize Columns
-# ---------------------------------------------------------------
+# Normalize columns
 for df in [skaters_df, shots_df, goalies_df, lines_df, teams_df]:
     if not df.empty: df.columns = df.columns.str.lower().str.strip()
 
-# Fix missing player column in shots_df
+# Fix missing player column
 if "player" not in shots_df.columns:
     candidate = next((c for c in shots_df.columns if "player" in c or "name" in c or "skater" in c), None)
     if candidate:
@@ -126,10 +119,10 @@ with col_line:
     line_test = st.number_input("Line to Test", min_value=0.0, max_value=10.0, value=3.5, step=0.5)
 
 # ---------------------------------------------------------------
-# Fetch Today’s ESPN Matchups (Correct Format)
+# ESPN Matchups
 # ---------------------------------------------------------------
 def fetch_espn_games():
-    today = datetime.datetime.now().strftime("%Y%m%d")  # ESPN format
+    today = datetime.datetime.now().strftime("%Y%m%d")
     url = f"https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard?dates={today}"
     try:
         data = requests.get(url, timeout=10).json()
@@ -154,7 +147,7 @@ def fetch_espn_games():
         return []
 
 # ---------------------------------------------------------------
-# Build Player Model
+# Build Model
 # ---------------------------------------------------------------
 @st.cache_data(show_spinner=True)
 def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, teams_df, injuries_df):
@@ -167,6 +160,7 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
     roster = skaters[[player_col, team_col]].rename(columns={player_col:"player", team_col:"team"}).drop_duplicates("player")
     grouped = {n.lower():g.sort_values(game_col) for n,g in shots_df.groupby(shots_df["player"].str.lower())}
 
+    # Line adj + goalie adj
     line_adj = {}
     if not lines_df.empty and "line pairings" in lines_df.columns:
         l = lines_df.copy()
@@ -189,6 +183,7 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
         g["goalie_factor"] = (g["shots_per_game"] / league_avg_sa).clip(0.7,1.3)
         goalie_adj = g.groupby("team")["goalie_factor"].mean().to_dict()
 
+    # Player loop
     for row in roster.itertuples(index=False):
         player, team = row.player, row.team
         df_p = grouped.get(player.lower(), pd.DataFrame())
@@ -219,8 +214,11 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
             scale = max(0.05, line_factor_internal ** 3.5)
         lam = lam_base * scale
 
+        # Safe probability + odds calc
         prob = 1 - poisson.cdf(np.floor(lam) - 1, mu=max(lam,0.01))
+        prob = float(np.clip(prob, 0.001, 0.999))  # <-- clamp
         odds = -100*(prob/(1-prob)) if prob>=0.5 else 100*((1-prob)/prob)
+        odds = float(np.clip(odds, -5000, 5000))   # <-- clamp extreme odds
 
         results.append({
             "Player": player,
@@ -236,7 +234,7 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
     return pd.DataFrame(results)
 
 # ---------------------------------------------------------------
-# Run Model on All Games
+# Run Model
 # ---------------------------------------------------------------
 if run_model:
     games = fetch_espn_games()
