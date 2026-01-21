@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Puck Shotz Hockey Analytics — Test Mode (Inline Logos + Safe Odds)
+# 🏒 Puck Shotz Hockey Analytics — Test Mode (Logo Buttons + Safe Odds)
 # ---------------------------------------------------------------
 import streamlit as st
 import pandas as pd
@@ -238,19 +238,38 @@ if "results" in st.session_state:
     df=st.session_state.results.copy()
     games=st.session_state.matchups
 
-    # matchup buttons with inline logos
-    cols=st.columns(3)
-    for i,m in enumerate(games):
-        html_btn=f"""
-        <div style='display:flex;align-items:center;justify-content:center;gap:6px;'>
-          <span>{m["away"]}</span><img src='{m["away_logo"]}' height='20'>
-          <span style='color:#D6D6D6;'>@</span>
-          <span>{m["home"]}</span><img src='{m["home_logo"]}' height='20'>
-        </div>
+    # matchup buttons with inline logos rendered properly
+    cols = st.columns(3)
+    for i, m in enumerate(games):
+        match_id = f"{m['away']}@{m['home']}"
+        is_selected = st.session_state.get("selected_match") == match_id
+
+        btn_color = "#1E5A99" if is_selected else "#0A3A67"
+        border = "2px solid #FF4B4B" if is_selected else "1px solid #1E5A99"
+        html_btn = f"""
+        <form action="?match={match_id}" method="get">
+          <button type="submit" style="
+              display:flex;align-items:center;justify-content:center;gap:6px;
+              background-color:{btn_color};border:{border};
+              border-radius:8px;padding:8px 12px;margin:4px;width:100%;
+              cursor:pointer;color:#fff;font-weight:600;font-size:15px;
+          ">
+            <img src='{m["away_logo"]}' height='20'>
+            <span>{m["away"]}</span>
+            <span style='color:#D6D6D6;'>@</span>
+            <span>{m["home"]}</span>
+            <img src='{m["home_logo"]}' height='20'>
+          </button>
+        </form>
         """
-        if cols[i%3].button(html_btn, key=f"match_{i}", use_container_width=True):
-            st.session_state.selected_match = f"{m['away']}@{m['home']}" \
-                if st.session_state.get("selected_match") != f"{m['away']}@{m['home']}" else None
+        cols[i % 3].markdown(html_btn, unsafe_allow_html=True)
+
+    query_params = st.query_params
+    if "match" in query_params:
+        clicked_match = query_params["match"]
+        st.session_state.selected_match = (
+            None if st.session_state.get("selected_match") == clicked_match else clicked_match
+        )
 
     sel_match=st.session_state.get("selected_match")
     if sel_match:
