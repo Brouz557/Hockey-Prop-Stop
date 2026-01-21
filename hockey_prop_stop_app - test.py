@@ -228,7 +228,7 @@ if run_model:
         st.warning("No valid data generated.")
 
 # ---------------------------------------------------------------
-# Display Buttons + Filtered Table (logos + "Click to view" BELOW)
+# Display Buttons + Filtered Table (logos + Click text inside)
 # ---------------------------------------------------------------
 if "results" in st.session_state:
     df = st.session_state.results.copy()
@@ -253,29 +253,39 @@ if "results" in st.session_state:
             color:#fff;
             font-weight:600;
             font-size:15px;
-            padding:10px 14px;
+            padding:8px 10px 12px 10px;
             width:100%;
             cursor:pointer;
             box-shadow:{glow};
             display:flex;
+            flex-direction:column;
             align-items:center;
             justify-content:center;
-            gap:6px;
+            gap:4px;
             transition:all 0.15s ease-in-out;
         }}
         .match-btn-{i}:hover {{
             background-color:#1E5A99;
             box-shadow:0 0 10px #1E5A99;
         }}
+        .match-btn-{i} span.view {{
+            font-size:13px;
+            color:#D6D6D6;
+            font-weight:400;
+            margin-top:2px;
+        }}
         </style>
+
         <button class="match-btn-{i}" type="submit" name="match_click" value="{match_id}">
-            <img src="{m['away_logo']}" height="22">
-            <span>{m['away']}</span>
-            <span style="color:#D6D6D6;">@</span>
-            <span>{m['home']}</span>
-            <img src="{m['home_logo']}" height="22">
+            <div style="display:flex;align-items:center;gap:6px;">
+                <img src="{m['away_logo']}" height="22">
+                <span>{m['away']}</span>
+                <span style="color:#D6D6D6;">@</span>
+                <span>{m['home']}</span>
+                <img src="{m['home_logo']}" height="22">
+            </div>
+            <span class="view">Click to view</span>
         </button>
-        <div style="text-align:center;font-size:13px;color:#D6D6D6;margin-top:6px;">Click to view</div>
         """
 
         with cols[i % 3]:
