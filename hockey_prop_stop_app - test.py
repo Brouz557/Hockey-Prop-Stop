@@ -249,7 +249,7 @@ if "results" in st.session_state:
             <div style="
                 display:flex;align-items:center;justify-content:center;gap:6px;
                 background-color:{btn_color};border:{border};
-                border-radius:8px;padding:8px 12px;margin:-40px 0 10px 0;width:100%;
+                border-radius:8px;padding:8px 12px;margin:-50px 0 10px 0;width:100%;
                 cursor:pointer;color:#fff;font-weight:600;font-size:15px;
             ">
                 <img src='{m["away_logo"]}' height='22'>
@@ -292,4 +292,5 @@ if "results" in st.session_state:
     </style>
     <div style='overflow-x:auto;height:650px;'>{html_table}</div>
     """,height=700,scrolling=True)
+
 
