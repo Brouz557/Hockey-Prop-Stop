@@ -151,7 +151,6 @@ if "results" in st.session_state:
         match_id = f"{team_a}@{team_b}"
         is_selected = st.session_state.get("selected_match") == match_id
 
-        # ✅ Updated lighter blue colors
         btn_color = "#2F7DEB" if is_selected else "#1C5FAF"
         border = "2px solid #FF4B4B" if is_selected else "1px solid #1C5FAF"
         glow = "0 0 12px #FF4B4B" if is_selected else "none"
