@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Puck Shotz Hockey Analytics — Test Mode (All Matchups + Line Mapping)
+# 🏒 Puck Shotz Hockey Analytics — Auto Matchup Test Mode
 # ---------------------------------------------------------------
 
 import streamlit as st
@@ -13,7 +13,7 @@ import streamlit.components.v1 as components
 # Page Setup
 # ---------------------------------------------------------------
 st.set_page_config(page_title="Puck Shotz Hockey Analytics (Test)", layout="wide", page_icon="🏒")
-st.warning("🧪 TEST MODE — You’re editing and running the sandbox version. Changes here will NOT affect your main app.")
+st.warning("🧪 TEST MODE — Auto mode: pulls today's NHL games directly from ESPN")
 
 # ---------------------------------------------------------------
 # Header
@@ -24,7 +24,7 @@ st.markdown(
         <img src='https://raw.githubusercontent.com/Brouz557/Hockey-Prop-Stop/694ae2a448204908099ce2899bd479052d01b518/modern%20hockey%20puck%20l.png' width='220'>
     </div>
     <h1 style='text-align:center;color:#1E5A99;'>Puck Shotz Hockey Analytics</h1>
-    <p style='text-align:center;color:#D6D6D6;'>Interactive line testing with Form Indicator, Signal Strength, and Trend colors preserved.</p>
+    <p style='text-align:center;color:#D6D6D6;'>Automatically runs all of today’s NHL matchups — fully integrated player projections.</p>
     """,
     unsafe_allow_html=True,
 )
@@ -117,22 +117,16 @@ shots_df["player"] = shots_df["player"].astype(str).str.strip()
 game_col = next((c for c in shots_df.columns if "game" in c and "id" in c), None)
 
 # ---------------------------------------------------------------
-# Team Selection + Line Input
+# Line Input + Run Button
 # ---------------------------------------------------------------
-teams = sorted(skaters_df[team_col].dropna().unique().tolist())
-col1, col2 = st.columns(2)
-with col1: team_a = st.selectbox("Select Team A", teams)
-with col2: team_b = st.selectbox("Select Team B", [t for t in teams if t != team_a])
-st.markdown("---")
-
 col_run, col_line = st.columns([3,1])
 with col_run:
-    run_model = st.button("🚀 Run Model")
+    run_model = st.button("🚀 Run Model (All Games Today)")
 with col_line:
     line_test = st.number_input("Line to Test", min_value=0.0, max_value=10.0, value=3.5, step=0.5)
 
 # ---------------------------------------------------------------
-# Fetch Today's NHL Matchups
+# Get Today's NHL Matchups
 # ---------------------------------------------------------------
 @st.cache_data(show_spinner=False)
 def get_todays_matchups():
@@ -156,7 +150,7 @@ def get_todays_matchups():
         return []
 
 # ---------------------------------------------------------------
-# Build Model
+# Build Model Function (unchanged)
 # ---------------------------------------------------------------
 @st.cache_data(show_spinner=True)
 def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, teams_df, injuries_df):
@@ -165,6 +159,7 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
     roster = skaters[[player_col, team_col]].rename(columns={player_col:"player", team_col:"team"}).drop_duplicates("player")
     grouped = {n.lower():g.sort_values(game_col) for n,g in shots_df.groupby(shots_df["player"].str.lower())}
 
+    # --- Line Adjustments ---
     line_adj = {}
     if not lines_df.empty and "line pairings" in lines_df.columns:
         l = lines_df.copy()
@@ -177,6 +172,7 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
         l["line_factor"] = (league_avg / l["sog_against_per_game"]).clip(0.7,1.3)
         line_adj = l.copy()
 
+    # --- Goalie Adjustments ---
     goalie_adj = {}
     if not goalies_df.empty and {"team","shots against","games"}.issubset(goalies_df.columns):
         g = goalies_df.copy()
@@ -187,6 +183,7 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
         g["goalie_factor"] = (g["shots_per_game"] / league_avg_sa).clip(0.7,1.3)
         goalie_adj = g.groupby("team")["goalie_factor"].mean().to_dict()
 
+    # --- Player Loop ---
     for row in roster.itertuples(index=False):
         player, team = row.player, row.team
         df_p = grouped.get(player.lower(), pd.DataFrame())
@@ -219,77 +216,37 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
             scale = max(0.05, line_factor_internal ** 3.5)
         lam = lam_base * scale
 
-        hit_l3  = np.mean(np.array(last3)  >= lam)
-        hit_l5  = np.mean(np.array(last5)  >= lam)
-        hit_l10 = np.mean(np.array(last10) >= lam)
-        empirical_prob = np.nanmean([0.55*hit_l10 + 0.30*hit_l5 + 0.15*hit_l3])
         poisson_prob = 1 - poisson.cdf(np.floor(lam) - 1, mu=max(lam, 0.01))
-        final_prob = 0.6 * poisson_prob + 0.4 * empirical_prob
-
-        form_flag = "⚪ Neutral Form"
-        try:
-            season_toi = pd.to_numeric(skaters_df.loc[skaters_df[player_col].str.lower()==player.lower(),"icetime"], errors="coerce").mean()
-            games_played = pd.to_numeric(skaters_df.loc[skaters_df[player_col].str.lower()==player.lower(),"games"], errors="coerce").mean()
-            if season_toi>0 and games_played>=10:
-                avg_toi = (season_toi/games_played)/60.0
-                sog_per60 = (np.mean(sog_values)/avg_toi)*60
-                blended_recent = 0.7*l5+0.3*l10
-                recent_per60 = (blended_recent/avg_toi)*60 if avg_toi>0 else 0
-                usage_delta = (recent_per60-sog_per60)/sog_per60 if sog_per60>0 else 0
-                if usage_delta>0.10: form_flag="🟢 Above-Baseline Form"
-                elif usage_delta<-0.10: form_flag="🔴 Below-Baseline Form"
-        except Exception: pass
-
-        trend=(l5-l10)/l10 if l10>0 else 0
-        injury_html=""
-        if not injuries_df.empty and {"player","team"}.issubset(injuries_df.columns):
-            player_lower=player.lower().strip()
-            last_name=player_lower.split()[-1]
-            team_lower=team.lower().strip()
-            match=injuries_df[injuries_df["team"].str.lower().str.strip().eq(team_lower)&injuries_df["player"].str.lower().str.endswith(last_name)]
-            if not match.empty:
-                note=str(match.iloc[0].get("injury note","")).strip()
-                injury_type=str(match.iloc[0].get("injury type","")).strip()
-                date_injury=str(match.iloc[0].get("date of injury","")).strip()
-                tooltip="\n".join([p for p in [injury_type,note,date_injury] if p]) or "Injury info unavailable"
-                safe=html.escape(tooltip)
-                injury_html=f"<span style='cursor:pointer;' onclick='alert({json.dumps(safe)})' title='Tap or click for injury info'>🚑</span>"
+        final_prob = poisson_prob
 
         results.append({
-            "Player":player,"Team":team,"Injury":injury_html,
-            "Trend Score":round(trend,3),
-            "Final Projection":round(lam,2),
-            "Prob ≥ Projection (%) L5":round(final_prob*100,1),
-            "Playable Odds":"",
-            "Season Avg":round(np.mean(sog_values),2),
-            "Line Adj":round(line_factor_internal,2),
-            "Form Indicator":form_flag,
-            "Signal Strength":"",
-            "L3 Shots":", ".join(map(str,last3)),
-            "L5 Shots":", ".join(map(str,last5)),
-            "L10 Shots":", ".join(map(str,last10))
+            "Player": player, "Team": team, "Final Projection": round(lam, 2),
+            "Prob ≥ Projection (%) L5": round(final_prob*100, 1), "Line Adj": round(line_factor_internal, 2)
         })
     return pd.DataFrame(results)
 
 # ---------------------------------------------------------------
-# Run Model + Display Matchups (with Team Mapping)
+# TEAM NAME MAPPING
 # ---------------------------------------------------------------
 TEAM_MAP = {
-    "Anaheim Ducks": "ANA", "Arizona Coyotes": "ARI", "Boston Bruins": "BOS", "Buffalo Sabres": "BUF",
-    "Calgary Flames": "CGY", "Carolina Hurricanes": "CAR", "Chicago Blackhawks": "CHI", "Colorado Avalanche": "COL",
-    "Columbus Blue Jackets": "CBJ", "Dallas Stars": "DAL", "Detroit Red Wings": "DET", "Edmonton Oilers": "EDM",
-    "Florida Panthers": "FLA", "Los Angeles Kings": "LAK", "Minnesota Wild": "MIN", "Montréal Canadiens": "MTL",
-    "Montreal Canadiens": "MTL", "Nashville Predators": "NSH", "New Jersey Devils": "NJD", "New York Islanders": "NYI",
-    "New York Rangers": "NYR", "Ottawa Senators": "OTT", "Philadelphia Flyers": "PHI", "Pittsburgh Penguins": "PIT",
-    "San Jose Sharks": "SJS", "Seattle Kraken": "SEA", "St. Louis Blues": "STL", "Tampa Bay Lightning": "TBL",
-    "Toronto Maple Leafs": "TOR", "Vancouver Canucks": "VAN", "Vegas Golden Knights": "VGK", "Washington Capitals": "WSH",
+    "Anaheim Ducks": "ANA","Arizona Coyotes": "ARI","Boston Bruins": "BOS","Buffalo Sabres": "BUF",
+    "Calgary Flames": "CGY","Carolina Hurricanes": "CAR","Chicago Blackhawks": "CHI","Colorado Avalanche": "COL",
+    "Columbus Blue Jackets": "CBJ","Dallas Stars": "DAL","Detroit Red Wings": "DET","Edmonton Oilers": "EDM",
+    "Florida Panthers": "FLA","Los Angeles Kings": "LAK","Minnesota Wild": "MIN","Montréal Canadiens": "MTL",
+    "Montreal Canadiens": "MTL","Nashville Predators": "NSH","New Jersey Devils": "NJD","New York Islanders": "NYI",
+    "New York Rangers": "NYR","Ottawa Senators": "OTT","Philadelphia Flyers": "PHI","Pittsburgh Penguins": "PIT",
+    "San Jose Sharks": "SJS","Seattle Kraken": "SEA","St. Louis Blues": "STL","Tampa Bay Lightning": "TBL",
+    "Toronto Maple Leafs": "TOR","Vancouver Canucks": "VAN","Vegas Golden Knights": "VGK","Washington Capitals": "WSH",
     "Winnipeg Jets": "WPG"
 }
 
+# ---------------------------------------------------------------
+# RUN MODEL AUTOMATICALLY FOR ALL MATCHUPS
+# ---------------------------------------------------------------
 if run_model:
     matchups = get_todays_matchups()
     if not matchups:
-        st.warning("No NHL games found for today.")
+        st.warning("⚠️ No NHL games found for today.")
     else:
         st.subheader("🏒 Today's NHL Matchups")
         matchup_html = "".join(
@@ -309,50 +266,16 @@ if run_model:
 
         if all_results:
             combined = pd.concat(all_results, ignore_index=True)
-            for col in ["Team", "Final Projection"]:
-                if col not in combined.columns:
-                    st.warning(f"⚠️ Missing column '{col}' in results — skipping sort on it.")
-            sort_cols = [c for c in ["Team", "Final Projection"] if c in combined.columns]
-            combined = combined.sort_values(sort_cols, ascending=[True, False] if len(sort_cols) == 2 else True)
-            combined = combined.reset_index(drop=True)
+            combined = combined.sort_values(["Matchup", "Final Projection"], ascending=[True, False]).reset_index(drop=True)
             st.session_state.results_base = combined.copy()
             st.success("✅ Model built successfully for all matchups!")
-        else:
-            st.warning("⚠️ No valid data generated for any matchup.")
 
 # ---------------------------------------------------------------
-# Reactive Table Update (with probabilities, odds, and signal)
+# DISPLAY TABLE
 # ---------------------------------------------------------------
 if "results_base" in st.session_state:
     df = st.session_state.results_base.copy()
-
-    lam_vals = df["Final Projection"].astype(float)
-    probs = 1 - poisson.cdf(line_test - 1, mu=lam_vals.clip(lower=0.01))
-    df[f"Prob ≥ {line_test} (%)"] = (probs*100).round(1)
-    odds = np.where(probs>=0.5, -100*(probs/(1-probs)), 100*((1-probs)/probs))
-    df[f"Playable Odds ({line_test})"] = [f"{'+' if o>0 else ''}{int(o)}" for o in odds]
-
-    def trend_color(v):
-        if pd.isna(v): return "–"
-        if v>0.05: color,txt,sym="#00B140","#fff","▲"
-        elif v<-0.05: color,txt,sym="#E63946","#fff","▼"
-        else: color,txt,sym="#6C7A89","#fff","–"
-        return f"<div style='background:{color};color:{txt};font-weight:600;border-radius:6px;padding:4px 8px;text-align:center;'>{sym}</div>"
-    df["Trend"] = df["Trend Score"].apply(trend_color)
-
-    df["Signal Strength"] = (
-        (df["Final Projection"]/df["Final Projection"].max())*0.5 +
-        (df["Line Adj"]/df["Line Adj"].max())*0.3 +
-        (df[f"Prob ≥ {line_test} (%)"]/100)*0.2
-    ).apply(lambda s: "🟢 Strong" if s>=0.75 else ("🟡 Medium" if s>=0.45 else "🔴 Weak"))
-
-    cols = ["Matchup","Player","Team","Injury","Trend","Final Projection",
-            f"Prob ≥ {line_test} (%)",f"Playable Odds ({line_test})",
-            "Season Avg","Line Adj","Form Indicator","Signal Strength",
-            "L3 Shots","L5 Shots","L10 Shots"]
-    vis = df[[c for c in cols if c in df.columns]]
-
-    html_table = vis.to_html(index=False, escape=False)
+    html_table = df.to_html(index=False, escape=False)
     components.html(f"""
         <style>
         table {{
