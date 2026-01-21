@@ -13,25 +13,18 @@ import streamlit.components.v1 as components
 # Page Setup — must be first Streamlit call
 # ---------------------------------------------------------------
 st.set_page_config(page_title="Puck Shotz Hockey Analytics (Test)", layout="wide", page_icon="🏒")
-
-# 🧪 TEST MODE WARNING — Safe sandbox banner
 st.warning("🧪 TEST MODE — You’re editing and running the sandbox version. Changes here will NOT affect your main app.")
 
 # ---------------------------------------------------------------
 # Page Header
 # ---------------------------------------------------------------
-st.markdown(
-    """
-    <div style='text-align:center; background-color:#0A3A67; padding:15px; border-radius:6px; margin-bottom:10px;'>
-        <img src='https://raw.githubusercontent.com/Brouz557/Hockey-Prop-Stop/694ae2a448204908099ce2899bd479052d01b518/modern%20hockey%20puck%20l.png' width='220'>
-    </div>
-    <h1 style='text-align:center;color:#1E5A99;'>Puck Shotz Hockey Analytics</h1>
-    <p style='text-align:center;color:#D6D6D6;'>
-        Team-vs-Team matchup analytics with blended regression and L5-based probabilities
-    </p>
-    """,
-    unsafe_allow_html=True,
-)
+st.markdown("""
+<div style='text-align:center; background-color:#0A3A67; padding:15px; border-radius:6px; margin-bottom:10px;'>
+  <img src='https://raw.githubusercontent.com/Brouz557/Hockey-Prop-Stop/694ae2a448204908099ce2899bd479052d01b518/modern%20hockey%20puck%20l.png' width='220'>
+</div>
+<h1 style='text-align:center;color:#1E5A99;'>Puck Shotz Hockey Analytics</h1>
+<p style='text-align:center;color:#D6D6D6;'>Team-vs-Team matchup analytics with blended regression and L5-based probabilities</p>
+""", unsafe_allow_html=True)
 
 # ---------------------------------------------------------------
 # Sidebar Uploaders
@@ -67,7 +60,7 @@ def load_data(file_uploader, default_path):
     return safe_read(default_path)
 
 # ---------------------------------------------------------------
-# Cached Data Load
+# Load Data
 # ---------------------------------------------------------------
 @st.cache_data(show_spinner=False)
 def load_all_data(skaters_file, shots_file, goalies_file, lines_file, teams_file, injuries_file):
@@ -96,9 +89,6 @@ def load_all_data(skaters_file, shots_file, goalies_file, lines_file, teams_file
                 injuries["player"] = injuries["player"].astype(str).str.strip().str.lower()
     return skaters, shots, goalies, lines, teams, injuries
 
-# ---------------------------------------------------------------
-# Load Data
-# ---------------------------------------------------------------
 skaters_df, shots_df, goalies_df, lines_df, teams_df, injuries_df = load_all_data(
     skaters_file, shots_file, goalies_file, lines_file, teams_file, injuries_file
 )
@@ -107,30 +97,7 @@ if skaters_df.empty or shots_df.empty:
     st.stop()
 st.success("✅ Data loaded successfully.")
 
-# ---------------------------------------------------------------
-# 🕒 Data Last Updated
-# ---------------------------------------------------------------
-def get_shots_file_git_time():
-    tz_cst = pytz.timezone("America/Chicago")
-    for f in ["data/SHOT DATA.xlsx","/mount/src/hockey-prop-stop/data/SHOT DATA.xlsx","SHOT DATA.xlsx"]:
-        if os.path.exists(f):
-            try:
-                git_time_str = subprocess.check_output(
-                    ["git","log","-1","--format=%cd","--date=iso",f],
-                    stderr=subprocess.DEVNULL
-                ).decode().strip()
-                if git_time_str:
-                    git_time = datetime.datetime.fromisoformat(git_time_str.replace("Z","+00:00"))
-                    return git_time.astimezone(tz_cst).strftime("%Y-%m-%d %I:%M %p CST")
-            except Exception:
-                continue
-    return None
-
-st.markdown(f"🕒 **Data last updated:** {get_shots_file_git_time() or 'Unknown'}")
-
-# ---------------------------------------------------------------
-# Normalize Columns
-# ---------------------------------------------------------------
+# Normalize columns
 for df in [skaters_df, shots_df, goalies_df, lines_df, teams_df]:
     if not df.empty: df.columns = df.columns.str.lower().str.strip()
 
@@ -188,12 +155,10 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
     for row in roster.itertuples(index=False):
         player, team = row.player, row.team
         df_p = grouped.get(player.lower(), pd.DataFrame())
-        if df_p.empty:
-            continue
+        if df_p.empty: continue
 
         sog_values = df_p.groupby(game_col)["sog"].sum().tolist()
-        if not sog_values:
-            continue
+        if not sog_values: continue
 
         last3 = sog_values[-3:] if len(sog_values)>=3 else sog_values
         last5 = sog_values[-5:] if len(sog_values)>=5 else sog_values
@@ -204,106 +169,109 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
         pace_factor = 1.0
         try:
             if "on ice corsi" in skaters_df.columns:
-                player_corsi = skaters_df.loc[
-                    skaters_df[player_col].str.lower() == player.lower(), "on ice corsi"
-                ]
+                player_corsi = skaters_df.loc[skaters_df[player_col].str.lower()==player.lower(),"on ice corsi"]
                 league_avg_corsi = skaters_df["on ice corsi"].mean()
-                if not player_corsi.empty and league_avg_corsi > 0:
+                if not player_corsi.empty and league_avg_corsi>0:
                     pace_factor = player_corsi.iloc[0] / league_avg_corsi
-            elif not teams_df.empty and "corsi%" in teams_df.columns and "team" in teams_df.columns:
-                team_corsi = teams_df.loc[
-                    teams_df["team"].str.lower() == team.lower(), "corsi%"
-                ]
+            elif not teams_df.empty and "corsi%" in teams_df.columns:
+                team_corsi = teams_df.loc[teams_df["team"].str.lower()==team.lower(),"corsi%"]
                 league_avg_corsi = teams_df["corsi%"].mean()
-                if not team_corsi.empty and league_avg_corsi > 0:
+                if not team_corsi.empty and league_avg_corsi>0:
                     pace_factor = team_corsi.iloc[0] / league_avg_corsi
         except Exception:
             pace_factor = 1.0
 
-        # --- Base Weighted Shots ---
-        baseline = ((0.55 * l10) + (0.30 * l5) + (0.15 * l3)) * pace_factor
+        baseline = ((0.55*l10)+(0.30*l5)+(0.15*l3))*pace_factor
 
-        # --- Line and Goalie Adjustments ---
+        # --- Line & Goalie effect ---
         line_factor_internal = 1.0
         if isinstance(line_adj, pd.DataFrame) and not line_adj.empty:
             last_name = str(player).split()[-1].lower()
-            m = line_adj[line_adj["line pairings"].str.contains(last_name, case=False, na=False)]
+            m = line_adj[line_adj["line pairings"].str.contains(last_name,case=False,na=False)]
             if not m.empty:
-                line_factor_internal = np.average(m["line_factor"], weights=m["games"])
+                line_factor_internal = np.average(m["line_factor"],weights=m["games"])
+        opp_team = team_b if team==team_a else team_a
+        goalie_factor = goalie_adj.get(opp_team,1.0)
+        goalie_term = (goalie_factor-1.0)*0.2
 
-        opp_team = team_b if team == team_a else team_a
-        goalie_factor = goalie_adj.get(opp_team, 1.0)
-        goalie_term = (goalie_factor - 1.0) * 0.2
-
-        lam_base = baseline * (1 + goalie_term)
-        if line_factor_internal >= 1:
-            scale = 1 + 7.0 * (line_factor_internal - 1.0) ** 1.5
+        lam_base = baseline*(1+goalie_term)
+        if line_factor_internal>=1:
+            scale = 1 + 7.0*(line_factor_internal-1.0)**1.5
         else:
-            scale = max(0.05, line_factor_internal ** 3.5)
-        lam = lam_base * scale
+            scale = max(0.05,line_factor_internal**3.5)
+        lam = lam_base*scale
 
-        # --- Probabilities ---
-        hit_l3  = np.mean(np.array(last3)  >= lam)
-        hit_l5  = np.mean(np.array(last5)  >= lam)
-        hit_l10 = np.mean(np.array(last10) >= lam)
-        empirical_prob = np.nanmean([0.55*hit_l10 + 0.30*hit_l5 + 0.15*hit_l3])
-        poisson_prob = 1 - poisson.cdf(np.floor(lam) - 1, mu=max(lam, 0.01))
-        final_prob = 0.6 * poisson_prob + 0.4 * empirical_prob
-
-        # --- Form Indicator ---
+        trend = (l5-l10)/l10 if l10>0 else 0
         form_flag = "⚪ Neutral Form"
-        try:
-            season_toi = pd.to_numeric(
-                skaters_df.loc[skaters_df[player_col].str.lower()==player.lower(),"icetime"], errors="coerce"
-            ).mean()
-            games_played = pd.to_numeric(
-                skaters_df.loc[skaters_df[player_col].str.lower()==player.lower(),"games"], errors="coerce"
-            ).mean()
-            if season_toi>0 and games_played>=10:
-                avg_toi = (season_toi/games_played)/60.0
-                sog_per60 = (np.mean(sog_values)/avg_toi)*60
-                blended_recent = 0.7*l5+0.3*l10
-                recent_per60 = (blended_recent/avg_toi)*60 if avg_toi>0 else 0
-                usage_delta = (recent_per60-sog_per60)/sog_per60 if sog_per60>0 else 0
-                if usage_delta>0.10: form_flag="🟢 Above-Baseline Form"
-                elif usage_delta<-0.10: form_flag="🔴 Below-Baseline Form"
-        except Exception:
-            pass
 
-        trend = (l5 - l10)/l10 if l10>0 else 0
+        # --- Candidate Strength ---
+        strength = "Weak"
+        if lam >= 4: strength = "Strong"
+        elif lam >= 2.5: strength = "Medium"
 
-        # --- Injury HTML ---
-        injury_html = ""
-        if not injuries_df.empty and {"player","team"}.issubset(injuries_df.columns):
-            player_lower = player.lower().strip()
-            last_name = player_lower.split()[-1]
-            team_lower = team.lower().strip()
-            match = injuries_df[
-                injuries_df["team"].str.lower().str.strip().eq(team_lower)
-                & injuries_df["player"].str.lower().str.endswith(last_name)
-            ]
-            if not match.empty:
-                note = str(match.iloc[0].get("injury note","")).strip()
-                injury_type = str(match.iloc[0].get("injury type","")).strip()
-                date_injury = str(match.iloc[0].get("date of injury","")).strip()
-                tooltip = "\n".join([p for p in [injury_type,note,date_injury] if p]) or "Injury info unavailable"
-                safe = html.escape(tooltip)
-                injury_html = f"<span style='cursor:pointer;' onclick='alert({json.dumps(safe)})' title='Tap or click for injury info'>🚑</span>"
-
-        # --- Append Row ---
         results.append({
-            "Player": player,
-            "Team": team,
-            "Injury": injury_html,
-            "Trend Score": round(trend,3),
-            "Final Projection": round(lam,2),
-            "Prob ≥ Projection (%) L5": round(final_prob*100,1),
-            "Season Avg": round(np.mean(sog_values),2),
-            "Line Adj": round(line_factor_internal,2),
-            "Form Indicator": form_flag,
-            "L3 Shots": ", ".join(map(str,last3)),
-            "L5 Shots": ", ".join(map(str,last5)),
-            "L10 Shots": ", ".join(map(str,last10))
+            "Player":player,"Team":team,
+            "Final Projection":round(lam,2),
+            "Line Adj":round(line_factor_internal,2),
+            "Pace Factor":round(pace_factor,3),
+            "Trend Score":round(trend,3),
+            "Form Indicator":form_flag,
+            "Strength":strength,
+            "L3 Shots":", ".join(map(str,last3)),
+            "L5 Shots":", ".join(map(str,last5)),
+            "L10 Shots":", ".join(map(str,last10))
         })
     return pd.DataFrame(results)
 
+# ---------------------------------------------------------------
+# 🚀 Run Model Button + Line Input
+# ---------------------------------------------------------------
+line_input_col, run_col = st.columns([1,2])
+with line_input_col:
+    target_line = st.number_input("Enter Target Line (e.g., 2.5):", min_value=0.0, step=0.5, value=2.5)
+with run_col:
+    run_button = st.button("🚀 Run Model")
+
+if run_button:
+    st.info(f"Building model for matchup: **{team_a} vs {team_b}** …")
+    df = build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, teams_df, injuries_df)
+    df = df.sort_values(["Final Projection","Line Adj"],ascending=[False,False]).reset_index(drop=True)
+    st.session_state.results_raw = df.copy()
+    st.success("✅ Model built successfully!")
+
+# ---------------------------------------------------------------
+# Display Table + Save
+# ---------------------------------------------------------------
+if "results_raw" in st.session_state and not st.session_state.results_raw.empty:
+    df = st.session_state.results_raw.copy()
+    cols = ["Player","Team","Final Projection","Line Adj","Pace Factor","Form Indicator","Strength","L3 Shots","L5 Shots","L10 Shots"]
+    vis = df[[c for c in cols if c in df.columns]]
+
+    html_table = vis.to_html(index=False,escape=False)
+    components.html(f"""
+    <style>
+      div.scrollable-table {{overflow-x:auto;overflow-y:auto;height:600px;}}
+      table {{width:100%;border-collapse:collapse;font-family:'Source Sans Pro',sans-serif;color:#D6D6D6;}}
+      th {{background-color:#0A3A67;color:#FFFFFF;padding:6px;text-align:center;position:sticky;top:0;}}
+      td:first-child,th:first-child {{position:sticky;left:0;background-color:#1E5A99;color:#FFFFFF;font-weight:bold;}}
+      td {{background-color:#0F2743;color:#D6D6D6;padding:4px;text-align:center;}}
+      tr:nth-child(even) td {{background-color:#142F52;}}
+    </style>
+    <div class='scrollable-table'>{html_table}</div>
+    """,height=620,scrolling=True)
+
+    st.markdown("---")
+    st.subheader("💾 Save or Download Projections")
+    selected_date = st.date_input("Select game date:", datetime.date.today())
+
+    if st.button("💾 Save Projections for Selected Date"):
+        df_to_save = df.copy()
+        df_to_save["Date_Game"] = selected_date.strftime("%Y-%m-%d")
+        df_to_save["Matchup"] = f"{team_a} vs {team_b}"
+        os.makedirs("projections", exist_ok=True)
+        filename = f"{team_a}_vs_{team_b}_{selected_date.strftime('%Y-%m-%d')}.csv"
+        save_path = os.path.join("projections", filename)
+        df_to_save.to_csv(save_path, index=False)
+        st.success(f"✅ Saved projections to **{save_path}**")
+        csv = df_to_save.to_csv(index=False).encode('utf-8')
+        st.download_button("📥 Download Projections CSV", csv, filename, "text/csv")
