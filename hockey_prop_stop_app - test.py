@@ -325,5 +325,48 @@ if "results_base" in st.session_state:
         (df[f"Prob ≥ {line_test} (%)"]/100)*0.2
     ).apply(lambda s: "🟢 Strong" if s>=0.75 else ("🟡 Medium" if s>=0.45 else "🔴 Weak"))
 
-    cols = ["Player","Team","Injury","Trend","Final Projection",
-            f"Prob ≥ {line_test} (%)",f"Playable
+    cols = [
+        "Player","Team","Injury","Trend","Final Projection",
+        f"Prob ≥ {line_test} (%)",f"Playable Odds ({line_test})",
+        "Season Avg","Line Adj","Form Indicator","Signal Strength",
+        "L3 Shots","L5 Shots","L10 Shots"
+    ]
+    vis = df[[c for c in cols if c in df.columns]]
+
+    html_table = vis.to_html(index=False, escape=False)
+    components.html(f"""
+        <style>
+        table {{
+            width:100%;
+            border-collapse:collapse;
+            font-family:'Source Sans Pro',sans-serif;
+            color:#D6D6D6;
+        }}
+        th {{
+            background-color:#0A3A67;
+            color:#FFFFFF;
+            padding:6px;
+            text-align:center;
+            position:sticky;
+            top:0;
+            border-bottom:2px solid #1E5A99;
+        }}
+        td:first-child,th:first-child {{
+            position:sticky;
+            left:0;
+            background-color:#1E5A99;
+            color:#FFFFFF;
+            font-weight:bold;
+        }}
+        td {{
+            background-color:#0F2743;
+            color:#D6D6D6;
+            padding:4px;
+            text-align:center;
+        }}
+        tr:nth-child(even) td {{
+            background-color:#142F52;
+        }}
+        </style>
+        <div style='overflow-x:auto;height:620px;'>{html_table}</div>
+        """, height=650, scrolling=True)
