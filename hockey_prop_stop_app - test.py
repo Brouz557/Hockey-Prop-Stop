@@ -228,24 +228,26 @@ if run_model:
         st.warning("No valid data generated.")
 
 # ---------------------------------------------------------------
-# Display Buttons + Table
+# Display Buttons + Filtered Table  ✅ Highlighted Toggle
 # ---------------------------------------------------------------
 if "results" in st.session_state:
-    df=st.session_state.results.copy()
-    games=st.session_state.matchups
+    df = st.session_state.results.copy()
+    games = st.session_state.matchups
 
     cols = st.columns(3)
     for i, m in enumerate(games):
-        match_id = f"{m['away']}@{m['home']}"
+        team_a, team_b = m["away"], m["home"]
+        match_id = f"{team_a}@{team_b}"
         is_selected = st.session_state.get("selected_match") == match_id
+
+        # Highlighted glow for selected matchup
         btn_color = "#1E5A99" if is_selected else "#0A3A67"
+        glow = "0 0 14px #FF4B4B" if is_selected else "none"
         border = "2px solid #FF4B4B" if is_selected else "1px solid #1E5A99"
 
         with cols[i % 3]:
-            # Real clickable button
             clicked = st.button(f"Select {match_id}", key=f"match_{i}", use_container_width=True)
 
-            # HTML visual overlay
             html_btn = f"""
             <div style="
                 display:flex;
@@ -262,6 +264,8 @@ if "results" in st.session_state:
                 font-weight:600;
                 font-size:15px;
                 cursor:pointer;
+                box-shadow:{glow};
+                transition:all 0.2s ease-in-out;
             ">
                 <img src="{m['away_logo']}" height="22">
                 <span>{m['away']}</span>
@@ -272,24 +276,31 @@ if "results" in st.session_state:
             """
             st.markdown(html_btn, unsafe_allow_html=True)
 
-            # Handle click toggle + force rerun
             if clicked:
                 if is_selected:
                     st.session_state.selected_match = None
+                    st.session_state.selected_teams = None
                 else:
                     st.session_state.selected_match = match_id
+                    st.session_state.selected_teams = {team_a, team_b}
                 st.rerun()
 
-    sel_match=st.session_state.get("selected_match")
-    if sel_match:
-        df=df[df["Matchup"]==sel_match]
+    sel_teams = st.session_state.get("selected_teams")
+    if sel_teams:
+        df = df[df["Team"].isin(sel_teams)]
+        st.markdown(f"### Showing results for: **{' vs '.join(sel_teams)}**")
+    else:
+        st.markdown("### Showing results for: **All Teams**")
 
-    df["Trend"]=df["Trend Score"].apply(lambda v:"▲" if v>0.05 else("▼" if v<-0.05 else "–"))
-    df=df.sort_values(["Team","Final Projection","Line Adj"],ascending=[True,False,False])
+    df["Trend"] = df["Trend Score"].apply(lambda v: "▲" if v > 0.05 else ("▼" if v < -0.05 else "–"))
+    df = df.sort_values(["Team", "Final Projection", "Line Adj"], ascending=[True, False, False])
 
-    html_table=df[["Player","Team","Trend","Final Projection","Prob ≥ Projection (%) L5",
-                   "Playable Odds","Season Avg","Line Adj","Form Indicator",
-                   "L3 Shots","L5 Shots","L10 Shots"]].to_html(index=False,escape=False)
+    html_table = df[
+        ["Player","Team","Trend","Final Projection","Prob ≥ Projection (%) L5",
+         "Playable Odds","Season Avg","Line Adj","Form Indicator",
+         "L3 Shots","L5 Shots","L10 Shots"]
+    ].to_html(index=False, escape=False)
+
     components.html(f"""
     <style>
     table {{
