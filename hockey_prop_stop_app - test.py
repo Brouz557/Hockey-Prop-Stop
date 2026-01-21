@@ -1,10 +1,10 @@
 # ---------------------------------------------------------------
-# 🏒 Puck Shotz Hockey Analytics — Test Mode (Logo Buttons + Safe Odds)
+# 🏒 Puck Shotz Hockey Analytics — Test Mode (Instant Filter + Logos)
 # ---------------------------------------------------------------
 import streamlit as st
 import pandas as pd
 import numpy as np
-import os, contextlib, io, datetime, pytz, subprocess, html, json, requests
+import os, contextlib, io, requests, html, json
 from scipy.stats import poisson
 import streamlit.components.v1 as components
 
@@ -19,7 +19,7 @@ st.markdown("""
   <img src='https://raw.githubusercontent.com/Brouz557/Hockey-Prop-Stop/694ae2a448204908099ce2899bd479052d01b518/modern%20hockey%20puck%20l.png' width='220'>
 </div>
 <h1 style='text-align:center;color:#1E5A99;'>Puck Shotz Hockey Analytics</h1>
-<p style='text-align:center;color:#D6D6D6;'>Automated matchup detection with inline logos + full metrics.</p>
+<p style='text-align:center;color:#D6D6D6;'>Automatically runs all of today’s NHL matchups with inline logos and instant team filters.</p>
 """, unsafe_allow_html=True)
 
 # ---------------------------------------------------------------
@@ -140,7 +140,7 @@ def build_model(team_a,team_b,skaters_df,shots_df,goalies_df,lines_df,teams_df,i
     results=[]
     skaters=skaters_df[skaters_df[team_col].isin([team_a,team_b])]
     roster=skaters[[player_col,team_col]].rename(columns={player_col:"player",team_col:"team"}).drop_duplicates("player")
-    grouped={n.lower():g.sort_values(game_col) for n,g in shots_df.groupby(shots_df["player"].str.lower())}
+    grouped={n.lower():g for n,g in shots_df.groupby(shots_df["player"].str.lower())}
     line_adj={}
     if not lines_df.empty and "line pairings" in lines_df.columns:
         l=lines_df.copy()
@@ -174,30 +174,20 @@ def build_model(team_a,team_b,skaters_df,shots_df,goalies_df,lines_df,teams_df,i
         last10=sog_vals[-10:] if len(sog_vals)>=10 else sog_vals
         l3,l5,l10=np.mean(last3),np.mean(last5),np.mean(last10)
         baseline=(0.55*l10)+(0.3*l5)+(0.15*l3)
-
         line_factor_internal=1.0
         if isinstance(line_adj,pd.DataFrame) and not line_adj.empty:
             last_name=str(player).split()[-1].lower()
             m=line_adj[line_adj["line pairings"].str.contains(last_name,case=False,na=False)]
             if not m.empty: line_factor_internal=np.average(m["line_factor"],weights=m["games"])
-
         opp_team=team_b if team==team_a else team_a
         goalie_factor=goalie_adj.get(opp_team,1.0)
-        goalie_term=(goalie_factor-1.0)*0.2
-        lam_base=baseline*(1+goalie_term)
-        scale=1+7*(line_factor_internal-1)**1.5 if line_factor_internal>=1 else max(0.05,line_factor_internal**3.5)
-        lam=lam_base*scale
-
-        # --- Safe odds calculation ---
-        poisson_prob=1-poisson.cdf(np.floor(lam)-1,mu=max(lam,0.01))
-        poisson_prob=float(np.clip(poisson_prob,0.0001,0.9999))
+        lam=baseline*(1+(goalie_factor-1.0)*0.2)*line_factor_internal
+        poisson_prob=float(np.clip(1-poisson.cdf(np.floor(lam)-1,mu=max(lam,0.01)),0.0001,0.9999))
         odds=-100*(poisson_prob/(1-poisson_prob)) if poisson_prob>=0.5 else 100*((1-poisson_prob)/poisson_prob)
         odds=float(np.clip(odds,-10000,10000))
         playable_odds=f"{'+' if odds>0 else ''}{int(odds)}"
-
         trend=(l5-l10)/l10 if l10>0 else 0
         form_flag="⚪ Neutral Form"
-
         results.append({
             "Player":player,"Team":team,"Trend Score":round(trend,3),
             "Final Projection":round(lam,2),
@@ -238,38 +228,33 @@ if "results" in st.session_state:
     df=st.session_state.results.copy()
     games=st.session_state.matchups
 
-    # matchup buttons with inline logos rendered properly
+    # matchup buttons with logos (instant filtering)
     cols = st.columns(3)
     for i, m in enumerate(games):
         match_id = f"{m['away']}@{m['home']}"
         is_selected = st.session_state.get("selected_match") == match_id
-
         btn_color = "#1E5A99" if is_selected else "#0A3A67"
         border = "2px solid #FF4B4B" if is_selected else "1px solid #1E5A99"
-        html_btn = f"""
-        <form action="?match={match_id}" method="get">
-          <button type="submit" style="
-              display:flex;align-items:center;justify-content:center;gap:6px;
-              background-color:{btn_color};border:{border};
-              border-radius:8px;padding:8px 12px;margin:4px;width:100%;
-              cursor:pointer;color:#fff;font-weight:600;font-size:15px;
-          ">
-            <img src='{m["away_logo"]}' height='20'>
-            <span>{m["away"]}</span>
-            <span style='color:#D6D6D6;'>@</span>
-            <span>{m["home"]}</span>
-            <img src='{m["home_logo"]}' height='20'>
-          </button>
-        </form>
-        """
-        cols[i % 3].markdown(html_btn, unsafe_allow_html=True)
 
-    query_params = st.query_params
-    if "match" in query_params:
-        clicked_match = query_params["match"]
-        st.session_state.selected_match = (
-            None if st.session_state.get("selected_match") == clicked_match else clicked_match
-        )
+        with cols[i % 3]:
+            clicked = st.button(match_id, key=f"match_{i}", use_container_width=True)
+            html_btn = f"""
+            <div style="
+                display:flex;align-items:center;justify-content:center;gap:6px;
+                background-color:{btn_color};border:{border};
+                border-radius:8px;padding:8px 12px;margin:-36px 0 10px 0;width:100%;
+                cursor:pointer;color:#fff;font-weight:600;font-size:15px;
+            ">
+                <img src='{m["away_logo"]}' height='20'>
+                <span>{m["away"]}</span>
+                <span style='color:#D6D6D6;'>@</span>
+                <span>{m["home"]}</span>
+                <img src='{m["home_logo"]}' height='20'>
+            </div>
+            """
+            st.markdown(html_btn, unsafe_allow_html=True)
+            if clicked:
+                st.session_state.selected_match = None if is_selected else match_id
 
     sel_match=st.session_state.get("selected_match")
     if sel_match:
