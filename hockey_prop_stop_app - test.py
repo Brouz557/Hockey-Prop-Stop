@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Puck Shotz Hockey Analytics — Test Mode + Interactive Line Testing
+# 🏒 Puck Shotz Hockey Analytics — Test Mode (Interactive Line)
 # ---------------------------------------------------------------
 
 import streamlit as st
@@ -24,15 +24,13 @@ st.markdown(
         <img src='https://raw.githubusercontent.com/Brouz557/Hockey-Prop-Stop/694ae2a448204908099ce2899bd479052d01b518/modern%20hockey%20puck%20l.png' width='220'>
     </div>
     <h1 style='text-align:center;color:#1E5A99;'>Puck Shotz Hockey Analytics</h1>
-    <p style='text-align:center;color:#D6D6D6;'>
-        Interactive line testing — adjust the line value to see probability and odds change.
-    </p>
+    <p style='text-align:center;color:#D6D6D6;'>Interactive line testing with Form Indicator, Signal Strength, and Trend colors preserved.</p>
     """,
     unsafe_allow_html=True,
 )
 
 # ---------------------------------------------------------------
-# Sidebar Uploaders + Line Input
+# Sidebar Uploaders
 # ---------------------------------------------------------------
 st.sidebar.header("📂 Upload Data Files (.xlsx or .csv)")
 skaters_file = st.sidebar.file_uploader("Skaters", type=["xlsx","csv"])
@@ -41,9 +39,6 @@ goalies_file = st.sidebar.file_uploader("GOALTENDERS", type=["xlsx","csv"])
 lines_file   = st.sidebar.file_uploader("LINE DATA", type=["xlsx","csv"])
 teams_file   = st.sidebar.file_uploader("TEAMS", type=["xlsx","csv"])
 injuries_file = st.sidebar.file_uploader("INJURIES", type=["xlsx","csv"])
-
-# 🔢 New interactive line testing input
-line_test = st.sidebar.number_input("📊 Enter line to test", min_value=0.0, max_value=10.0, value=2.5, step=0.5)
 
 # ---------------------------------------------------------------
 # Helper Functions
@@ -131,10 +126,19 @@ with col2: team_b = st.selectbox("Select Team B", [t for t in teams if t != team
 st.markdown("---")
 
 # ---------------------------------------------------------------
+# Run Button + Line Input
+# ---------------------------------------------------------------
+col_run, col_line = st.columns([3,1])
+with col_run:
+    run_model = st.button("🚀 Run Model")
+with col_line:
+    line_test = st.number_input("Line to Test", min_value=0.0, max_value=10.0, value=3.5, step=0.5)
+
+# ---------------------------------------------------------------
 # Build Model
 # ---------------------------------------------------------------
 @st.cache_data(show_spinner=True)
-def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, teams_df, injuries_df, line_test):
+def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, teams_df, injuries_df):
     results = []
     skaters = skaters_df[skaters_df[team_col].isin([team_a, team_b])]
     roster = skaters[[player_col, team_col]].rename(columns={player_col:"player", team_col:"team"}).drop_duplicates("player")
@@ -194,19 +198,53 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
             scale = max(0.05, line_factor_internal ** 3.5)
         lam = lam_base * scale
 
-        # --- Use user-entered test line ---
-        prob = 1 - poisson.cdf(line_test - 1, mu=max(lam, 0.01))
-        p = min(max(prob, 0.001), 0.999)
-        odds = -100*(p/(1-p)) if p>=0.5 else 100*((1-p)/p)
-        implied_odds = f"{'+' if odds>0 else ''}{int(odds)}"
+        # --- Compute empirical + poisson hybrid probability ---
+        hit_l3  = np.mean(np.array(last3)  >= lam)
+        hit_l5  = np.mean(np.array(last5)  >= lam)
+        hit_l10 = np.mean(np.array(last10) >= lam)
+        empirical_prob = np.nanmean([0.55*hit_l10 + 0.30*hit_l5 + 0.15*hit_l3])
+        poisson_prob = 1 - poisson.cdf(np.floor(lam) - 1, mu=max(lam, 0.01))
+        final_prob = 0.6 * poisson_prob + 0.4 * empirical_prob
+
+        form_flag = "⚪ Neutral Form"
+        try:
+            season_toi = pd.to_numeric(skaters_df.loc[skaters_df[player_col].str.lower()==player.lower(),"icetime"], errors="coerce").mean()
+            games_played = pd.to_numeric(skaters_df.loc[skaters_df[player_col].str.lower()==player.lower(),"games"], errors="coerce").mean()
+            if season_toi>0 and games_played>=10:
+                avg_toi = (season_toi/games_played)/60.0
+                sog_per60 = (np.mean(sog_values)/avg_toi)*60
+                blended_recent = 0.7*l5+0.3*l10
+                recent_per60 = (blended_recent/avg_toi)*60 if avg_toi>0 else 0
+                usage_delta = (recent_per60-sog_per60)/sog_per60 if sog_per60>0 else 0
+                if usage_delta>0.10: form_flag="🟢 Above-Baseline Form"
+                elif usage_delta<-0.10: form_flag="🔴 Below-Baseline Form"
+        except Exception: pass
+
+        trend=(l5-l10)/l10 if l10>0 else 0
+        injury_html=""
+        if not injuries_df.empty and {"player","team"}.issubset(injuries_df.columns):
+            player_lower=player.lower().strip()
+            last_name=player_lower.split()[-1]
+            team_lower=team.lower().strip()
+            match=injuries_df[injuries_df["team"].str.lower().str.strip().eq(team_lower)&injuries_df["player"].str.lower().str.endswith(last_name)]
+            if not match.empty:
+                note=str(match.iloc[0].get("injury note","")).strip()
+                injury_type=str(match.iloc[0].get("injury type","")).strip()
+                date_injury=str(match.iloc[0].get("date of injury","")).strip()
+                tooltip="\n".join([p for p in [injury_type,note,date_injury] if p]) or "Injury info unavailable"
+                safe=html.escape(tooltip)
+                injury_html=f"<span style='cursor:pointer;' onclick='alert({json.dumps(safe)})' title='Tap or click for injury info'>🚑</span>"
 
         results.append({
-            "Player":player,"Team":team,
+            "Player":player,"Team":team,"Injury":injury_html,
+            "Trend Score":round(trend,3),
             "Final Projection":round(lam,2),
-            f"Prob ≥ {line_test} (%)":round(p*100,1),
-            f"Playable Odds ({line_test})":implied_odds,
+            "Prob ≥ Projection (%) L5":round(final_prob*100,1),
+            "Playable Odds":"", # dynamic
             "Season Avg":round(np.mean(sog_values),2),
             "Line Adj":round(line_factor_internal,2),
+            "Form Indicator":form_flag,
+            "Signal Strength":"",
             "L3 Shots":", ".join(map(str,last3)),
             "L5 Shots":", ".join(map(str,last5)),
             "L10 Shots":", ".join(map(str,last10))
@@ -214,21 +252,47 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
     return pd.DataFrame(results)
 
 # ---------------------------------------------------------------
-# Run + Display
+# Run Model
 # ---------------------------------------------------------------
-if st.button("🚀 Run Model"):
-    st.info(f"Building model for matchup: **{team_a} vs {team_b}** with line {line_test} …")
-    df = build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, teams_df, injuries_df, line_test)
-    df = df.sort_values(["Final Projection", "Line Adj"], ascending=[False, False]).reset_index(drop=True)
-    st.session_state.results_raw = df.copy()
+if run_model:
+    df = build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, teams_df, injuries_df)
+    df = df.sort_values(["Final Projection","Line Adj"], ascending=[False,False]).reset_index(drop=True)
+    st.session_state.results_base = df.copy()
     st.success("✅ Model built successfully!")
 
-if "results_raw" in st.session_state and not st.session_state.results_raw.empty:
-    df = st.session_state.results_raw.copy()
+# ---------------------------------------------------------------
+# Reactive Table Update
+# ---------------------------------------------------------------
+if "results_base" in st.session_state:
+    df = st.session_state.results_base.copy()
 
-    cols = ["Player","Team","Final Projection",
-            f"Prob ≥ {line_test} (%)", f"Playable Odds ({line_test})",
-            "Season Avg","Line Adj","L3 Shots","L5 Shots","L10 Shots"]
+    # --- Update Probabilities and Odds for chosen line ---
+    lam_vals = df["Final Projection"].astype(float)
+    probs = 1 - poisson.cdf(line_test - 1, mu=lam_vals.clip(lower=0.01))
+    df[f"Prob ≥ {line_test} (%)"] = (probs*100).round(1)
+    odds = np.where(probs>=0.5, -100*(probs/(1-probs)), 100*((1-probs)/probs))
+    df[f"Playable Odds ({line_test})"] = [f"{'+' if o>0 else ''}{int(o)}" for o in odds]
+
+    # --- Trend color ---
+    def trend_color(v):
+        if pd.isna(v): return "–"
+        if v>0.05: color,txt,sym="#00B140","#fff","▲"
+        elif v<-0.05: color,txt,sym="#E63946","#fff","▼"
+        else: color,txt,sym="#6C7A89","#fff","–"
+        return f"<div style='background:{color};color:{txt};font-weight:600;border-radius:6px;padding:4px 8px;text-align:center;'>{sym}</div>"
+    df["Trend"] = df["Trend Score"].apply(trend_color)
+
+    # --- Signal Strength ---
+    df["Signal Strength"] = (
+        (df["Final Projection"]/df["Final Projection"].max())*0.5 +
+        (df["Line Adj"]/df["Line Adj"].max())*0.3 +
+        (df[f"Prob ≥ {line_test} (%)"]/100)*0.2
+    ).apply(lambda s: "🟢 Strong" if s>=0.75 else ("🟡 Medium" if s>=0.45 else "🔴 Weak"))
+
+    cols = ["Player","Team","Injury","Trend","Final Projection",
+            f"Prob ≥ {line_test} (%)",f"Playable Odds ({line_test})",
+            "Season Avg","Line Adj","Form Indicator","Signal Strength",
+            "L3 Shots","L5 Shots","L10 Shots"]
     vis = df[[c for c in cols if c in df.columns]]
 
     html_table = vis.to_html(index=False, escape=False)
