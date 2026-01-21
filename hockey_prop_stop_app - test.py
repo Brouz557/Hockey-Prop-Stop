@@ -139,6 +139,28 @@ with col_line:
             st.rerun()
 
 # ---------------------------------------------------------------
+# Run Model + Combine Games
+# ---------------------------------------------------------------
+if run_model:
+    all_tables = []
+    for m in games:
+        team_a, team_b = m["away"], m["home"]
+
+        # --- Build model for this matchup ---
+        df_match = build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, teams_df, injuries_df)
+        if not df_match.empty:
+            df_match["Matchup"] = f"{team_a}@{team_b}"
+            all_tables.append(df_match)
+
+    if all_tables:
+        combined = pd.concat(all_tables, ignore_index=True)
+        st.session_state.results = combined
+        st.session_state.matchups = games
+        st.success("✅ Model built for all games.")
+    else:
+        st.warning("⚠️ No valid data generated.")
+
+# ---------------------------------------------------------------
 # Display Buttons + Filtered Table (logos + white click box)
 # ---------------------------------------------------------------
 if "results" in st.session_state:
