@@ -371,3 +371,59 @@ if "results" in st.session_state:
     </style>
     <div style='overflow-x:auto;height:650px;'>{html_table}</div>
     """,height=700,scrolling=True)
+    
+    # ---------------------------------------------------------------
+# 🎯 Parlay Probability Calculator
+# ---------------------------------------------------------------
+st.markdown("### 🎯 Parlay Probability Calculator")
+st.caption("Select multiple players from the table above to estimate the combined probability and fair odds of all selected players hitting their shot lines. This is a statistical combination only (not a bet).")
+
+# Ensure 'Prob ≥ Line (%)' exists in dataframe
+if "Prob ≥ Line (%)" in df.columns:
+    # Multiselect player picker
+    selected_players = st.multiselect(
+        "Select Players for Parlay",
+        options=df["Player"].unique(),
+        help="Choose players to include in your parlay"
+    )
+
+    # Correlation adjustment slider
+    corr_adj = st.slider(
+        "Correlation Adjustment (%)",
+        min_value=-10,
+        max_value=10,
+        value=0,
+        step=1,
+        help="Adjust for overlap between legs (e.g. teammates or related outcomes)"
+    )
+
+    if selected_players:
+        subset = df[df["Player"].isin(selected_players)][["Player", "Prob ≥ Line (%)"]].copy()
+        subset["Prob ≥ Line (%)"] = pd.to_numeric(subset["Prob ≥ Line (%)"], errors="coerce").fillna(0)
+        probs = subset["Prob ≥ Line (%)"].to_numpy() / 100.0
+
+        # Apply correlation adjustment
+        adjustment_factor = 1 + (corr_adj / 100)
+        combined_prob = np.prod(probs) * adjustment_factor
+        combined_prob = np.clip(combined_prob, 0, 1)
+
+        # Convert to American odds
+        if combined_prob >= 0.5:
+            american_odds = -100 * (combined_prob / (1 - combined_prob))
+        else:
+            american_odds = 100 * ((1 - combined_prob) / combined_prob)
+
+        st.markdown(f"**Selected Legs:** {len(selected_players)}")
+        st.markdown(f"**Combined Probability:** {combined_prob*100:.2f}%")
+
+        odds_str = f\"{int(round(american_odds, -1)):+}\"
+        st.markdown(f"**Fair Odds:** {odds_str}")
+
+        # Optional table of legs
+        st.dataframe(subset.reset_index(drop=True), use_container_width=True)
+    else:
+        st.info("Select one or more players to calculate a parlay probability.")
+else:
+    st.warning("⚠️ Probability column not found. Run the model first to enable parlay calculations.")
+
+
