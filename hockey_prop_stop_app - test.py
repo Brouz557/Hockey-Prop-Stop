@@ -373,7 +373,7 @@ if "results" in st.session_state:
     """,height=700,scrolling=True)
     
 # ---------------------------------------------------------------
-# 🧮 Parlay Calculator (Player-Specific Lines)
+# 🧮 Parlay Calculator (Search + Line Overrides)
 # ---------------------------------------------------------------
 
 st.markdown("## 🧮 Parlay Calculator")
@@ -381,34 +381,33 @@ st.markdown("## 🧮 Parlay Calculator")
 import numpy as np
 from scipy.stats import poisson
 
-# Make a working copy from your current df
-df_parlay = df.copy()
+# Copy player list
+player_list = df["Player"].unique().tolist()
+player_list.sort()
 
-# Let users pick players + custom lines
-st.markdown("Select players and set custom lines to build a parlay:")
+# --- Multi-select: choose any number of players ---
+selected_players = st.multiselect(
+    "Search and select players to include in your parlay:",
+    options=player_list,
+    default=[],
+    key="parlay_players"
+)
 
-selected_players = []
-custom_lines = []
+# --- Custom line inputs only for chosen players ---
+player_lines = {}
+for player in selected_players:
+    default_line = float(st.session_state.get("line_test_val", 3.5))
+    player_lines[player] = st.number_input(
+        f"{player} line", 0.0, 10.0, default_line, 0.5, key=f"line_{player}"
+    )
 
-for i, row in df_parlay.iterrows():
-    c1, c2, c3 = st.columns([2, 1, 1])
-    with c1:
-        include = st.checkbox(f"{row['Player']} ({row['Team']})", key=f"inc_{i}")
-    with c2:
-        custom_line = st.number_input(
-            "Line", 0.0, 10.0, float(st.session_state.get("line_test_val", 3.5)),
-            0.5, key=f"line_{i}"
-        )
-    with c3:
-        if include:
-            selected_players.append(row)
-            custom_lines.append(custom_line)
-
-# --- Compute parlay probability and odds ---
+# --- Compute parlay probability + odds ---
 if selected_players:
     probs = []
-    for player_row, line_val in zip(selected_players, custom_lines):
-        lam = player_row["Final Projection"]
+    for player in selected_players:
+        line_val = player_lines[player]
+        row = df[df["Player"] == player].iloc[0]
+        lam = row["Final Projection"]
         p = 1 - poisson.cdf(line_val - 1, mu=max(lam, 0.01))
         probs.append(np.clip(p, 0.0001, 0.9999))
 
@@ -425,4 +424,5 @@ if selected_players:
     st.info(f"💰 **Implied Parlay Odds:** {'+' if parlay_odds>0 else ''}{int(round(parlay_odds))}")
 
 else:
-    st.warning("Select at least one player to build a parlay.")
+    st.warning("Select at least one player above to build a parlay.")
+
