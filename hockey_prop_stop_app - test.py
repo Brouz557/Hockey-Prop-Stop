@@ -1,10 +1,10 @@
 # ---------------------------------------------------------------
-# 🏒 Puck Shotz Hockey Analytics — Test Mode (Instant Filter + Logos)
+# 🏒 Puck Shotz Hockey Analytics — Test Mode (Instant Filter + Logos + Injuries + xG)
 # ---------------------------------------------------------------
 import streamlit as st
 import pandas as pd
 import numpy as np
-import os, requests
+import os, requests, html, json
 from scipy.stats import poisson
 import streamlit.components.v1 as components
 
@@ -19,7 +19,7 @@ st.markdown("""
   <img src='https://raw.githubusercontent.com/Brouz557/Hockey-Prop-Stop/694ae2a448204908099ce2899bd479052d01b518/modern%20hockey%20puck%20l.png' width='220'>
 </div>
 <h1 style='text-align:center;color:#1E5A99;'>Puck Shotz Hockey Analytics</h1>
-<p style='text-align:center;color:#D6D6D6;'>Automatically runs all of today’s NHL matchups with inline logos and instant team filters.</p>
+<p style='text-align:center;color:#D6D6D6;'>Automatically runs all of today’s NHL matchups with inline logos, instant filters, injuries, and expected goals.</p>
 """, unsafe_allow_html=True)
 
 # ---------------------------------------------------------------
@@ -68,6 +68,7 @@ def load_all(skaters_file, shots_file, goalies_file, lines_file, teams_file, inj
     goalies=load_data(goalies_file, find_file("GOALTENDERS.xlsx") or "GOALTENDERS.xlsx")
     lines  =load_data(lines_file,   find_file("LINE DATA.xlsx") or "LINE DATA.xlsx")
     teams  =load_data(teams_file,   find_file("TEAMS.xlsx") or "TEAMS.xlsx")
+
     injuries=pd.DataFrame()
     for p in ["injuries.xlsx","Injuries.xlsx","data/injuries.xlsx"]:
         if os.path.exists(p):
@@ -139,84 +140,110 @@ with col_line:
             st.rerun()
 
 # ---------------------------------------------------------------
-# Build Model
+# Build Model (adds xG, Shooting %, Injuries)
 # ---------------------------------------------------------------
 @st.cache_data(show_spinner=False)
 def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, teams_df, injuries_df):
-    results = []
-    skaters = skaters_df[skaters_df[team_col].isin([team_a, team_b])]
-    roster = skaters[[player_col, team_col]].rename(columns={player_col:"player", team_col:"team"}).drop_duplicates("player")
-    grouped = {n.lower(): g for n, g in shots_df.groupby(shots_df["player"].str.lower())}
+    results=[]
+    skaters=skaters_df[skaters_df[team_col].isin([team_a,team_b])]
+    roster=skaters[[player_col,team_col]].rename(columns={player_col:"player",team_col:"team"}).drop_duplicates("player")
+    grouped={n.lower():g for n,g in shots_df.groupby(shots_df["player"].str.lower())}
 
-    line_adj = {}
+    # --- Line & Goalie Adjustments ---
+    line_adj={}
     if not lines_df.empty and "line pairings" in lines_df.columns:
-        l = lines_df.copy()
-        l["games"] = pd.to_numeric(l["games"], errors="coerce").fillna(0)
-        l["sog against"] = pd.to_numeric(l["sog against"], errors="coerce").fillna(0)
-        l = l.groupby(["line pairings","team"], as_index=False).agg({"games":"sum","sog against":"sum"})
-        l["sog_against_per_game"] = np.where(l["games"] > 0, l["sog against"]/l["games"], np.nan)
-        team_avg = l.groupby("team")["sog_against_per_game"].mean()
-        league_avg = team_avg.mean()
-        l["line_factor"] = (league_avg / l["sog_against_per_game"]).clip(0.7, 1.3)
-        line_adj = l.copy()
+        l=lines_df.copy()
+        l["games"]=pd.to_numeric(l["games"],errors="coerce").fillna(0)
+        l["sog against"]=pd.to_numeric(l["sog against"],errors="coerce").fillna(0)
+        l=l.groupby(["line pairings","team"],as_index=False).agg({"games":"sum","sog against":"sum"})
+        l["sog_against_per_game"]=np.where(l["games"]>0,l["sog against"]/l["games"],np.nan)
+        team_avg=l.groupby("team")["sog_against_per_game"].mean()
+        league_avg=team_avg.mean()
+        l["line_factor"]=(league_avg/l["sog_against_per_game"]).clip(0.7,1.3)
+        line_adj=l.copy()
 
-    goalie_adj = {}
+    goalie_adj={}
     if not goalies_df.empty and {"team","shots against","games"}.issubset(goalies_df.columns):
-        g = goalies_df.copy()
-        g["shots against"] = pd.to_numeric(g["shots against"], errors="coerce").fillna(0)
-        g["games"] = pd.to_numeric(g["games"], errors="coerce").fillna(1)
-        g["shots_per_game"] = g["shots against"] / g["games"]
-        league_avg_sa = g["shots_per_game"].mean()
-        g["goalie_factor"] = (g["shots_per_game"] / league_avg_sa).clip(0.7, 1.3)
-        goalie_adj = g.groupby("team")["goalie_factor"].mean().to_dict()
+        g=goalies_df.copy()
+        g["shots against"]=pd.to_numeric(g["shots against"],errors="coerce").fillna(0)
+        g["games"]=pd.to_numeric(g["games"],errors="coerce").fillna(1)
+        g["shots_per_game"]=g["shots against"]/g["games"]
+        league_avg_sa=g["shots_per_game"].mean()
+        g["goalie_factor"]=(g["shots_per_game"]/league_avg_sa).clip(0.7,1.3)
+        goalie_adj=g.groupby("team")["goalie_factor"].mean().to_dict()
 
+    # --- Player Loop ---
     for row in roster.itertuples(index=False):
-        player, team = row.player, row.team
-        df_p = grouped.get(player.lower(), pd.DataFrame())
+        player,team=row.player,row.team
+        df_p=grouped.get(player.lower(),pd.DataFrame())
         if df_p.empty: continue
-        sog_vals = df_p.groupby(game_col)["sog"].sum().tolist()
+        if "sog" not in df_p.columns: continue
+
+        sog_vals=df_p.groupby(game_col)["sog"].sum().tolist()
         if not sog_vals: continue
 
-        last3 = sog_vals[-3:] if len(sog_vals) >= 3 else sog_vals
-        last5 = sog_vals[-5:] if len(sog_vals) >= 5 else sog_vals
-        last10 = sog_vals[-10:] if len(sog_vals) >= 10 else sog_vals
+        last3, last5, last10 = sog_vals[-3:], sog_vals[-5:], sog_vals[-10:]
         l3, l5, l10 = np.mean(last3), np.mean(last5), np.mean(last10)
-        baseline = (0.55 * l10) + (0.3 * l5) + (0.15 * l3)
-        trend = (l5 - l10) / l10 if l10 > 0 else 0
+        baseline=(0.55*l10)+(0.3*l5)+(0.15*l3)
+        trend=(l5-l10)/l10 if l10>0 else 0
+        form_flag="🟢 Above Baseline" if trend>0.05 else "🔴 Below Baseline" if trend<-0.05 else "⚪ Neutral"
 
-        if trend > 0.05:
-            form_flag = "🟢 Above Baseline"
-        elif trend < -0.05:
-            form_flag = "🔴 Below Baseline"
-        else:
-            form_flag = "⚪ Neutral"
-
-        line_factor_internal = 1.0
-        if isinstance(line_adj, pd.DataFrame) and not line_adj.empty:
-            last_name = str(player).split()[-1].lower()
-            m = line_adj[line_adj["line pairings"].str.contains(last_name, case=False, na=False)]
+        # --- Line Factor ---
+        line_factor_internal=1.0
+        if isinstance(line_adj,pd.DataFrame) and not line_adj.empty:
+            last_name=str(player).split()[-1].lower()
+            m=line_adj[line_adj["line pairings"].str.contains(last_name,case=False,na=False)]
             if not m.empty:
-                line_factor_internal = np.average(m["line_factor"], weights=m["games"])
+                line_factor_internal=np.average(m["line_factor"],weights=m["games"])
 
-        opp_team = team_b if team == team_a else team_a
-        goalie_factor = goalie_adj.get(opp_team, 1.0)
-        lam = baseline * (1 + (goalie_factor - 1.0) * 0.2) * line_factor_internal
-        poisson_prob = float(np.clip(1 - poisson.cdf(np.floor(lam) - 1, mu=max(lam, 0.01)), 0.0001, 0.9999))
-        odds = -100 * (poisson_prob / (1 - poisson_prob)) if poisson_prob >= 0.5 else 100 * ((1 - poisson_prob) / poisson_prob)
-        odds = float(np.clip(odds, -10000, 10000))
-        playable_odds = f"{'+' if odds > 0 else ''}{int(odds)}"
+        opp_team=team_b if team==team_a else team_a
+        goalie_factor=goalie_adj.get(opp_team,1.0)
+        lam=baseline*(1+(goalie_factor-1.0)*0.2)*line_factor_internal
+        poisson_prob=float(np.clip(1-poisson.cdf(np.floor(lam)-1,mu=max(lam,0.01)),0.0001,0.9999))
+        odds=-100*(poisson_prob/(1-poisson_prob)) if poisson_prob>=0.5 else 100*((1-poisson_prob)/poisson_prob)
+        playable_odds=f"{'+' if odds>0 else ''}{int(np.clip(odds,-10000,10000))}"
 
+        # --- Injury Tooltip ---
+        injury_html=""
+        if not injuries_df.empty and {"player","team"}.issubset(injuries_df.columns):
+            player_lower=player.lower().strip()
+            last_name=player_lower.split()[-1]
+            team_lower=team.lower().strip()
+            match=injuries_df[
+                injuries_df["team"].str.lower().str.strip().eq(team_lower)
+                & injuries_df["player"].str.lower().str.endswith(last_name)
+            ]
+            if not match.empty:
+                note=str(match.iloc[0].get("injury note","")).strip()
+                injury_type=str(match.iloc[0].get("injury type","")).strip()
+                date_injury=str(match.iloc[0].get("date of injury","")).strip()
+                tooltip="\n".join([p for p in [injury_type,note,date_injury] if p]) or "Injury info unavailable"
+                safe=html.escape(tooltip)
+                injury_html=f"<span style='cursor:pointer;' onclick='alert({json.dumps(safe)})' title='Tap or click for injury info'>🚑</span>"
+
+        # --- Expected Goals + Shooting % ---
+        if "goal" in df_p.columns:
+            agg=df_p.groupby(game_col).agg({"sog":"sum","goal":"sum"}).reset_index()
+            shots_per_game=agg["sog"].mean()
+            goals_per_game=agg["goal"].mean()
+            shooting_pct=goals_per_game/shots_per_game if shots_per_game>0 else 0
+            exp_goals=shooting_pct*lam*line_factor_internal
+        else:
+            exp_goals,shooting_pct=np.nan,np.nan
+
+        # --- Append Result ---
         results.append({
-            "Player": player, "Team": team, "Trend Score": round(trend,3),
-            "Final Projection": round(lam,2),
-            "Prob ≥ Projection (%) L5": round(poisson_prob*100,1),
-            "Playable Odds": playable_odds,
-            "Season Avg": round(np.mean(sog_vals),2),
-            "Line Adj": round(line_factor_internal,2),
-            "Form Indicator": form_flag,
-            "L3 Shots": ", ".join(map(str,last3)),
-            "L5 Shots": ", ".join(map(str,last5)),
-            "L10 Shots": ", ".join(map(str,last10))
+            "Player":player,"Team":team,"Injury":injury_html,
+            "Trend Score":round(trend,3),"Final Projection":round(lam,2),
+            "Prob ≥ Projection (%) L5":round(poisson_prob*100,1),
+            "Playable Odds":playable_odds,"Season Avg":round(np.mean(sog_vals),2),
+            "Line Adj":round(line_factor_internal,2),
+            "Exp Goals (xG)":round(exp_goals,3) if not np.isnan(exp_goals) else "",
+            "Shooting %":round(shooting_pct*100,2) if not np.isnan(shooting_pct) else "",
+            "Form Indicator":form_flag,
+            "L3 Shots":", ".join(map(str,last3)),
+            "L5 Shots":", ".join(map(str,last5)),
+            "L10 Shots":", ".join(map(str,last10))
         })
     return pd.DataFrame(results)
 
@@ -224,108 +251,57 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
 # Run Model + Combine Games
 # ---------------------------------------------------------------
 if run_model:
-    all_tables = []
+    all_tables=[]
     for m in games:
-        team_a, team_b = m["away"], m["home"]
-        df_match = build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, teams_df, injuries_df)
-        if not df_match.empty:
-            df_match["Matchup"] = f"{team_a}@{team_b}"
-            all_tables.append(df_match)
+        team_a,team_b=m["away"],m["home"]
+        df=build_model(team_a,team_b,skaters_df,shots_df,goalies_df,lines_df,teams_df,injuries_df)
+        if not df.empty:
+            df["Matchup"]=f"{team_a}@{team_b}"
+            all_tables.append(df)
     if all_tables:
-        combined = pd.concat(all_tables, ignore_index=True)
-        st.session_state.results = combined
-        st.session_state.matchups = games
+        combined=pd.concat(all_tables,ignore_index=True)
+        st.session_state.results=combined
+        st.session_state.matchups=games
         st.success("✅ Model built for all games.")
     else:
         st.warning("⚠️ No valid data generated.")
 
 # ---------------------------------------------------------------
-# Display Buttons + Filtered Table
+# Display Table
 # ---------------------------------------------------------------
 if "results" in st.session_state:
-    df = st.session_state.results.copy()
-    games = st.session_state.matchups
+    df=st.session_state.results.copy()
+    games=st.session_state.matchups
 
-    cols = st.columns(3)
-    for i, m in enumerate(games):
-        team_a, team_b = m["away"], m["home"]
-        match_id = f"{team_a}@{team_b}"
-        is_selected = st.session_state.get("selected_match") == match_id
-
-        btn_color = "#2F7DEB" if is_selected else "#1C5FAF"
-        border = "2px solid #FF4B4B" if is_selected else "1px solid #1C5FAF"
-        glow = "0 0 12px #FF4B4B" if is_selected else "none"
-
-        with cols[i % 3]:
-            form_key = f"form_{i}"
-            with st.form(form_key):
-                st.markdown(f"""
-                <div style="background-color:{btn_color};border:{border};border-radius:8px 8px 0 0;
-                            color:#fff;font-weight:600;font-size:15px;padding:10px 14px;width:100%;
-                            box-shadow:{glow};display:flex;align-items:center;justify-content:center;gap:6px;">
-                    <img src="{m['away_logo']}" height="22">
-                    <span>{m['away']}</span>
-                    <span style="color:#D6D6D6;">@</span>
-                    <span>{m['home']}</span>
-                    <img src="{m['home_logo']}" height="22">
-                </div>
-                """, unsafe_allow_html=True)
-                clicked = st.form_submit_button("Click to view", use_container_width=True, type="secondary")
-                if clicked:
-                    if is_selected:
-                        st.session_state.selected_match = None
-                        st.session_state.selected_teams = None
-                    else:
-                        st.session_state.selected_match = match_id
-                        st.session_state.selected_teams = {team_a, team_b}
-                    st.rerun()
-
-    sel_teams = st.session_state.get("selected_teams")
-    if sel_teams:
-        df = df[df["Team"].isin(sel_teams)]
-        st.markdown(f"### Showing results for: **{' vs '.join(sel_teams)}**")
-    else:
-        st.markdown("### Showing results for: **All Teams**")
-
-    # ✅ Trend + Form color formatting
     def color_trend(v):
-        if v > 0.05:
-            return "<span style='color:#00FF00;font-weight:bold;'>▲</span>"
-        elif v < -0.05:
-            return "<span style='color:#FF4B4B;font-weight:bold;'>▼</span>"
-        else:
-            return "<span style='color:#D6D6D6;'>–</span>"
+        if v>0.05: return "<span style='color:#00FF00;font-weight:bold;'>▲</span>"
+        elif v<-0.05: return "<span style='color:#FF4B4B;font-weight:bold;'>▼</span>"
+        else: return "<span style='color:#D6D6D6;'>–</span>"
 
     def color_form(v):
-        if "Above" in v:
-            return "<span style='color:#00FF00;font-weight:bold;'>🟢 Above Baseline</span>"
-        elif "Below" in v:
-            return "<span style='color:#FF4B4B;font-weight:bold;'>🔴 Below Baseline</span>"
-        else:
-            return "<span style='color:#D6D6D6;'>⚪ Neutral</span>"
+        if "Above" in v: return "<span style='color:#00FF00;font-weight:bold;'>🟢 Above Baseline</span>"
+        elif "Below" in v: return "<span style='color:#FF4B4B;font-weight:bold;'>🔴 Below Baseline</span>"
+        else: return "<span style='color:#D6D6D6;'>⚪ Neutral</span>"
 
-    df["Trend"] = df["Trend Score"].apply(color_trend)
-    df["Form Indicator"] = df["Form Indicator"].apply(color_form)
-
-    df = df.sort_values(["Team","Final Projection","Line Adj"],ascending=[True,False,False])
+    df["Trend"]=df["Trend Score"].apply(color_trend)
+    df["Form Indicator"]=df["Form Indicator"].apply(color_form)
 
     if "line_test_val" in st.session_state:
-        test_line = st.session_state.line_test_val
-        df["Prob ≥ Line (%)"] = df["Final Projection"].apply(
-            lambda lam: round((1 - poisson.cdf(test_line - 1, mu=max(lam, 0.01))) * 100, 1)
-        )
+        test_line=st.session_state.line_test_val
+        df["Prob ≥ Line (%)"]=df["Final Projection"].apply(
+            lambda lam:round((1-poisson.cdf(test_line-1,mu=max(lam,0.01)))*100,1))
         def safe_odds(p):
-            p = np.clip(p, 0.1, 99.9)
-            if p >= 50:
-                odds_val = -100 * ((p/100) / (1 - p/100))
-            else:
-                odds_val = 100 * ((1 - p/100) / (p/100))
-            return f"{'+' if odds_val > 0 else ''}{int(round(odds_val))}"
-        df["Playable Odds"] = df["Prob ≥ Line (%)"].apply(safe_odds)
+            p=np.clip(p,0.1,99.9)
+            if p>=50: odds_val=-100*((p/100)/(1-p/100))
+            else: odds_val=100*((1-p/100)/(p/100))
+            return f"{'+' if odds_val>0 else ''}{int(round(odds_val))}"
+        df["Playable Odds"]=df["Prob ≥ Line (%)"].apply(safe_odds)
 
-    html_table = df[["Player","Team","Trend","Final Projection","Prob ≥ Line (%)",
-                     "Playable Odds","Season Avg","Line Adj","Form Indicator",
-                     "L3 Shots","L5 Shots","L10 Shots"]].to_html(index=False,escape=False)
+    df=df.sort_values(["Team","Final Projection","Line Adj"],ascending=[True,False,False])
+    cols=["Player","Team","Injury","Trend","Final Projection","Prob ≥ Line (%)",
+          "Playable Odds","Season Avg","Line Adj","Exp Goals (xG)","Shooting %",
+          "Form Indicator","L3 Shots","L5 Shots","L10 Shots"]
+    html_table=df[cols].to_html(index=False,escape=False)
 
     components.html(f"""
     <style>
@@ -343,6 +319,9 @@ if "results" in st.session_state:
         background-color:#0F2743;color:#D6D6D6;padding:4px;text-align:center;
     }}
     tr:nth-child(even) td {{background-color:#142F52;}}
+    td:nth-child(10), td:nth-child(11) {{
+        color:#7FFF00;font-weight:bold;
+    }}
     </style>
     <div style='overflow-x:auto;height:650px;'>{html_table}</div>
     """,height=700,scrolling=True)
