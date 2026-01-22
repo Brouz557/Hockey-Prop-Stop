@@ -372,60 +372,57 @@ if "results" in st.session_state:
     <div style='overflow-x:auto;height:650px;'>{html_table}</div>
     """,height=700,scrolling=True)
     
-    # ---------------------------------------------------------------
-# 🎯 Parlay Probability Calculator
 # ---------------------------------------------------------------
-st.markdown("### 🎯 Parlay Probability Calculator")
-st.caption("Select multiple players from the table above to estimate the combined probability and fair odds of all selected players hitting their shot lines. This is a statistical combination only (not a bet).")
+# 🧮 Parlay Calculator (Player-Specific Lines)
+# ---------------------------------------------------------------
 
-# Ensure 'Prob ≥ Line (%)' exists in dataframe
-if "Prob ≥ Line (%)" in df.columns:
-    # Multiselect player picker
-    selected_players = st.multiselect(
-        "Select Players for Parlay",
-        options=df["Player"].unique(),
-        help="Choose players to include in your parlay"
-    )
+st.markdown("## 🧮 Parlay Calculator")
 
-    # Correlation adjustment slider
-    corr_adj = st.slider(
-        "Correlation Adjustment (%)",
-        min_value=-10,
-        max_value=10,
-        value=0,
-        step=1,
-        help="Adjust for overlap between legs (e.g. teammates or related outcomes)"
-    )
+import numpy as np
+from scipy.stats import poisson
 
-    if selected_players:
-        subset = df[df["Player"].isin(selected_players)][["Player", "Prob ≥ Line (%)"]].copy()
-        subset["Prob ≥ Line (%)"] = pd.to_numeric(subset["Prob ≥ Line (%)"], errors="coerce").fillna(0)
-        probs = subset["Prob ≥ Line (%)"].to_numpy() / 100.0
+# Make a working copy from your current df
+df_parlay = df.copy()
 
-        # Apply correlation adjustment
-        adjustment_factor = 1 + (corr_adj / 100)
-        combined_prob = np.prod(probs) * adjustment_factor
-        combined_prob = np.clip(combined_prob, 0, 1)
+# Let users pick players + custom lines
+st.markdown("Select players and set custom lines to build a parlay:")
 
-        # Convert to American odds
-        if combined_prob >= 0.5:
-            american_odds = -100 * (combined_prob / (1 - combined_prob))
-        else:
-            american_odds = 100 * ((1 - combined_prob) / combined_prob)
+selected_players = []
+custom_lines = []
 
-        st.markdown(f"**Selected Legs:** {len(selected_players)}")
-        st.markdown(f"**Combined Probability:** {combined_prob*100:.2f}%")
+for i, row in df_parlay.iterrows():
+    c1, c2, c3 = st.columns([2, 1, 1])
+    with c1:
+        include = st.checkbox(f"{row['Player']} ({row['Team']})", key=f"inc_{i}")
+    with c2:
+        custom_line = st.number_input(
+            "Line", 0.0, 10.0, float(st.session_state.get("line_test_val", 3.5)),
+            0.5, key=f"line_{i}"
+        )
+    with c3:
+        if include:
+            selected_players.append(row)
+            custom_lines.append(custom_line)
 
-        odds_str = f"{int(round(american_odds, -1)):+}"
-        st.markdown(f"**Fair Odds:** {odds_str}")
+# --- Compute parlay probability and odds ---
+if selected_players:
+    probs = []
+    for player_row, line_val in zip(selected_players, custom_lines):
+        lam = player_row["Final Projection"]
+        p = 1 - poisson.cdf(line_val - 1, mu=max(lam, 0.01))
+        probs.append(np.clip(p, 0.0001, 0.9999))
 
-        # Optional table of legs
-        st.dataframe(subset.reset_index(drop=True), use_container_width=True)
+    parlay_prob = float(np.prod(probs))
+    parlay_pct = parlay_prob * 100
+
+    # Convert probability → American odds
+    if parlay_prob >= 0.5:
+        parlay_odds = -100 * (parlay_prob / (1 - parlay_prob))
     else:
-        st.info("Select one or more players to calculate a parlay probability.")
+        parlay_odds = 100 * ((1 - parlay_prob) / parlay_prob)
+
+    st.success(f"✅ **Parlay Probability:** {parlay_pct:.2f}%")
+    st.info(f"💰 **Implied Parlay Odds:** {'+' if parlay_odds>0 else ''}{int(round(parlay_odds))}")
+
 else:
-    st.warning("⚠️ Probability column not found. Run the model first to enable parlay calculations.")
-
-
-
-
+    st.warning("Select at least one player to build a parlay.")
