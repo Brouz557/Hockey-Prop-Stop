@@ -27,12 +27,12 @@ st.markdown("""
 # Sidebar Uploaders
 # ---------------------------------------------------------------
 st.sidebar.header("📂 Upload Data Files (.xlsx or .csv)")
-skaters_file = st.sidebar.file_uploader("Skaters", type=["xlsx","csv"])
-shots_file   = st.sidebar.file_uploader("SHOT DATA", type=["xlsx","csv"])
-goalies_file = st.sidebar.file_uploader("GOALTENDERS", type=["xlsx","csv"])
-lines_file   = st.sidebar.file_uploader("LINE DATA", type=["xlsx","csv"])
-teams_file   = st.sidebar.file_uploader("TEAMS", type=["xlsx","csv"])
-injuries_file= st.sidebar.file_uploader("INJURIES", type=["xlsx","csv"])
+skaters_file  = st.sidebar.file_uploader("Skaters", type=["xlsx","csv"])
+shots_file    = st.sidebar.file_uploader("SHOT DATA", type=["xlsx","csv"])
+goalies_file  = st.sidebar.file_uploader("GOALTENDERS", type=["xlsx","csv"])
+lines_file    = st.sidebar.file_uploader("LINE DATA", type=["xlsx","csv"])
+teams_file    = st.sidebar.file_uploader("TEAMS", type=["xlsx","csv"])
+injuries_file = st.sidebar.file_uploader("INJURIES", type=["xlsx","csv"])
 
 # ---------------------------------------------------------------
 # Helper Functions
@@ -60,13 +60,12 @@ def load_data(file_uploader, default_path):
 
 @st.cache_data(show_spinner=False)
 def load_all(skaters_file, shots_file, goalies_file, lines_file, teams_file, injuries_file):
-    skaters = load_data(skaters_file, "Skaters.xlsx")
-    shots   = load_data(shots_file, "SHOT DATA.xlsx")
-    goalies = load_data(goalies_file, "GOALTENDERS.xlsx")
-    lines   = load_data(lines_file, "LINE DATA.xlsx")
-    teams   = load_data(teams_file, "TEAMS.xlsx")
+    skaters  = load_data(skaters_file, "Skaters.xlsx")
+    shots    = load_data(shots_file, "SHOT DATA.xlsx")
+    goalies  = load_data(goalies_file, "GOALTENDERS.xlsx")
+    lines    = load_data(lines_file, "LINE DATA.xlsx")
+    teams    = load_data(teams_file, "TEAMS.xlsx")
     injuries = load_data(injuries_file, "injuries.xlsx")
-
     return skaters, shots, goalies, lines, teams, injuries
 
 # ---------------------------------------------------------------
@@ -82,9 +81,14 @@ if skaters_df.empty or shots_df.empty:
 
 st.success("✅ Data loaded successfully.")
 
+# normalize column names
 for df in [skaters_df, shots_df, goalies_df, lines_df, teams_df]:
     if not df.empty:
         df.columns = df.columns.str.lower().str.strip()
+
+# 🔹 REQUIRED FIX: shots file uses "name" → normalize to "player"
+if "name" in shots_df.columns and "player" not in shots_df.columns:
+    shots_df = shots_df.rename(columns={"name": "player"})
 
 # ---------------------------------------------------------------
 # ESPN Matchups (FIXED)
@@ -93,7 +97,12 @@ for df in [skaters_df, shots_df, goalies_df, lines_df, teams_df]:
 def get_todays_games():
     today = datetime.utcnow().strftime("%Y%m%d")
     url = f"https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard?dates={today}"
-    r = requests.get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
+
+    r = requests.get(
+        url,
+        timeout=10,
+        headers={"User-Agent": "Mozilla/5.0"}
+    )
     r.raise_for_status()
     data = r.json()
 
@@ -115,31 +124,33 @@ if not games:
     st.warning("No games found today (ESPN may not have published the slate yet).")
 
 # ---------------------------------------------------------------
-# MODEL FUNCTION (MUST BE ABOVE BUTTON CALL)
+# MODEL FUNCTION (DEFINED BEFORE USE)
 # ---------------------------------------------------------------
 @st.cache_data(show_spinner=False)
 def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, teams_df, injuries_df):
     results = []
-    team_col = next((c for c in skaters_df.columns if "team" in c), None)
+
+    team_col   = next((c for c in skaters_df.columns if "team" in c), None)
     player_col = "name" if "name" in skaters_df.columns else "player"
-    game_col = next((c for c in shots_df.columns if "game" in c and "id" in c), None)
+    game_col   = next((c for c in shots_df.columns if "game" in c and "id" in c), None)
 
     skaters = skaters_df[skaters_df[team_col].isin([team_a, team_b])]
-    roster = skaters[[player_col, team_col]].drop_duplicates()
+    roster  = skaters[[player_col, team_col]].drop_duplicates()
 
     for _, row in roster.iterrows():
         player = row[player_col]
-        team = row[team_col]
+        team   = row[team_col]
+
         df_p = shots_df[shots_df["player"].str.lower() == str(player).lower()]
         if df_p.empty or "sog" not in df_p.columns:
             continue
 
-        agg = df_p.groupby(game_col)["sog"].sum().reset_index()
+        agg   = df_p.groupby(game_col)["sog"].sum().reset_index()
         shots = agg["sog"].tolist()
         if not shots:
             continue
 
-        lam = np.mean(shots[-5:])
+        lam  = np.mean(shots[-5:])
         prob = 1 - poisson.cdf(2.5, mu=max(lam, 0.01))
 
         results.append({
@@ -163,6 +174,7 @@ with col_run:
 # ---------------------------------------------------------------
 if run_model and games:
     all_tables = []
+
     for g in games:
         df = build_model(
             g["away"], g["home"],
@@ -186,6 +198,6 @@ elif run_model and not games:
 if "results" in st.session_state:
     components.html(
         st.session_state.results.to_html(index=False),
-        height=600,
+        height=650,
         scrolling=True
     )
