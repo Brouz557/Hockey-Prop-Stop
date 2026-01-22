@@ -176,8 +176,7 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
     for row in roster.itertuples(index=False):
         player,team=row.player,row.team
         df_p=grouped.get(player.lower(),pd.DataFrame())
-        if df_p.empty: continue
-        if "sog" not in df_p.columns: continue
+        if df_p.empty or "sog" not in df_p.columns: continue
 
         sog_vals=df_p.groupby(game_col)["sog"].sum().tolist()
         if not sog_vals: continue
@@ -231,7 +230,6 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
         else:
             exp_goals,shooting_pct=np.nan,np.nan
 
-        # --- Append Result ---
         results.append({
             "Player":player,"Team":team,"Injury":injury_html,
             "Trend Score":round(trend,3),"Final Projection":round(lam,2),
@@ -301,7 +299,8 @@ if "results" in st.session_state:
     cols=["Player","Team","Injury","Trend","Final Projection","Prob ≥ Line (%)",
           "Playable Odds","Season Avg","Line Adj","Exp Goals (xG)","Shooting %",
           "Form Indicator","L3 Shots","L5 Shots","L10 Shots"]
-    html_table=df[cols].to_html(index=False,escape=False)
+    existing_cols=[c for c in cols if c in df.columns]
+    html_table=df[existing_cols].to_html(index=False,escape=False)
 
     components.html(f"""
     <style>
