@@ -343,11 +343,14 @@ if "results" in st.session_state:
 
     df = df.sort_values(["Team","Final Projection","Line Adj"],ascending=[True,False,False])
 
-    html_table = df[[
+    # ✅ Safe column handling to prevent KeyError
+    cols = [
         "Player","Team","Injury","Trend","Final Projection","Prob ≥ Line (%)",
         "Playable Odds","Season Avg","Line Adj","Form Indicator",
         "L3 Shots","L5 Shots","L10 Shots"
-    ]].to_html(index=False,escape=False)
+    ]
+    existing_cols = [c for c in cols if c in df.columns]
+    html_table = df[existing_cols].to_html(index=False, escape=False)
 
     components.html(f"""
     <style>
