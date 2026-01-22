@@ -140,7 +140,7 @@ with col_line:
             st.rerun()
 
 # ---------------------------------------------------------------
-# Build Model (adds xG, Shooting %, Injuries)
+# Build Model (xG, Shooting %, Injuries)
 # ---------------------------------------------------------------
 @st.cache_data(show_spinner=False)
 def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, teams_df, injuries_df):
@@ -149,7 +149,7 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
     roster=skaters[[player_col,team_col]].rename(columns={player_col:"player",team_col:"team"}).drop_duplicates("player")
     grouped={n.lower():g for n,g in shots_df.groupby(shots_df["player"].str.lower())}
 
-    # --- Line & Goalie Adjustments ---
+    # Line/goalie adjustments
     line_adj={}
     if not lines_df.empty and "line pairings" in lines_df.columns:
         l=lines_df.copy()
@@ -172,7 +172,7 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
         g["goalie_factor"]=(g["shots_per_game"]/league_avg_sa).clip(0.7,1.3)
         goalie_adj=g.groupby("team")["goalie_factor"].mean().to_dict()
 
-    # --- Player Loop ---
+    # Player loop
     for row in roster.itertuples(index=False):
         player,team=row.player,row.team
         df_p=grouped.get(player.lower(),pd.DataFrame())
@@ -187,7 +187,6 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
         trend=(l5-l10)/l10 if l10>0 else 0
         form_flag="🟢 Above Baseline" if trend>0.05 else "🔴 Below Baseline" if trend<-0.05 else "⚪ Neutral"
 
-        # --- Line Factor ---
         line_factor_internal=1.0
         if isinstance(line_adj,pd.DataFrame) and not line_adj.empty:
             last_name=str(player).split()[-1].lower()
@@ -202,7 +201,6 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
         odds=-100*(poisson_prob/(1-poisson_prob)) if poisson_prob>=0.5 else 100*((1-poisson_prob)/poisson_prob)
         playable_odds=f"{'+' if odds>0 else ''}{int(np.clip(odds,-10000,10000))}"
 
-        # --- Injury Tooltip ---
         injury_html=""
         if not injuries_df.empty and {"player","team"}.issubset(injuries_df.columns):
             player_lower=player.lower().strip()
@@ -220,7 +218,6 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
                 safe=html.escape(tooltip)
                 injury_html=f"<span style='cursor:pointer;' onclick='alert({json.dumps(safe)})' title='Tap or click for injury info'>🚑</span>"
 
-        # --- Expected Goals + Shooting % ---
         if "goal" in df_p.columns:
             agg=df_p.groupby(game_col).agg({"sog":"sum","goal":"sum"}).reset_index()
             shots_per_game=agg["sog"].mean()
@@ -261,15 +258,56 @@ if run_model:
         st.session_state.results=combined
         st.session_state.matchups=games
         st.success("✅ Model built for all games.")
+        st.experimental_rerun()
     else:
         st.warning("⚠️ No valid data generated.")
 
 # ---------------------------------------------------------------
-# Display Table
+# Display Buttons + Table
 # ---------------------------------------------------------------
 if "results" in st.session_state:
     df=st.session_state.results.copy()
     games=st.session_state.matchups
+
+    # Matchup buttons
+    cols = st.columns(3)
+    for i, m in enumerate(games):
+        team_a, team_b = m["away"], m["home"]
+        match_id = f"{team_a}@{team_b}"
+        is_selected = st.session_state.get("selected_match") == match_id
+        btn_color = "#2F7DEB" if is_selected else "#1C5FAF"
+        border = "2px solid #FF4B4B" if is_selected else "1px solid #1C5FAF"
+        glow = "0 0 12px #FF4B4B" if is_selected else "none"
+        with cols[i % 3]:
+            form_key = f"form_{i}"
+            with st.form(form_key):
+                st.markdown(f"""
+                <div style="background-color:{btn_color};border:{border};border-radius:8px 8px 0 0;
+                            color:#fff;font-weight:600;font-size:15px;padding:10px 14px;width:100%;
+                            box-shadow:{glow};display:flex;align-items:center;justify-content:center;gap:6px;">
+                    <img src="{m['away_logo']}" height="22">
+                    <span>{m['away']}</span>
+                    <span style="color:#D6D6D6;">@</span>
+                    <span>{m['home']}</span>
+                    <img src="{m['home_logo']}" height="22">
+                </div>
+                """, unsafe_allow_html=True)
+                clicked = st.form_submit_button("Click to view", use_container_width=True, type="secondary")
+                if clicked:
+                    if is_selected:
+                        st.session_state.selected_match=None
+                        st.session_state.selected_teams=None
+                    else:
+                        st.session_state.selected_match=match_id
+                        st.session_state.selected_teams={team_a,team_b}
+                    st.rerun()
+
+    sel_teams=st.session_state.get("selected_teams")
+    if sel_teams:
+        df=df[df["Team"].isin(sel_teams)]
+        st.markdown(f"### Showing results for: **{' vs '.join(sel_teams)}**")
+    else:
+        st.markdown("### Showing results for: **All Teams**")
 
     def color_trend(v):
         if v>0.05: return "<span style='color:#00FF00;font-weight:bold;'>▲</span>"
