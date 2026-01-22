@@ -1,0 +1,55 @@
+from fpdf import FPDF
+
+# --- Create PDF ---
+pdf = FPDF()
+pdf.add_page()
+pdf.set_auto_page_break(auto=True, margin=10)
+
+# Header banner
+pdf.set_fill_color(10, 58, 103)  # #0A3A67
+pdf.rect(0, 0, 210, 35, "F")
+pdf.image("puckshotz_logo.png", x=80, y=5, w=50)
+pdf.set_text_color(255, 255, 255)
+pdf.set_font("Helvetica", "B", 20)
+pdf.ln(30)
+pdf.cell(0, 10, "Puck Shotz Hockey Analytics — Quick Guide", ln=True, align="C")
+
+# Body text
+pdf.set_text_color(0, 0, 0)
+pdf.set_font("Helvetica", "", 12)
+pdf.ln(5)
+text = """\
+Purpose:
+Projects shots-on-goal (SOG) based on form, matchup, and usage.
+Shows who’s trending up or down and how likely they are to exceed a target line.
+
+Key Columns:
+• Trend ▲ ▼ – → Direction of short-term shot volume
+• Final Projection → Expected SOG next game
+• Prob ≥ Line (%) → Chance to beat your test line (60%+ strong, <45% weak)
+• Line Adj → >1 favorable matchup, <1 tougher opponent
+• Form Indicator → 🟢 Above ⚪ Neutral 🔴 Below baseline
+• 🚑 Injury → Click for details; downgrade reliability
+
+Quick Reads:
+🟢 + ▲ + Line Adj > 1.0 → Hot player, favorable matchup
+🔴 + ▼ → Cold stretch or declining usage
+⚪ + ▲ → Early improvement signal
+🚑 → Use caution – health impact
+
+Line to Test:
+Adjust this to recalc probabilities. Lower lines increase chance; higher lines reduce it.
+
+Probability Guide:
+70%+ high confidence
+55–65% lean over
+≈50% even
+<45% lean under
+
+Takeaway:
+Form 🟢 + Trend ▲ + Line Adj > 1.0 → Player in rhythm and generating high-quality shot volume.
+"""
+pdf.multi_cell(0, 8, text)
+
+pdf.output("PuckShotz_QuickGuide.pdf")
+print("✅ Created PuckShotz_QuickGuide.pdf")
