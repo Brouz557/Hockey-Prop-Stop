@@ -416,7 +416,7 @@ if "Prob ≥ Line (%)" in df.columns:
         st.markdown(f"**Selected Legs:** {len(selected_players)}")
         st.markdown(f"**Combined Probability:** {combined_prob*100:.2f}%")
 
-        odds_str = f\"{int(round(american_odds, -1)):+}\"
+        odds_str = f"{int(round(american_odds, -1)):+}\"
         st.markdown(f"**Fair Odds:** {odds_str}")
 
         # Optional table of legs
@@ -425,5 +425,6 @@ if "Prob ≥ Line (%)" in df.columns:
         st.info("Select one or more players to calculate a parlay probability.")
 else:
     st.warning("⚠️ Probability column not found. Run the model first to enable parlay calculations.")
+
 
 
