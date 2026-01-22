@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Puck Shotz Hockey Analytics — Test Mode (Now with Goals)
+# 🏒 Puck Shotz Hockey Analytics — Test Mode (with Goals + Trends)
 # ---------------------------------------------------------------
 import streamlit as st
 import pandas as pd
@@ -153,7 +153,7 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
     game_col = next((c for c in shots_df.columns if "game" in c and "id" in c), "gameid")
 
     skaters = skaters_df[skaters_df[team_col].isin([team_a, team_b])]
-    roster = skaters[[player_col, team_col]].rename(columns={player_col: "player", team_col: "team"}).drop_duplicates("player")
+    roster = skaters[[player_col, team_col]].rename(columns={player_col:"player", team_col:"team"}).drop_duplicates("player")
     grouped = {n.lower(): g for n, g in shots_df.groupby(shots_df["player"].str.lower())}
 
     # Line + goalie adjustments
@@ -202,7 +202,6 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
         l3, l5, l10 = np.mean(last3), np.mean(last5), np.mean(last10)
         baseline = (0.55 * l10) + (0.3 * l5) + (0.15 * l3)
         trend = (l5 - l10) / l10 if l10 > 0 else 0
-
         form_flag = "🟢 Above Baseline" if trend > 0.05 else "🔴 Below Baseline" if trend < -0.05 else "⚪ Neutral"
 
         line_factor_internal = 1.0
@@ -220,10 +219,11 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
         odds = -100 * (poisson_prob / (1 - poisson_prob)) if poisson_prob >= 0.5 else 100 * ((1 - poisson_prob) / poisson_prob)
         playable_odds = f"{'+' if odds > 0 else ''}{int(np.clip(odds, -10000, 10000))}"
 
-        # Expected Goals (xG)
-        if goals_list:
-            goals_per_game = np.mean(goals_list)
-            shots_per_game = np.mean(shots_list)
+        # --- Expected Goals (xG) and Shooting % ---
+        if "goal" in df_p.columns:
+            agg = df_p.groupby(game_col).agg({"sog":"sum","goal":"sum"}).reset_index()
+            shots_per_game = agg["sog"].mean()
+            goals_per_game = agg["goal"].mean()
             shooting_pct = goals_per_game / shots_per_game if shots_per_game > 0 else 0
             exp_goals = shooting_pct * lam * line_factor_internal
         else:
@@ -268,15 +268,50 @@ if run_model:
         st.warning("No valid data generated.")
 
 # ---------------------------------------------------------------
-# Display + Table Rendering
+# Display Table (with Trend Arrows, Sorting, xG)
 # ---------------------------------------------------------------
 if "results" in st.session_state:
-    df=st.session_state.results.copy()
-    games=st.session_state.matchups
+    df = st.session_state.results.copy()
+    games = st.session_state.matchups
 
-    # Columns
+    def color_trend(v):
+        if v > 0.05:
+            return "<span style='color:#00FF00;font-weight:bold;'>▲</span>"
+        elif v < -0.05:
+            return "<span style='color:#FF4B4B;font-weight:bold;'>▼</span>"
+        else:
+            return "<span style='color:#D6D6D6;'>–</span>"
+
+    def color_form(v):
+        if "Above" in v:
+            return "<span style='color:#00FF00;font-weight:bold;'>🟢 Above Baseline</span>"
+        elif "Below" in v:
+            return "<span style='color:#FF4B4B;font-weight:bold;'>🔴 Below Baseline</span>"
+        else:
+            return "<span style='color:#D6D6D6;'>⚪ Neutral</span>"
+
+    df["Trend"] = df["Trend Score"].apply(color_trend)
+    df["Form Indicator"] = df["Form Indicator"].apply(color_form)
+
+    if "line_test_val" in st.session_state:
+        test_line = st.session_state.line_test_val
+        df["Prob ≥ Line (%)"] = df["Final Projection"].apply(
+            lambda lam: round((1 - poisson.cdf(test_line - 1, mu=max(lam, 0.01))) * 100, 1)
+        )
+
+        def safe_odds(p):
+            p = np.clip(p, 0.1, 99.9)
+            if p >= 50:
+                odds_val = -100 * ((p/100) / (1 - p/100))
+            else:
+                odds_val = 100 * ((1 - p/100) / (p/100))
+            return f"{'+' if odds_val > 0 else ''}{int(round(odds_val))}"
+        df["Playable Odds"] = df["Prob ≥ Line (%)"].apply(safe_odds)
+
+    df = df.sort_values(["Team", "Final Projection", "Line Adj"], ascending=[True, False, False])
+
     cols = [
-        "Player","Team","Injury","Trend","Final Projection","Prob ≥ Line (%)",
+        "Player","Team","Trend","Final Projection","Prob ≥ Line (%)",
         "Playable Odds","Season Avg","Line Adj","Exp Goals (xG)","Shooting %",
         "Form Indicator","L3 Shots","L5 Shots","L10 Shots"
     ]
@@ -299,10 +334,9 @@ if "results" in st.session_state:
         background-color:#0F2743;color:#D6D6D6;padding:4px;text-align:center;
     }}
     tr:nth-child(even) td {{background-color:#142F52;}}
-    td:nth-child(10), td:nth-child(11) {{
+    td:nth-child(9), td:nth-child(10) {{
         color:#7FFF00;font-weight:bold;
     }}
     </style>
     <div style='overflow-x:auto;height:650px;'>{html_table}</div>
-    """,height=700,scrolling=True)
-
+    """, height=700, scrolling=True)
