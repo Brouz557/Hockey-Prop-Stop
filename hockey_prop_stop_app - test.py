@@ -4,10 +4,10 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import os, requests, html, json
+import os, requests
 from scipy.stats import poisson
 import streamlit.components.v1 as components
-from datetime import datetime  # 🔹 NEW (required for ESPN date)
+from datetime import datetime
 
 st.set_page_config(page_title="Puck Shotz Hockey Analytics (Test)", layout="wide", page_icon="🏒")
 st.warning("🧪 TEST MODE — Sandbox version. Changes here won’t affect your main app.")
@@ -20,7 +20,7 @@ st.markdown("""
   <img src='https://raw.githubusercontent.com/Brouz557/Hockey-Prop-Stop/694ae2a448204908099ce2899bd479052d01b518/modern%20hockey%20puck%20l.png' width='220'>
 </div>
 <h1 style='text-align:center;color:#1E5A99;'>Puck Shotz Hockey Analytics</h1>
-<p style='text-align:center;color:#D6D6D6;'>Automatically runs all of today’s NHL matchups with inline logos and instant team filters.</p>
+<p style='text-align:center;color:#D6D6D6;'>Automatically runs all of today’s NHL matchups.</p>
 """, unsafe_allow_html=True)
 
 # ---------------------------------------------------------------
@@ -38,7 +38,8 @@ injuries_file= st.sidebar.file_uploader("INJURIES", type=["xlsx","csv"])
 # Helper Functions
 # ---------------------------------------------------------------
 def load_file(f):
-    if not f: return pd.DataFrame()
+    if not f:
+        return pd.DataFrame()
     try:
         return pd.read_excel(f) if f.name.lower().endswith(".xlsx") else pd.read_csv(f)
     except Exception:
@@ -46,7 +47,8 @@ def load_file(f):
 
 def safe_read(path):
     try:
-        if not os.path.exists(path): return pd.DataFrame()
+        if not os.path.exists(path):
+            return pd.DataFrame()
         return pd.read_excel(path) if path.lower().endswith(".xlsx") else pd.read_csv(path)
     except Exception:
         return pd.DataFrame()
@@ -58,35 +60,21 @@ def load_data(file_uploader, default_path):
 
 @st.cache_data(show_spinner=False)
 def load_all(skaters_file, shots_file, goalies_file, lines_file, teams_file, injuries_file):
-    base_paths=[".","data","/mount/src/hockey-prop-stop/data"]
-    def find_file(name):
-        for p in base_paths:
-            fp=os.path.join(p,name)
-            if os.path.exists(fp): return fp
-        return None
-    skaters=load_data(skaters_file, find_file("Skaters.xlsx") or "Skaters.xlsx")
-    shots  =load_data(shots_file,   find_file("SHOT DATA.xlsx") or "SHOT DATA.xlsx")
-    goalies=load_data(goalies_file, find_file("GOALTENDERS.xlsx") or "GOALTENDERS.xlsx")
-    lines  =load_data(lines_file,   find_file("LINE DATA.xlsx") or "LINE DATA.xlsx")
-    teams  =load_data(teams_file,   find_file("TEAMS.xlsx") or "TEAMS.xlsx")
+    skaters = load_data(skaters_file, "Skaters.xlsx")
+    shots   = load_data(shots_file, "SHOT DATA.xlsx")
+    goalies = load_data(goalies_file, "GOALTENDERS.xlsx")
+    lines   = load_data(lines_file, "LINE DATA.xlsx")
+    teams   = load_data(teams_file, "TEAMS.xlsx")
+    injuries = load_data(injuries_file, "injuries.xlsx")
 
-    injuries=pd.DataFrame()
-    for p in ["injuries.xlsx","Injuries.xlsx","data/injuries.xlsx"]:
-        if os.path.exists(p):
-            injuries=load_file(open(p,"rb"));break
-    if injuries.empty:
-        injuries=load_file(injuries_file)
-    if not injuries.empty:
-        injuries.columns=injuries.columns.str.lower().str.strip()
-        if "player" in injuries.columns:
-            injuries["player"]=injuries["player"].astype(str).str.strip().str.lower()
-    return skaters,shots,goalies,lines,teams,injuries
+    return skaters, shots, goalies, lines, teams, injuries
 
 # ---------------------------------------------------------------
 # Load Data
 # ---------------------------------------------------------------
 skaters_df, shots_df, goalies_df, lines_df, teams_df, injuries_df = load_all(
-    skaters_file, shots_file, goalies_file, lines_file, teams_file, injuries_file)
+    skaters_file, shots_file, goalies_file, lines_file, teams_file, injuries_file
+)
 
 if skaters_df.empty or shots_df.empty:
     st.warning("⚠️ Missing data. Upload required files.")
@@ -96,87 +84,108 @@ st.success("✅ Data loaded successfully.")
 
 for df in [skaters_df, shots_df, goalies_df, lines_df, teams_df]:
     if not df.empty:
-        df.columns=df.columns.str.lower().str.strip()
-
-team_col=next((c for c in skaters_df.columns if "team" in c),None)
-player_col="name" if "name" in skaters_df.columns else None
-
-shots_df=shots_df.rename(columns={
-    next((c for c in shots_df.columns if "player" in c or "name" in c),"player"):"player"
-})
-shots_df["player"]=shots_df["player"].astype(str).str.strip()
-game_col=next((c for c in shots_df.columns if "game" in c and "id" in c),None)
+        df.columns = df.columns.str.lower().str.strip()
 
 # ---------------------------------------------------------------
-# Matchup Pull (ESPN)  🔹 FIXED
+# ESPN Matchups (FIXED)
 # ---------------------------------------------------------------
 @st.cache_data(ttl=300)
 def get_todays_games():
-    today = datetime.utcnow().strftime("%Y%m%d")  # 🔹 NEW
+    today = datetime.utcnow().strftime("%Y%m%d")
     url = f"https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard?dates={today}"
-
-    r = requests.get(
-        url,
-        timeout=10,
-        headers={"User-Agent": "Mozilla/5.0"}  # 🔹 NEW
-    )
+    r = requests.get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
     r.raise_for_status()
     data = r.json()
 
-    games=[]
-    for e in data.get("events",[]):
-        comps=e.get("competitions",[{}])[0].get("competitors",[])
-        if len(comps) >= 2:  # 🔹 CHANGED
-            home = next(c for c in comps if c.get("homeAway")=="home")
-            away = next(c for c in comps if c.get("homeAway")=="away")
+    games = []
+    for e in data.get("events", []):
+        comps = e.get("competitions", [{}])[0].get("competitors", [])
+        if len(comps) >= 2:
+            home = next(c for c in comps if c.get("homeAway") == "home")
+            away = next(c for c in comps if c.get("homeAway") == "away")
             games.append({
-                "away":away["team"]["abbreviation"],
-                "home":home["team"]["abbreviation"],
-                "away_logo":away["team"]["logo"],
-                "home_logo":home["team"]["logo"]
+                "away": away["team"]["abbreviation"],
+                "home": home["team"]["abbreviation"]
             })
     return games
 
-games=get_todays_games()
-
-# 🔹 NEW: visibility, NO st.stop()
+games = get_todays_games()
 st.caption(f"ESPN games found: {len(games)}")
 if not games:
     st.warning("No games found today (ESPN may not have published the slate yet).")
 
 # ---------------------------------------------------------------
-# Run Button / Line Input
+# MODEL FUNCTION (MUST BE ABOVE BUTTON CALL)
 # ---------------------------------------------------------------
-col_run,col_line=st.columns([3,1])
-with col_run:
-    run_model=st.button("🚀 Run Model (All Games)")
-with col_line:
-    line_test=st.number_input("Line to Test (Probability Update)",0.0,10.0,3.5,0.5,key="line_test")
-    if "line_test_val" not in st.session_state:
-        st.session_state.line_test_val=line_test
-    elif st.session_state.line_test_val!=line_test:
-        st.session_state.line_test_val=line_test
-        if "results" in st.session_state:
-            st.rerun()
+@st.cache_data(show_spinner=False)
+def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, teams_df, injuries_df):
+    results = []
+    team_col = next((c for c in skaters_df.columns if "team" in c), None)
+    player_col = "name" if "name" in skaters_df.columns else "player"
+    game_col = next((c for c in shots_df.columns if "game" in c and "id" in c), None)
+
+    skaters = skaters_df[skaters_df[team_col].isin([team_a, team_b])]
+    roster = skaters[[player_col, team_col]].drop_duplicates()
+
+    for _, row in roster.iterrows():
+        player = row[player_col]
+        team = row[team_col]
+        df_p = shots_df[shots_df["player"].str.lower() == str(player).lower()]
+        if df_p.empty or "sog" not in df_p.columns:
+            continue
+
+        agg = df_p.groupby(game_col)["sog"].sum().reset_index()
+        shots = agg["sog"].tolist()
+        if not shots:
+            continue
+
+        lam = np.mean(shots[-5:])
+        prob = 1 - poisson.cdf(2.5, mu=max(lam, 0.01))
+
+        results.append({
+            "Player": player,
+            "Team": team,
+            "Final Projection": round(lam, 2),
+            "Prob ≥ 3 (%)": round(prob * 100, 1)
+        })
+
+    return pd.DataFrame(results)
 
 # ---------------------------------------------------------------
-# Run Model + Combine Games  🔹 GUARDED
+# Run Button
+# ---------------------------------------------------------------
+col_run, _ = st.columns([3, 1])
+with col_run:
+    run_model = st.button("🚀 Run Model (All Games)")
+
+# ---------------------------------------------------------------
+# Run Model
 # ---------------------------------------------------------------
 if run_model and games:
-    all_tables=[]
-    for m in games:
-        team_a,team_b=m["away"],m["home"]
-        df=build_model(team_a,team_b,skaters_df,shots_df,goalies_df,lines_df,teams_df,injuries_df)
+    all_tables = []
+    for g in games:
+        df = build_model(
+            g["away"], g["home"],
+            skaters_df, shots_df, goalies_df,
+            lines_df, teams_df, injuries_df
+        )
         if not df.empty:
-            df["Matchup"]=f"{team_a}@{team_b}"
+            df["Matchup"] = f'{g["away"]}@{g["home"]}'
             all_tables.append(df)
+
     if all_tables:
-        combined=pd.concat(all_tables,ignore_index=True)
-        st.session_state.results=combined
-        st.session_state.matchups=games
-        st.success("✅ Model built for all games.")
-        st.rerun()
-    else:
-        st.warning("No valid data generated.")
+        st.session_state.results = pd.concat(all_tables, ignore_index=True)
+        st.success("✅ Model complete")
+
 elif run_model and not games:
-    st.warning("Cannot run model — no games available from ESPN.")
+    st.warning("Cannot run model — no games available.")
+
+# ---------------------------------------------------------------
+# Display Results
+# ---------------------------------------------------------------
+if "results" in st.session_state:
+    components.html(
+        st.session_state.results.to_html(index=False),
+        height=600,
+        scrolling=True
+    )
