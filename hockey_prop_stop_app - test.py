@@ -349,10 +349,8 @@ with col_line:
 if "line_test_val" not in st.session_state:
     st.session_state.line_test_val = line_test
 elif st.session_state.line_test_val != line_test:
-    st.session_state.line_test_val = )
-    
-    
-    html_table=df[existing_cols].to_html(index=False,escape=False)
+    st.session_state.line_test_val =   
+        html_table=df[existing_cols].to_html(index=False,escape=False)
 
     components.html(f"""
     <style>
