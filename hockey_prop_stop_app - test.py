@@ -262,7 +262,14 @@ if "results" in st.session_state:
     df=st.session_state.results.copy()
     games=st.session_state.matchups
 
-    
+     with col_line:
+         line_test=st.number_input("Line to Test",0.0,10.0,3.5,0.5,key="line_test")
+    if "line_test_val" not in st.session_state:
+        st.session_state.line_test_val=line_test
+    elif st.session_state.line_test_val!=line_test:
+        st.session_state.line_test_val=line_test
+        if "results" in st.session_state:
+            st.rerun()
 
     # Matchup buttons
     cols = st.columns(3)
@@ -297,15 +304,7 @@ if "results" in st.session_state:
                         st.session_state.selected_teams={team_a,team_b}
                     st.rerun()
 
-                    with col_line:
-         line_test=st.number_input("Line to Test",0.0,10.0,3.5,0.5,key="line_test")
-    if "line_test_val" not in st.session_state:
-        st.session_state.line_test_val=line_test
-    elif st.session_state.line_test_val!=line_test:
-        st.session_state.line_test_val=line_test
-        if "results" in st.session_state:
-            st.rerun()
-
+                  
     sel_teams=st.session_state.get("selected_teams")
     if sel_teams:
         df=df[df["Team"].isin(sel_teams)]
