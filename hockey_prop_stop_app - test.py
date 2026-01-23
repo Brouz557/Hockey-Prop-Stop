@@ -142,13 +142,6 @@ game_col=next((c for c in shots_df.columns if "game" in c and "id" in c),None)
 # ---------------------------------------------------------------
 @st.cache_data(ttl=300)
 def get_todays_games():
-    # ---------------------------------------------------------------
-# Normalize ESPN team abbreviations to data format
-# ---------------------------------------------------------------
-for g in games:
-    g["away"] = TEAM_ABBREV_MAP.get(g["away"], g["away"])
-    g["home"] = TEAM_ABBREV_MAP.get(g["home"], g["home"])
-
     url="https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard"
     r=requests.get(url,timeout=10)
     data=r.json()
@@ -169,7 +162,12 @@ games=get_todays_games()
 if not games:
     st.warning("No games found today.")
     st.stop()
-
+    # ---------------------------------------------------------------
+# Normalize ESPN team abbreviations to data format
+# ---------------------------------------------------------------
+for g in games:
+    g["away"] = TEAM_ABBREV_MAP.get(g["away"], g["away"])
+    g["home"] = TEAM_ABBREV_MAP.get(g["home"], g["home"])
 # ---------------------------------------------------------------
 # Run Button / Line Input
 # ---------------------------------------------------------------
