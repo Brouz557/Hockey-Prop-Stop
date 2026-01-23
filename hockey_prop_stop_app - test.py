@@ -262,14 +262,7 @@ if "results" in st.session_state:
     df=st.session_state.results.copy()
     games=st.session_state.matchups
 
-    with col_line:
-         line_test=st.number_input("Line to Test",0.0,10.0,3.5,0.5,key="line_test")
-    if "line_test_val" not in st.session_state:
-        st.session_state.line_test_val=line_test
-    elif st.session_state.line_test_val!=line_test:
-        st.session_state.line_test_val=line_test
-        if "results" in st.session_state:
-            st.rerun()
+    
 
     # Matchup buttons
     cols = st.columns(3)
@@ -341,6 +334,23 @@ if "results" in st.session_state:
           "Playable Odds","Season Avg","Line Adj","Exp Goals (xG)","Shooting %",
           "Form Indicator","L3 Shots","L5 Shots","L10 Shots"]
     existing_cols=[c for c in cols if c in df.columns]
+    st.markdown("### 🎯 Shot Line Test")
+
+col_line, _ = st.columns([1, 4])
+with col_line:
+    line_test = st.number_input(
+        "Line to Test",
+        0.0, 10.0,
+        st.session_state.get("line_test_val", 3.5),
+        0.5,
+        key="line_test"
+    )
+
+if "line_test_val" not in st.session_state:
+    st.session_state.line_test_val = line_test
+elif st.session_state.line_test_val != line_test:
+    st.session_state.line_test_val = line_test
+    st.rerun()
     html_table=df[existing_cols].to_html(index=False,escape=False)
 
     components.html(f"""
