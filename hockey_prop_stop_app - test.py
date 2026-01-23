@@ -263,7 +263,7 @@ if "results" in st.session_state:
     games=st.session_state.matchups
 
     with col_line:
-    line_test=st.number_input("Line to Test",0.0,10.0,3.5,0.5,key="line_test")
+         line_test=st.number_input("Line to Test",0.0,10.0,3.5,0.5,key="line_test")
     if "line_test_val" not in st.session_state:
         st.session_state.line_test_val=line_test
     elif st.session_state.line_test_val!=line_test:
