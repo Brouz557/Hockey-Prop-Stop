@@ -130,14 +130,7 @@ if not games:
 # ---------------------------------------------------------------
 col_run,col_line=st.columns([3,1])
 with col_run: run_model=st.button("🚀 Run Model (All Games)")
-with col_line:
-    line_test=st.number_input("Line to Test",0.0,10.0,3.5,0.5,key="line_test")
-    if "line_test_val" not in st.session_state:
-        st.session_state.line_test_val=line_test
-    elif st.session_state.line_test_val!=line_test:
-        st.session_state.line_test_val=line_test
-        if "results" in st.session_state:
-            st.rerun()
+
 
 # ---------------------------------------------------------------
 # Build Model (xG, Shooting %, Injuries)
@@ -268,6 +261,15 @@ if run_model:
 if "results" in st.session_state:
     df=st.session_state.results.copy()
     games=st.session_state.matchups
+
+  with col_line:
+    line_test=st.number_input("Line to Test",0.0,10.0,3.5,0.5,key="line_test")
+    if "line_test_val" not in st.session_state:
+        st.session_state.line_test_val=line_test
+    elif st.session_state.line_test_val!=line_test:
+        st.session_state.line_test_val=line_test
+        if "results" in st.session_state:
+            st.rerun()
 
     # Matchup buttons
     cols = st.columns(3)
