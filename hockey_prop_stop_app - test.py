@@ -7,6 +7,44 @@ import numpy as np
 import os, requests, html, json
 from scipy.stats import poisson
 import streamlit.components.v1 as components
+# ---------------------------------------------------------------
+# Team Abbreviation Normalization (ESPN -> Data)
+# ---------------------------------------------------------------
+TEAM_ABBREV_MAP = {
+    "NJ":  "NJD",
+    "LA":  "LAK",
+    "SJ":  "SJS",
+    "TB":  "TBL",
+    "ARI": "ARI",
+    "ANA": "ANA",
+    "BOS": "BOS",
+    "BUF": "BUF",
+    "CAR": "CAR",
+    "CBJ": "CBJ",
+    "CGY": "CGY",
+    "CHI": "CHI",
+    "COL": "COL",
+    "DAL": "DAL",
+    "DET": "DET",
+    "EDM": "EDM",
+    "FLA": "FLA",
+    "MIN": "MIN",
+    "MTL": "MTL",
+    "NSH": "NSH",
+    "NYI": "NYI",
+    "NYR": "NYR",
+    "OTT": "OTT",
+    "PHI": "PHI",
+    "PIT": "PIT",
+    "SEA": "SEA",
+    "STL": "STL",
+    "TOR": "TOR",
+    "VAN": "VAN",
+    "VGK": "VGK",
+    "WSH": "WSH",
+    "WPG": "WPG"
+}
+
 
 st.set_page_config(page_title="Puck Shotz Hockey Analytics (Test)", layout="wide", page_icon="🏒")
 st.warning("🧪 TEST MODE — Sandbox version. Changes here won’t affect your main app.")
