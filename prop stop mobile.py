@@ -1,10 +1,11 @@
 # ---------------------------------------------------------------
-# 🏒 Puck Shotz Hockey Analytics — Mobile Cards (LOGOS + SORTED)
+# 🏒 Puck Shotz Hockey Analytics — Mobile (FULL DATA VERSION)
 # ---------------------------------------------------------------
 import streamlit as st
 import pandas as pd
 import numpy as np
-import os, requests
+import os, requests, html, json
+from scipy.stats import poisson
 import streamlit.components.v1 as components
 
 # ---------------------------------------------------------------
@@ -17,7 +18,7 @@ st.set_page_config(
 )
 
 # ---------------------------------------------------------------
-# Header (logo + colors restored)
+# Header
 # ---------------------------------------------------------------
 st.markdown("""
 <div style='text-align:center; background-color:#0A3A67;
@@ -41,7 +42,7 @@ TEAM_ABBREV_MAP = {
 }
 
 # ---------------------------------------------------------------
-# Auto-load data (same behavior as desktop app)
+# Auto-load data
 # ---------------------------------------------------------------
 def safe_read(path):
     try:
@@ -66,15 +67,17 @@ def load_all():
         safe_read(find_file("GOALTENDERS.xlsx")),
         safe_read(find_file("LINE DATA.xlsx")),
         safe_read(find_file("TEAMS.xlsx")),
+        safe_read(find_file("injuries.xlsx")),
     )
 
-skaters_df, shots_df, goalies_df, lines_df, teams_df = load_all()
+skaters_df, shots_df, goalies_df, lines_df, teams_df, injuries_df = load_all()
 if skaters_df.empty or shots_df.empty:
     st.error("Missing required data files.")
     st.stop()
 
-for df in [skaters_df, shots_df, goalies_df, lines_df, teams_df]:
-    df.columns = df.columns.str.lower().str.strip()
+for df in [skaters_df, shots_df, goalies_df, lines_df, teams_df, injuries_df]:
+    if not df.empty:
+        df.columns = df.columns.str.lower().str.strip()
 
 team_col = next(c for c in skaters_df.columns if "team" in c)
 player_col = "name" if "name" in skaters_df.columns else skaters_df.columns[0]
@@ -85,7 +88,7 @@ shots_df["player"] = shots_df["player"].astype(str).str.strip()
 game_col = next(c for c in shots_df.columns if "game" in c)
 
 # ---------------------------------------------------------------
-# ESPN Matchups (logos used ONLY for teams)
+# ESPN Matchups
 # ---------------------------------------------------------------
 @st.cache_data(ttl=300)
 def get_games():
@@ -111,13 +114,27 @@ if not games:
     st.stop()
 
 # ---------------------------------------------------------------
-# Run model button
+# Line Test Input (RESTORED)
+# ---------------------------------------------------------------
+st.session_state.setdefault("line_test_val", 3.5)
+
+line_test = st.number_input(
+    "🎯 Line to Test",
+    min_value=0.0,
+    max_value=10.0,
+    step=0.5,
+    value=st.session_state.line_test_val
+)
+st.session_state.line_test_val = line_test
+
+# ---------------------------------------------------------------
+# Run model
 # ---------------------------------------------------------------
 if st.button("🚀 Run Model (All Games)", use_container_width=True):
     st.session_state.run_model = True
 
 # ---------------------------------------------------------------
-# Build model (unchanged math)
+# Build FULL model (same columns as main app)
 # ---------------------------------------------------------------
 def build_model(team_a, team_b):
     results = []
@@ -128,7 +145,6 @@ def build_model(team_a, team_b):
         player = str(r[player_col])
         team = r[team_col]
         df_p = grouped.get(player.lower())
-
         if df_p is None or "sog" not in df_p.columns:
             continue
 
@@ -136,16 +152,23 @@ def build_model(team_a, team_b):
         if len(sog_vals) < 3:
             continue
 
-        l3 = np.mean(sog_vals[-3:])
-        l5 = np.mean(sog_vals[-5:])
-        l10 = np.mean(sog_vals[-10:])
+        l3, l5, l10 = np.mean(sog_vals[-3:]), np.mean(sog_vals[-5:]), np.mean(sog_vals[-10:])
+        baseline = 0.55*l10 + 0.3*l5 + 0.15*l3
 
-        lam = 0.55 * l10 + 0.3 * l5 + 0.15 * l3
+        lam = baseline
+        prob_line = 1 - poisson.cdf(line_test - 1, mu=max(lam, 0.01))
+        prob_pct = round(prob_line * 100, 1)
+
+        odds = -100 * (prob_line / (1 - prob_line)) if prob_line >= 0.5 else 100 * ((1 - prob_line) / prob_line)
+        odds_str = f"{'+' if odds > 0 else ''}{int(round(odds))}"
 
         results.append({
             "Player": player,
             "Team": team,
             "Final Projection": round(lam, 2),
+            "Prob ≥ Line (%)": prob_pct,
+            "Playable Odds": odds_str,
+            "Season Avg": round(np.mean(sog_vals), 2),
             "L3": ", ".join(map(str, sog_vals[-3:])),
             "L5": ", ".join(map(str, sog_vals[-5:])),
             "L10": ", ".join(map(str, sog_vals[-10:])),
@@ -168,7 +191,7 @@ if st.session_state.get("run_model"):
         st.session_state.results = pd.concat(tables, ignore_index=True)
 
 # ---------------------------------------------------------------
-# Helper: team logo icon for player cards
+# Helper: team logo
 # ---------------------------------------------------------------
 def get_team_logo(team):
     for g in games:
@@ -179,50 +202,24 @@ def get_team_logo(team):
     return ""
 
 # ---------------------------------------------------------------
-# DISPLAY — buttons + sorted mobile cards
+# DISPLAY — mobile cards (FULL DATA)
 # ---------------------------------------------------------------
 if "results" in st.session_state:
     df = st.session_state.results
 
     st.markdown("## Matchups")
-
     cols = st.columns(3)
+
     for i, g in enumerate(games):
         matchup_id = f"{g['away']}@{g['home']}"
         with cols[i % 3]:
             if st.button(f"{g['away']} @ {g['home']}", use_container_width=True):
                 st.session_state.selected_match = matchup_id
 
-            st.markdown(
-                f"""
-                <div style="display:flex;justify-content:center;gap:8px;margin-top:4px;">
-                    <img src="{g['away_logo']}" height="22">
-                    <img src="{g['home_logo']}" height="22">
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
-
     if "selected_match" not in st.session_state:
         st.stop()
 
     team_a, team_b = st.session_state.selected_match.split("@")
-
-    # Selected matchup header
-    sel = next(g for g in games if g["away"] == team_a and g["home"] == team_b)
-    components.html(
-        f"""
-        <div style="display:flex;justify-content:center;align-items:center;
-                    gap:14px;margin:14px 0 20px 0;font-size:18px;
-                    font-weight:700;color:#FFFFFF;">
-            <img src="{sel['away_logo']}" height="32">
-            <span>{team_a} @ {team_b}</span>
-            <img src="{sel['home_logo']}" height="32">
-        </div>
-        """,
-        height=70
-    )
-
     tabs = st.tabs([team_a, team_b])
 
     def render_team(team, tab):
@@ -232,13 +229,12 @@ if "results" in st.session_state:
                     (df["Team"] == team) &
                     (df["Matchup"] == st.session_state.selected_match)
                 ]
-                .drop_duplicates(subset=["Player"])
+                .drop_duplicates("Player")
                 .sort_values("Final Projection", ascending=False)
             )
 
             for _, r in team_df.iterrows():
                 logo = get_team_logo(team)
-
                 components.html(
                     f"""
                     <div style="
@@ -250,19 +246,19 @@ if "results" in st.session_state:
                         color:#FFFFFF;
                     ">
                         <div style="display:flex;align-items:center;margin-bottom:6px;">
-                            <img src="{logo}" style="width:34px;height:34px;
-                                 object-fit:contain;margin-right:10px;">
-                            <div style="font-size:16px;font-weight:700;">
-                                {r['Player']} – {r['Team']}
-                            </div>
+                            <img src="{logo}" style="width:32px;height:32px;margin-right:10px;">
+                            <b>{r['Player']} – {r['Team']}</b>
                         </div>
                         <div>Final Projection: <b>{r['Final Projection']}</b></div>
+                        <div>Prob ≥ Line: <b>{r['Prob ≥ Line (%)']}%</b></div>
+                        <div>Playable Odds: <b>{r['Playable Odds']}</b></div>
+                        <div>Season Avg: {r['Season Avg']}</div>
                         <div>L3: {r['L3']}</div>
                         <div>L5: {r['L5']}</div>
                         <div>L10: {r['L10']}</div>
                     </div>
                     """,
-                    height=240
+                    height=280
                 )
 
     render_team(team_a, tabs[0])
