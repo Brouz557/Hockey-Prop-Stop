@@ -47,7 +47,7 @@ TEAM_ABBREV_MAP = {
 
 
 st.set_page_config(page_title="Puck Shotz Hockey Analytics (Test)", layout="wide", page_icon="🏒")
-st.warning("🧪 TEST MODE — Sandbox version. Changes here won’t affect your main app.")
+st.warning("Production Version")
 
 # ---------------------------------------------------------------
 # Header
@@ -405,3 +405,4 @@ if "results" in st.session_state:
     </style>
     <div style='overflow-x:auto;height:650px;'>{html_table}</div>
     """,height=700,scrolling=True)
+
