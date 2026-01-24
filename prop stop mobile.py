@@ -1,15 +1,14 @@
 # ---------------------------------------------------------------
-# 🏒 Puck Shotz Hockey Analytics — Mobile Cards (Extended View)
+# 🏒 Puck Shotz Hockey Analytics — Mobile Cards (WITH LOGOS)
 # ---------------------------------------------------------------
 import streamlit as st
 import pandas as pd
 import numpy as np
-import os, requests, html, json
-from scipy.stats import poisson
+import os, requests
 import streamlit.components.v1 as components
 
 # ---------------------------------------------------------------
-# Page config (mobile friendly)
+# Page config
 # ---------------------------------------------------------------
 st.set_page_config(
     page_title="Puck Shotz Hockey Analytics (Mobile)",
@@ -42,7 +41,7 @@ TEAM_ABBREV_MAP = {
 }
 
 # ---------------------------------------------------------------
-# Auto-load data (same as desktop)
+# Auto-load data
 # ---------------------------------------------------------------
 def safe_read(path):
     try:
@@ -118,7 +117,7 @@ if st.button("🚀 Run Model (All Games)", use_container_width=True):
     st.session_state.run_model = True
 
 # ---------------------------------------------------------------
-# Build model (same structure, stable)
+# Build model (stable)
 # ---------------------------------------------------------------
 def build_model(team_a, team_b):
     results = []
@@ -166,7 +165,7 @@ if st.session_state.get("run_model"):
         st.session_state.results = pd.concat(tables, ignore_index=True)
 
 # ---------------------------------------------------------------
-# DISPLAY — MATCHUP BUTTONS + EXTENDED CARD CONTAINER
+# DISPLAY — MATCHUP BUTTONS + LOGOS + EXTENDED CARDS
 # ---------------------------------------------------------------
 if "results" in st.session_state:
     df = st.session_state.results
@@ -183,16 +182,37 @@ if "results" in st.session_state:
 
     team_a, team_b = st.session_state.selected_match.split("@")
 
-    tabs = st.tabs([team_a, team_b])
+    # ---- LOGOS (THIS IS THE VERSION YOU REMEMBER) ----
+    sel_game = next(
+        g for g in games if g["away"] == team_a and g["home"] == team_b
+    )
+
+    components.html(
+        f"""
+        <div style="
+            display:flex;
+            justify-content:center;
+            align-items:center;
+            gap:14px;
+            margin:12px 0 18px 0;
+            font-size:18px;
+            font-weight:700;
+            color:#FFFFFF;
+        ">
+            <img src="{sel_game['away_logo']}" height="32">
+            <span>{team_a} @ {team_b}</span>
+            <img src="{sel_game['home_logo']}" height="32">
+        </div>
+        """,
+        height=70
+    )
+
+    # ---- TEAM TABS ----
+    tab_a, tab_b = st.tabs([team_a, team_b])
 
     def render_team(team, tab):
         with tab:
             team_df = df[df["Team"] == team]
-
-            components.html(
-                "<div style='height:720px; overflow-y:auto;'>",
-                height=0
-            )
 
             for _, r in team_df.iterrows():
                 components.html(
@@ -216,8 +236,8 @@ if "results" in st.session_state:
                         <div>L10: {r.get('L10','')}</div>
                     </div>
                     """,
-                    height=210
+                    height=220
                 )
 
-    render_team(team_a, tabs[0])
-    render_team(team_b, tabs[1])
+    render_team(team_a, tab_a)
+    render_team(team_b, tab_b)
