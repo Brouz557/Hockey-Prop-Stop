@@ -345,15 +345,50 @@ if "results" in st.session_state:
             return "<span style='color:#FF4B4B;font-weight:bold;'>🔴 Below Baseline</span>"
         else:
             return "<span style='color:#D6D6D6;'>⚪ Neutral</span>"
+# -----------------------------------
+# Matchup buttons (logos + colors)
+# -----------------------------------
+st.markdown("## Matchups")
 
-    # -----------------------------------
-    # Matchup buttons
-    # -----------------------------------
-    st.markdown("## Matchups")
-    for m in games:
-        matchup_id = f"{m['away']}@{m['home']}"
-        if st.button(matchup_id, use_container_width=True):
+for m in games:
+    matchup_id = f"{m['away']}@{m['home']}"
+
+    button_html = f"""
+    <div style="
+        background-color:#1C5FAF;
+        border-radius:10px;
+        padding:10px;
+        margin-bottom:10px;
+        text-align:center;
+        cursor:pointer;
+        box-shadow:0 0 6px rgba(0,0,0,0.4);
+    "
+    onclick="window.location.hash='{matchup_id}'">
+        <img src="{m['away_logo']}" height="20" style="vertical-align:middle;">
+        <span style="color:#FFFFFF;font-weight:700;margin:0 8px;">
+            {m['away']} @ {m['home']}
+        </span>
+        <img src="{m['home_logo']}" height="20" style="vertical-align:middle;">
+    </div>
+    """
+
+    components.html(
+        f"""
+        <a href="#{matchup_id}" style="text-decoration:none;">
+            {button_html}
+        </a>
+        """,
+        height=70
+    )
+
+    # Sync selection with session_state
+    if st.session_state.get("selected_match") is None:
+        if st.experimental_get_query_params().get("", [""])[0] == matchup_id:
             st.session_state.selected_match = matchup_id
+            st.rerun()
+
+
+
 
     if "selected_match" not in st.session_state:
         st.stop()
