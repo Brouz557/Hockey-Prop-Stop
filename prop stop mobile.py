@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Puck Shotz Hockey Analytics — Mobile (FULL DATA VERSION)
+# 🏒 Puck Shotz Hockey Analytics — Mobile (FULL PARITY VERSION)
 # ---------------------------------------------------------------
 import streamlit as st
 import pandas as pd
@@ -114,7 +114,7 @@ if not games:
     st.stop()
 
 # ---------------------------------------------------------------
-# Line Test Input (RESTORED)
+# Line Test Input
 # ---------------------------------------------------------------
 st.session_state.setdefault("line_test_val", 3.5)
 
@@ -128,22 +128,48 @@ line_test = st.number_input(
 st.session_state.line_test_val = line_test
 
 # ---------------------------------------------------------------
-# Run model
+# Run model button
 # ---------------------------------------------------------------
 if st.button("🚀 Run Model (All Games)", use_container_width=True):
     st.session_state.run_model = True
 
 # ---------------------------------------------------------------
-# Build FULL model (same columns as main app)
+# Build FULL model (DESKTOP PARITY)
 # ---------------------------------------------------------------
 def build_model(team_a, team_b):
     results = []
+
     roster = skaters_df[skaters_df[team_col].isin([team_a, team_b])]
     grouped = {n.lower(): g for n, g in shots_df.groupby(shots_df["player"].str.lower())}
 
+    # ---- Line adjustment ----
+    line_adj = pd.DataFrame()
+    if not lines_df.empty and {"line pairings", "team", "games", "sog against"}.issubset(lines_df.columns):
+        l = lines_df.copy()
+        l["games"] = pd.to_numeric(l["games"], errors="coerce").fillna(0)
+        l["sog against"] = pd.to_numeric(l["sog against"], errors="coerce").fillna(0)
+
+        l = l.groupby(["line pairings", "team"], as_index=False).agg({
+            "games": "sum",
+            "sog against": "sum"
+        })
+
+        l["sog_against_per_game"] = np.where(
+            l["games"] > 0,
+            l["sog against"] / l["games"],
+            np.nan
+        )
+
+        team_avg = l.groupby("team")["sog_against_per_game"].mean()
+        league_avg = team_avg.mean()
+        l["line_factor"] = (league_avg / l["sog_against_per_game"]).clip(0.7, 1.3)
+        line_adj = l
+
+    # ---- Player loop ----
     for _, r in roster.iterrows():
         player = str(r[player_col])
         team = r[team_col]
+
         df_p = grouped.get(player.lower())
         if df_p is None or "sog" not in df_p.columns:
             continue
@@ -152,10 +178,32 @@ def build_model(team_a, team_b):
         if len(sog_vals) < 3:
             continue
 
-        l3, l5, l10 = np.mean(sog_vals[-3:]), np.mean(sog_vals[-5:]), np.mean(sog_vals[-10:])
-        baseline = 0.55*l10 + 0.3*l5 + 0.15*l3
+        last3 = sog_vals[-3:]
+        last5 = sog_vals[-5:]
+        last10 = sog_vals[-10:]
 
-        lam = baseline
+        l3, l5, l10 = np.mean(last3), np.mean(last5), np.mean(last10)
+        baseline = 0.55 * l10 + 0.3 * l5 + 0.15 * l3
+
+        # ---- Trend & Form ----
+        trend = (l5 - l10) / l10 if l10 > 0 else 0
+        if trend > 0.05:
+            form = "🟢 Above Baseline"
+        elif trend < -0.05:
+            form = "🔴 Below Baseline"
+        else:
+            form = "⚪ Neutral"
+
+        # ---- Line factor ----
+        line_factor_internal = 1.0
+        if not line_adj.empty:
+            last_name = player.split()[-1].lower()
+            m = line_adj[line_adj["line pairings"].str.contains(last_name, case=False, na=False)]
+            if not m.empty:
+                line_factor_internal = np.average(m["line_factor"], weights=m["games"])
+
+        lam = baseline * line_factor_internal
+
         prob_line = 1 - poisson.cdf(line_test - 1, mu=max(lam, 0.01))
         prob_pct = round(prob_line * 100, 1)
 
@@ -166,12 +214,14 @@ def build_model(team_a, team_b):
             "Player": player,
             "Team": team,
             "Final Projection": round(lam, 2),
+            "Line Adj": round(line_factor_internal, 2),
+            "Form": form,
             "Prob ≥ Line (%)": prob_pct,
             "Playable Odds": odds_str,
             "Season Avg": round(np.mean(sog_vals), 2),
-            "L3": ", ".join(map(str, sog_vals[-3:])),
-            "L5": ", ".join(map(str, sog_vals[-5:])),
-            "L10": ", ".join(map(str, sog_vals[-10:])),
+            "L3": ", ".join(map(str, last3)),
+            "L5": ", ".join(map(str, last5)),
+            "L10": ", ".join(map(str, last10)),
         })
 
     return pd.DataFrame(results)
@@ -202,7 +252,7 @@ def get_team_logo(team):
     return ""
 
 # ---------------------------------------------------------------
-# DISPLAY — mobile cards (FULL DATA)
+# DISPLAY — mobile cards (FULL PARITY)
 # ---------------------------------------------------------------
 if "results" in st.session_state:
     df = st.session_state.results
@@ -250,6 +300,8 @@ if "results" in st.session_state:
                             <b>{r['Player']} – {r['Team']}</b>
                         </div>
                         <div>Final Projection: <b>{r['Final Projection']}</b></div>
+                        <div>Line Adj: <b>{r['Line Adj']}</b></div>
+                        <div>Form: <b>{r['Form']}</b></div>
                         <div>Prob ≥ Line: <b>{r['Prob ≥ Line (%)']}%</b></div>
                         <div>Playable Odds: <b>{r['Playable Odds']}</b></div>
                         <div>Season Avg: {r['Season Avg']}</div>
@@ -258,7 +310,7 @@ if "results" in st.session_state:
                         <div>L10: {r['L10']}</div>
                     </div>
                     """,
-                    height=280
+                    height=320
                 )
 
     render_team(team_a, tabs[0])
