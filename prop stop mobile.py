@@ -346,46 +346,49 @@ if "results" in st.session_state:
         else:
             return "<span style='color:#D6D6D6;'>⚪ Neutral</span>"
 # -----------------------------------
-# Matchup buttons (logos + colors)
+# Matchup selector (STABLE & MOBILE)
 # -----------------------------------
 st.markdown("## Matchups")
 
-for m in games:
-    matchup_id = f"{m['away']}@{m['home']}"
+matchup_options = [
+    f"{m['away']} @ {m['home']}" for m in games
+]
 
-    button_html = f"""
+selected = st.radio(
+    label="Select a matchup",
+    options=matchup_options,
+    label_visibility="collapsed"
+)
+
+team_a, team_b = selected.replace(" ", "").split("@")
+st.session_state.selected_match = f"{team_a}@{team_b}"
+# -----------------------------------
+# Show logos for selected matchup
+# -----------------------------------
+sel_game = next(
+    g for g in games if g["away"] == team_a and g["home"] == team_b
+)
+
+components.html(
+    f"""
     <div style="
-        background-color:#1C5FAF;
-        border-radius:10px;
-        padding:10px;
-        margin-bottom:10px;
-        text-align:center;
-        cursor:pointer;
-        box-shadow:0 0 6px rgba(0,0,0,0.4);
-    "
-    onclick="window.location.hash='{matchup_id}'">
-        <img src="{m['away_logo']}" height="20" style="vertical-align:middle;">
-        <span style="color:#FFFFFF;font-weight:700;margin:0 8px;">
-            {m['away']} @ {m['home']}
-        </span>
-        <img src="{m['home_logo']}" height="20" style="vertical-align:middle;">
+        display:flex;
+        justify-content:center;
+        align-items:center;
+        gap:12px;
+        margin:10px 0 20px 0;
+        font-size:18px;
+        font-weight:700;
+        color:#FFFFFF;
+    ">
+        <img src="{sel_game['away_logo']}" height="28">
+        <span>{team_a} @ {team_b}</span>
+        <img src="{sel_game['home_logo']}" height="28">
     </div>
-    """
+    """,
+    height=60
+)
 
-    components.html(
-        f"""
-        <a href="#{matchup_id}" style="text-decoration:none;">
-            {button_html}
-        </a>
-        """,
-        height=70
-    )
-
-    # Sync selection with session_state
-    if st.session_state.get("selected_match") is None:
-        if st.experimental_get_query_params().get("", [""])[0] == matchup_id:
-            st.session_state.selected_match = matchup_id
-            st.rerun()
 
 
 
