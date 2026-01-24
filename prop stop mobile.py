@@ -375,5 +375,72 @@ if "results" in st.session_state:
                 odds_val = -100 * ((p / 100) / (1 - p / 100))
             else:
                 odds_val = 100 * ((1 - p / 100) / (p / 100))
-            return f"{'+' if odds_val > 0 else ''}{int(round(odds_
+            return f"{'+' if odds_val > 0 else ''}{int(round(odds_val))}"
 
+        df["Playable Odds"] = df["Prob ≥ Line (%)"].apply(safe_odds)
+
+    # -----------------------------------
+    # Tabs
+    # -----------------------------------
+    tab_a, tab_b = st.tabs([team_a, team_b])
+
+    def render_team(team):
+        team_df = df[df["Team"] == team].sort_values(
+            ["Final Projection", "Line Adj"], ascending=False
+        )
+
+        if team_df.empty:
+            components.html("<p>No players available.</p>")
+            return
+
+        html_blocks = ""
+        for _, r in team_df.iterrows():
+            html_blocks += f"""
+            <div style="
+                background:#0F2743;
+                border:1px solid #1E5A99;
+                border-radius:14px;
+                padding:14px;
+                margin-bottom:14px;
+            ">
+                <div style="
+                    display:flex;
+                    align-items:center;
+                    gap:10px;
+                    font-size:16px;
+                    font-weight:700;
+                    color:#FFFFFF;
+                ">
+                    <img src="{get_team_logo(r['Team'])}" height="22">
+                    <span>{r['Player']} – {r['Team']}</span>
+                </div>
+
+                <div style="margin-top:6px;">
+                    {r.get("Injury","")}
+                    {render_trend_html(r["Trend Score"])}
+                </div>
+
+                <div style="margin-top:8px;font-size:14px;color:#D6D6D6;">
+                    <b>Final Projection:</b> {r['Final Projection']}<br>
+                    <b>Prob ≥ Line:</b> {r.get('Prob ≥ Line (%)','')}%<br>
+                    <b>Playable Odds:</b> {r.get('Playable Odds','')}<br>
+                    <b>Line Adj:</b> {r['Line Adj']}<br>
+                    <b>xG:</b> {r['Exp Goals (xG)']}<br>
+                    <b>Shooting %:</b> {r['Shooting %']}
+                </div>
+
+                <div style="margin-top:8px;font-size:12px;color:#9DB6D8;">
+                    <b>L3:</b> {r['L3 Shots']}<br>
+                    <b>L5:</b> {r['L5 Shots']}<br>
+                    <b>L10:</b> {r['L10 Shots']}
+                </div>
+            </div>
+            """
+
+        components.html(html_blocks, scrolling=True)
+
+    with tab_a:
+        render_team(team_a)
+
+    with tab_b:
+        render_team(team_b)
