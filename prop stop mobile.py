@@ -1,14 +1,14 @@
 # ---------------------------------------------------------------
-# 🏒 Puck Shotz Hockey Analytics — Mobile Friendly
+# 🏒 Puck Shotz Hockey Analytics — Mobile Friendly (Auto Load)
 # ---------------------------------------------------------------
 import streamlit as st
 import pandas as pd
 import numpy as np
-import requests, os, html, json
+import os, requests, html, json
 from scipy.stats import poisson
 
 # ---------------------------------------------------------------
-# Page Config
+# Page Config (mobile-first)
 # ---------------------------------------------------------------
 st.set_page_config(
     page_title="Puck Shotz – Mobile",
@@ -40,51 +40,77 @@ st.markdown(
 )
 
 # ---------------------------------------------------------------
-# Sidebar Uploads
+# Helpers — Auto Load (same bones as your main app)
 # ---------------------------------------------------------------
-st.sidebar.header("📂 Data Files")
-
-skaters_file = st.sidebar.file_uploader("Skaters", type=["xlsx","csv"])
-shots_file   = st.sidebar.file_uploader("Shots", type=["xlsx","csv"])
-goalies_file = st.sidebar.file_uploader("Goalies", type=["xlsx","csv"])
-
-# ---------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------
-def load_file(f):
-    if f is None:
+def safe_read(path):
+    try:
+        if not path or not os.path.exists(path):
+            return pd.DataFrame()
+        return pd.read_excel(path) if path.lower().endswith(".xlsx") else pd.read_csv(path)
+    except Exception:
         return pd.DataFrame()
-    return pd.read_excel(f) if f.name.endswith("xlsx") else pd.read_csv(f)
+
+def find_file(filename):
+    base_paths = [".", "data", "/mount/src/hockey-prop-stop/data"]
+    for p in base_paths:
+        fp = os.path.join(p, filename)
+        if os.path.exists(fp):
+            return fp
+    return None
 
 @st.cache_data(show_spinner=False)
-def load_data():
-    skaters = load_file(skaters_file)
-    shots   = load_file(shots_file)
-    goalies = load_file(goalies_file)
-    return skaters, shots, goalies
+def load_all():
+    skaters = safe_read(find_file("Skaters.xlsx"))
+    shots   = safe_read(find_file("SHOT DATA.xlsx"))
+    goalies = safe_read(find_file("GOALTENDERS.xlsx"))
+    lines   = safe_read(find_file("LINE DATA.xlsx"))
+    teams   = safe_read(find_file("TEAMS.xlsx"))
+    return skaters, shots, goalies, lines, teams
 
 # ---------------------------------------------------------------
 # Load Data
 # ---------------------------------------------------------------
-skaters_df, shots_df, goalies_df = load_data()
+skaters_df, shots_df, goalies_df, lines_df, teams_df = load_all()
 
 if skaters_df.empty or shots_df.empty:
-    st.info("Upload Skaters and Shots data to begin.")
+    st.error("Required data files not found.")
     st.stop()
 
-# Normalize columns
-for df in [skaters_df, shots_df, goalies_df]:
-    df.columns = df.columns.str.lower().str.strip()
+# Normalize column names
+for df in [skaters_df, shots_df, goalies_df, lines_df, teams_df]:
+    if not df.empty:
+        df.columns = df.columns.str.lower().str.strip()
 
-team_col = next(c for c in skaters_df.columns if "team" in c)
+team_col   = next(c for c in skaters_df.columns if "team" in c)
 player_col = "name" if "name" in skaters_df.columns else skaters_df.columns[0]
 
-skaters_df[team_col] = (
-    skaters_df[team_col]
-    .astype(str).str.upper().str.strip()
-    .replace(TEAM_ABBREV_MAP)
-)
+# Normalize TEAM column in data
+def normalize_team(s):
+    return (
+        s.astype(str)
+         .str.upper()
+         .str.strip()
+         .replace({
+             "NJ": "NJD",
+             "NEW JERSEY": "NJD",
+             "NEW JERSEY DEVILS": "NJD",
+             "LA": "LAK",
+             "LOS ANGELES": "LAK",
+             "LOS ANGELES KINGS": "LAK",
+             "SJ": "SJS",
+             "SAN JOSE": "SJS",
+             "SAN JOSE SHARKS": "SJS",
+             "TB": "TBL",
+             "TAMPA BAY": "TBL",
+             "TAMPA BAY LIGHTNING": "TBL"
+         })
+    )
 
+skaters_df[team_col] = normalize_team(skaters_df[team_col])
+if "team" in goalies_df.columns:
+    goalies_df["team"] = normalize_team(goalies_df["team"])
+
+# Shots prep
 shots_df["player"] = shots_df["player"].astype(str).str.strip()
 game_col = next(c for c in shots_df.columns if "game" in c)
 
@@ -111,7 +137,7 @@ def get_todays_games():
 
 games = get_todays_games()
 if not games:
-    st.warning("No games today.")
+    st.warning("No games found today.")
     st.stop()
 
 # ---------------------------------------------------------------
@@ -124,8 +150,8 @@ run_model = st.button("🚀 Run Model")
 # ---------------------------------------------------------------
 def build_model(team_a, team_b):
     results = []
-    roster = skaters_df[skaters_df[team_col].isin([team_a, team_b])]
 
+    roster = skaters_df[skaters_df[team_col].isin([team_a, team_b])]
     grouped = {
         n.lower(): g for n, g in shots_df.groupby(shots_df["player"].str.lower())
     }
@@ -142,12 +168,11 @@ def build_model(team_a, team_b):
         if len(sog_vals) < 3:
             continue
 
-        l3 = np.mean(sog_vals[-3:])
-        l5 = np.mean(sog_vals[-5:])
+        l3  = np.mean(sog_vals[-3:])
+        l5  = np.mean(sog_vals[-5:])
         l10 = np.mean(sog_vals[-10:])
 
-        lam = 0.55*l10 + 0.30*l5 + 0.15*l3
-
+        lam = (0.55 * l10) + (0.30 * l5) + (0.15 * l3)
         prob = 1 - poisson.cdf(2, mu=max(lam, 0.01))
 
         results.append({
@@ -162,7 +187,7 @@ def build_model(team_a, team_b):
     return pd.DataFrame(results)
 
 # ---------------------------------------------------------------
-# Run + Store Results
+# Run Model
 # ---------------------------------------------------------------
 if run_model:
     tables = []
@@ -178,7 +203,7 @@ if run_model:
         st.success("Model complete")
 
 # ---------------------------------------------------------------
-# Mobile Matchup View
+# Mobile Matchup View (Tabs + Player Cards)
 # ---------------------------------------------------------------
 if "results" in st.session_state:
     results = st.session_state.results
@@ -187,13 +212,11 @@ if "results" in st.session_state:
 
     for g in st.session_state.games:
         matchup = f"{g['away']}@{g['home']}"
-
         if st.button(matchup, use_container_width=True):
             st.session_state.selected_matchup = matchup
 
     if "selected_matchup" in st.session_state:
         team_a, team_b = st.session_state.selected_matchup.split("@")
-
         tab_a, tab_b = st.tabs([team_a, team_b])
 
         def render_team(team, tab):
@@ -204,7 +227,7 @@ if "results" in st.session_state:
                 ]
 
                 if df_t.empty:
-                    st.info("No players")
+                    st.info("No players available.")
                     return
 
                 for _, r in df_t.iterrows():
@@ -219,10 +242,10 @@ if "results" in st.session_state:
                         ">
                           <b>{r['Player']} – {r['Team']}</b><br>
                           <span style="color:#9DB6D8;">
-                          Final Proj: {r['Final Projection']}<br>
-                          Prob ≥ 3: {r['Prob ≥ 3 (%)']}%<br>
-                          L5: {r['L5']}<br>
-                          L10: {r['L10']}
+                            Final Proj: {r['Final Projection']}<br>
+                            Prob ≥ 3: {r['Prob ≥ 3 (%)']}%<br>
+                            L5: {r['L5']}<br>
+                            L10: {r['L10']}
                           </span>
                         </div>
                         """,
