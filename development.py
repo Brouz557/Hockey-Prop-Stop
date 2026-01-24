@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Puck Shotz Hockey Analytics — Test Mode
+# 🏒 Puck Shotz Hockey Analytics — Test Mode (RESTORED UI + CORSI)
 # ---------------------------------------------------------------
 import streamlit as st
 import pandas as pd
@@ -12,14 +12,12 @@ import streamlit.components.v1 as components
 # Team Abbreviation Normalization (ESPN -> Data)
 # ---------------------------------------------------------------
 TEAM_ABBREV_MAP = {
-    "NJ": "NJD","LA": "LAK","SJ": "SJS","TB": "TBL",
-    "ARI":"ARI","ANA":"ANA","BOS":"BOS","BUF":"BUF",
-    "CAR":"CAR","CBJ":"CBJ","CGY":"CGY","CHI":"CHI",
-    "COL":"COL","DAL":"DAL","DET":"DET","EDM":"EDM",
-    "FLA":"FLA","MIN":"MIN","MTL":"MTL","NSH":"NSH",
-    "NYI":"NYI","NYR":"NYR","OTT":"OTT","PHI":"PHI",
-    "PIT":"PIT","SEA":"SEA","STL":"STL","TOR":"TOR",
-    "VAN":"VAN","VGK":"VGK","WSH":"WSH","WPG":"WPG"
+    "NJ":"NJD","LA":"LAK","SJ":"SJS","TB":"TBL","ARI":"ARI","ANA":"ANA",
+    "BOS":"BOS","BUF":"BUF","CAR":"CAR","CBJ":"CBJ","CGY":"CGY","CHI":"CHI",
+    "COL":"COL","DAL":"DAL","DET":"DET","EDM":"EDM","FLA":"FLA","MIN":"MIN",
+    "MTL":"MTL","NSH":"NSH","NYI":"NYI","NYR":"NYR","OTT":"OTT","PHI":"PHI",
+    "PIT":"PIT","SEA":"SEA","STL":"STL","TOR":"TOR","VAN":"VAN","VGK":"VGK",
+    "WSH":"WSH","WPG":"WPG"
 }
 
 st.set_page_config(page_title="Puck Shotz Hockey Analytics", layout="wide", page_icon="🏒")
@@ -32,23 +30,28 @@ st.markdown("""
   <img src='https://raw.githubusercontent.com/Brouz557/Hockey-Prop-Stop/694ae2a448204908099ce2899bd479052d01b518/modern%20hockey%20puck%20l.png' width='220'>
 </div>
 <h1 style='text-align:center;color:#1E5A99;'>Puck Shotz Hockey Analytics</h1>
+<p style='text-align:center;color:#D6D6D6;'>Daily NHL SOG projections with matchup context</p>
 """, unsafe_allow_html=True)
 
 # ---------------------------------------------------------------
-# Load Data (same behavior as source of truth)
+# Load Data (SOURCE-OF-TRUTH BEHAVIOR)
 # ---------------------------------------------------------------
 def safe_read(path):
     return pd.read_excel(path) if os.path.exists(path) else pd.DataFrame()
 
-skaters_df = safe_read("Skaters.xlsx")
-shots_df   = safe_read("SHOT DATA.xlsx")
-goalies_df = safe_read("GOALTENDERS.xlsx")
-lines_df   = safe_read("LINE DATA.xlsx")
-teams_df   = safe_read("TEAMS.xlsx")
-injuries_df= safe_read("injuries.xlsx")
+skaters_df  = safe_read("Skaters.xlsx")
+shots_df    = safe_read("SHOT DATA.xlsx")
+goalies_df  = safe_read("GOALTENDERS.xlsx")
+lines_df    = safe_read("LINE DATA.xlsx")
+teams_df    = safe_read("TEAMS.xlsx")
+injuries_df = safe_read("injuries.xlsx")
 
 for df in [skaters_df, shots_df, goalies_df, lines_df, teams_df]:
     df.columns = df.columns.str.lower().str.strip()
+
+if not injuries_df.empty:
+    injuries_df.columns = injuries_df.columns.str.lower().str.strip()
+    injuries_df["player"] = injuries_df["player"].astype(str).str.lower().str.strip()
 
 team_col   = next(c for c in skaters_df.columns if "team" in c)
 player_col = "name"
@@ -60,24 +63,26 @@ shots_df["player"] = shots_df["player"].astype(str).str.strip()
 game_col = next(c for c in shots_df.columns if "game" in c and "id" in c)
 
 # ---------------------------------------------------------------
-# Matchups (ESPN)
+# ESPN Matchups
 # ---------------------------------------------------------------
 @st.cache_data(ttl=300)
 def get_games():
     url="https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard"
-    r=requests.get(url,timeout=10).json()
+    data=requests.get(url,timeout=10).json()
     games=[]
-    for e in r.get("events",[]):
+    for e in data.get("events",[]):
         c=e["competitions"][0]["competitors"]
         games.append({
-            "away": TEAM_ABBREV_MAP.get(c[0]["team"]["abbreviation"]),
-            "home": TEAM_ABBREV_MAP.get(c[1]["team"]["abbreviation"]),
-            "away_logo": c[0]["team"]["logo"],
-            "home_logo": c[1]["team"]["logo"]
+            "away":TEAM_ABBREV_MAP.get(c[0]["team"]["abbreviation"],c[0]["team"]["abbreviation"]),
+            "home":TEAM_ABBREV_MAP.get(c[1]["team"]["abbreviation"],c[1]["team"]["abbreviation"]),
+            "away_logo":c[0]["team"]["logo"],
+            "home_logo":c[1]["team"]["logo"]
         })
     return games
 
 games=get_games()
+if not games:
+    st.stop()
 
 # ---------------------------------------------------------------
 # Controls
@@ -92,7 +97,7 @@ with col_line:
         st.session_state.line_test_val=line_test
 
 # ---------------------------------------------------------------
-# MODEL (CORSI ADDED, STRUCTURE PRESERVED)
+# MODEL (ORIGINAL STRUCTURE + CORSI)
 # ---------------------------------------------------------------
 @st.cache_data(show_spinner=False)
 def build_model(team_a,team_b):
@@ -100,25 +105,32 @@ def build_model(team_a,team_b):
     results=[]
     skaters=skaters_df[skaters_df[team_col].isin([team_a,team_b])]
 
-    # IMPORTANT: one row per player ONLY
+    # ✅ ONE ROW PER PLAYER (NO DUPES)
     roster=skaters[[player_col,team_col]].drop_duplicates(subset=[player_col])
 
     league_player_corsi=skaters_df["on ice corsi"].mean()
     league_team_cp=teams_df["corsi%"].mean()
 
+    grouped={n.lower():g for n,g in shots_df.groupby(shots_df["player"].str.lower())}
+
     for r in roster.itertuples(index=False):
         player,team=r
-        dfp=shots_df[shots_df["player"].str.lower()==player.lower()]
-        if dfp.empty: continue
+        dfp=grouped.get(player.lower(),pd.DataFrame())
+        if dfp.empty or "sog" not in dfp.columns:
+            continue
 
         sog_vals=dfp.groupby(game_col)["sog"].sum().tolist()
-        if len(sog_vals)<3: continue
+        if len(sog_vals)<3:
+            continue
 
-        l3,l5,l10=np.mean(sog_vals[-3:]),np.mean(sog_vals[-5:]),np.mean(sog_vals[-10:])
+        last3,last5,last10=sog_vals[-3:],sog_vals[-5:],sog_vals[-10:]
+        l3,l5,l10=np.mean(last3),np.mean(last5),np.mean(last10)
         baseline=0.55*l10+0.3*l5+0.15*l3
         trend=(l5-l10)/l10 if l10>0 else 0
 
-        # ---- Corsi factors (SAFE) ----
+        form_flag="🟢 Above Baseline" if trend>0.05 else "🔴 Below Baseline" if trend<-0.05 else "⚪ Neutral"
+
+        # ---- CORSI FACTORS ----
         pc=skaters_df.loc[skaters_df[player_col]==player,"on ice corsi"].mean()
         player_corsi_factor=np.clip(pc/league_player_corsi,0.85,1.20)
 
@@ -130,13 +142,24 @@ def build_model(team_a,team_b):
         lam=baseline*(1+0.15*(player_corsi_factor-1))*pace_factor
         lam=np.clip(lam,baseline*0.6,baseline*1.4)
 
+        injury_html=""
+        if not injuries_df.empty:
+            hit=injuries_df[injuries_df["player"].str.endswith(player.split()[-1].lower())]
+            if not hit.empty:
+                injury_html="🚑"
+
         results.append({
             "Player":player,
             "Team":team,
-            "Final Projection":round(lam,2),
+            "Injury":injury_html,
             "Trend Score":round(trend,3),
+            "Final Projection":round(lam,2),
             "Season Avg":round(np.mean(sog_vals),2),
-            "Line Adj":round(player_corsi_factor,2)
+            "Line Adj":round(player_corsi_factor,2),
+            "Form Indicator":form_flag,
+            "L3 Shots":", ".join(map(str,last3)),
+            "L5 Shots":", ".join(map(str,last5)),
+            "L10 Shots":", ".join(map(str,last10))
         })
 
     return pd.DataFrame(results)
@@ -155,7 +178,7 @@ if run_model:
         st.session_state.results=pd.concat(tables,ignore_index=True)
 
 # ---------------------------------------------------------------
-# Display (HTML TABLE – COLORS RESTORED)
+# Display (FULL UI RESTORED)
 # ---------------------------------------------------------------
 if "results" in st.session_state:
     df=st.session_state.results.copy()
@@ -165,7 +188,12 @@ if "results" in st.session_state:
         lambda x:round((1-poisson.cdf(test_line-1,mu=max(x,0.01)))*100,1)
     )
 
-    cols=["Player","Team","Final Projection","Prob ≥ Line (%)","Season Avg","Line Adj","Trend Score"]
+    cols=[
+        "Player","Team","Injury","Final Projection","Prob ≥ Line (%)",
+        "Season Avg","Line Adj","Form Indicator",
+        "L3 Shots","L5 Shots","L10 Shots"
+    ]
+
     html_table=df[cols].sort_values("Final Projection",ascending=False)\
         .to_html(index=False,escape=False)
 
