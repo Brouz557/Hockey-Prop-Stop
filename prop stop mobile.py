@@ -312,9 +312,20 @@ if "results" in st.session_state:
     df = st.session_state.results.copy()
     games = st.session_state.matchups
 
-    # ---------------------------
-    # Matchup buttons (mobile)
-    # ---------------------------
+    # -----------------------------------
+    # Helper: get team logo
+    # -----------------------------------
+    def get_team_logo(team):
+        for g in games:
+            if g["away"] == team:
+                return g["away_logo"]
+            if g["home"] == team:
+                return g["home_logo"]
+        return ""
+
+    # -----------------------------------
+    # Matchup buttons (full-width mobile)
+    # -----------------------------------
     st.markdown("## Matchups")
     for m in games:
         matchup_id = f"{m['away']}@{m['home']}"
@@ -326,13 +337,16 @@ if "results" in st.session_state:
 
     team_a, team_b = st.session_state.selected_match.split("@")
 
-    # ---------------------------
-    # Line test application
-    # ---------------------------
+    # -----------------------------------
+    # Apply Line Test (unchanged logic)
+    # -----------------------------------
     if "line_test_val" in st.session_state:
         test_line = st.session_state.line_test_val
+
         df["Prob ≥ Line (%)"] = df["Final Projection"].apply(
-            lambda lam: round((1 - poisson.cdf(test_line - 1, mu=max(lam, 0.01))) * 100, 1)
+            lambda lam: round(
+                (1 - poisson.cdf(test_line - 1, mu=max(lam, 0.01))) * 100, 1
+            )
         )
 
         def safe_odds(p):
@@ -345,16 +359,16 @@ if "results" in st.session_state:
 
         df["Playable Odds"] = df["Prob ≥ Line (%)"].apply(safe_odds)
 
-    # ---------------------------
-    # Tabs (Away / Home)
-    # ---------------------------
+    # -----------------------------------
+    # Team Tabs
+    # -----------------------------------
     tab_a, tab_b = st.tabs([team_a, team_b])
 
     def render_team(team, tab):
         with tab:
-            team_df = df[df["Team"] == team].sort_values(
-                ["Final Projection", "Line Adj"],
-                ascending=False
+            team_df = (
+                df[df["Team"] == team]
+                .sort_values(["Final Projection", "Line Adj"], ascending=False)
             )
 
             if team_df.empty:
@@ -365,22 +379,30 @@ if "results" in st.session_state:
                 st.markdown(
                     f"""
                     <div style="
-                        border:1px solid #1E5A99;
-                        border-radius:12px;
-                        padding:12px;
-                        margin-bottom:12px;
                         background:#0F2743;
+                        border:1px solid #1E5A99;
+                        border-radius:14px;
+                        padding:14px;
+                        margin-bottom:14px;
                     ">
-                        <div style="font-size:16px;font-weight:700;color:#FFFFFF;">
-                            {r['Player']} – {r['Team']}
+                        <div style="
+                            display:flex;
+                            align-items:center;
+                            gap:10px;
+                            font-size:16px;
+                            font-weight:700;
+                            color:#FFFFFF;
+                        ">
+                            <img src="{get_team_logo(r['Team'])}" height="22">
+                            <span>{r['Player']} – {r['Team']}</span>
                         </div>
 
                         <div style="margin-top:6px;">
-                            {r.get('Injury','')}
-                            {r.get('Form Indicator','')}
+                            {r.get("Injury","")}
+                            {r.get("Form Indicator","")}
                         </div>
 
-                        <div style="margin-top:6px;font-size:14px;color:#D6D6D6;">
+                        <div style="margin-top:8px;font-size:14px;color:#D6D6D6;">
                             <b>Final Projection:</b> {r['Final Projection']}<br>
                             <b>Prob ≥ Line:</b> {r.get('Prob ≥ Line (%)','')}%<br>
                             <b>Playable Odds:</b> {r.get('Playable Odds','')}<br>
@@ -389,7 +411,7 @@ if "results" in st.session_state:
                             <b>Shooting %:</b> {r['Shooting %']}
                         </div>
 
-                        <div style="margin-top:6px;font-size:12px;color:#9DB6D8;">
+                        <div style="margin-top:8px;font-size:12px;color:#9DB6D8;">
                             <b>L3:</b> {r['L3 Shots']}<br>
                             <b>L5:</b> {r['L5 Shots']}<br>
                             <b>L10:</b> {r['L10 Shots']}
