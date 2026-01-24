@@ -1,11 +1,10 @@
 # ---------------------------------------------------------------
-# 🏒 Puck Shotz Hockey Analytics — Mobile (BASELINE WORKING)
+# 🏒 Puck Shotz Hockey Analytics — Mobile Cards (BASELINE)
 # ---------------------------------------------------------------
 import streamlit as st
 import pandas as pd
 import numpy as np
-import os, requests, html, json
-from scipy.stats import poisson
+import os, requests
 import streamlit.components.v1 as components
 
 # ---------------------------------------------------------------
@@ -18,7 +17,7 @@ st.set_page_config(
 )
 
 # ---------------------------------------------------------------
-# Header (LOGO PRESENT — THIS IS THE ONE YOU LOST)
+# Header (WORKING VERSION)
 # ---------------------------------------------------------------
 st.markdown("""
 <div style='text-align:center; background-color:#0A3A67;
@@ -42,7 +41,7 @@ TEAM_ABBREV_MAP = {
 }
 
 # ---------------------------------------------------------------
-# Auto-load data (same as desktop)
+# Auto-load data
 # ---------------------------------------------------------------
 def safe_read(path):
     try:
@@ -118,7 +117,7 @@ if st.button("🚀 Run Model (All Games)", use_container_width=True):
     st.session_state.run_model = True
 
 # ---------------------------------------------------------------
-# Build model (unchanged logic)
+# Build model (UNCHANGED)
 # ---------------------------------------------------------------
 def build_model(team_a, team_b):
     results = []
@@ -166,7 +165,7 @@ if st.session_state.get("run_model"):
         st.session_state.results = pd.concat(tables, ignore_index=True)
 
 # ---------------------------------------------------------------
-# DISPLAY — COLORED LOGO BUTTONS + EXTENDED CONTAINER
+# DISPLAY — MATCHUP BUTTONS + EXTENDED CARD VIEW
 # ---------------------------------------------------------------
 if "results" in st.session_state:
     df = st.session_state.results
@@ -177,10 +176,7 @@ if "results" in st.session_state:
     for i, g in enumerate(games):
         matchup_id = f"{g['away']}@{g['home']}"
         with cols[i % 3]:
-            if st.button(
-                f"{g['away']} @ {g['home']}",
-                use_container_width=True
-            ):
+            if st.button(f"{g['away']} @ {g['home']}", use_container_width=True):
                 st.session_state.selected_match = matchup_id
 
             st.markdown(
@@ -198,9 +194,8 @@ if "results" in st.session_state:
 
     team_a, team_b = st.session_state.selected_match.split("@")
 
-    # ---- SELECTED MATCHUP LOGOS (THIS WAS PRESENT) ----
+    # Selected matchup logos (WORKING)
     sel = next(g for g in games if g["away"] == team_a and g["home"] == team_b)
-
     components.html(
         f"""
         <div style="display:flex;justify-content:center;align-items:center;
@@ -218,7 +213,12 @@ if "results" in st.session_state:
 
     def render_team(team, tab):
         with tab:
-            for _, r in df[df["Team"] == team].iterrows():
+            team_df = df[
+                (df["Team"] == team) &
+                (df["Matchup"] == st.session_state.selected_match)
+            ].drop_duplicates(subset=["Player"])
+
+            for _, r in team_df.iterrows():
                 components.html(
                     f"""
                     <div style="
