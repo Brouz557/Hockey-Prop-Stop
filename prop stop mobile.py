@@ -437,7 +437,11 @@ if "results" in st.session_state:
             </div>
             """
 
-        components.html(html_blocks, scrolling=True)
+        components.html(
+    html_blocks,
+    height=900,   # try 800–1000
+    scrolling=True
+)
 
     with tab_a:
         render_team(team_a)
