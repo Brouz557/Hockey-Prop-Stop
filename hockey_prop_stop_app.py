@@ -382,6 +382,15 @@ if "results" in st.session_state:
           "Form Indicator","L3 Shots","L5 Shots","L10 Shots"]
     existing_cols=[c for c in cols if c in df.columns]
     html_table=df[existing_cols].to_html(index=False,escape=False)
+    csv = df[existing_cols].to_csv(index=False).encode("utf-8")
+
+st.download_button(
+    label="💾 Download Results (CSV)",
+    data=csv,
+    file_name="puck_shotz_results.csv",
+    mime="text/csv"
+)
+
 
     components.html(f"""
     <style>
@@ -405,4 +414,5 @@ if "results" in st.session_state:
     </style>
     <div style='overflow-x:auto;height:650px;'>{html_table}</div>
     """,height=700,scrolling=True)
+
 
