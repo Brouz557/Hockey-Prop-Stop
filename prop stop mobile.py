@@ -389,15 +389,63 @@ components.html(
     height=60
 )
 
+if "results" in st.session_state:
+    df = st.session_state.results.copy()
+    games = st.session_state.matchups
+
+    st.markdown("## Matchups")
+
+    matchup_options = [
+        f"{m['away']} @ {m['home']}" for m in games
+    ]
+
+    selected_matchup = st.radio(
+        "Select a matchup",
+        matchup_options,
+        label_visibility="collapsed"
+    )
+
+    team_a, team_b = selected_matchup.replace(" ", "").split("@")
+    st.session_state.selected_match = f"{team_a}@{team_b}"
+
+    # ---- LOGOS (still 4 spaces) ----
+    sel_game = next(
+        g for g in games if g["away"] == team_a and g["home"] == team_b
+    )
+
+    components.html(
+        f"""
+        <div style="
+            display:flex;
+            justify-content:center;
+            align-items:center;
+            gap:12px;
+            margin:10px 0 20px 0;
+            font-size:18px;
+            font-weight:700;
+            color:#FFFFFF;
+        ">
+            <img src="{sel_game['away_logo']}" height="28">
+            <span>{team_a} @ {team_b}</span>
+            <img src="{sel_game['home_logo']}" height="28">
+        </div>
+        """,
+        height=60
+    )
+
+    # ---- TABS ----
+    tab_a, tab_b = st.tabs([team_a, team_b])
+
+    with tab_a:
+        render_team(team_a)
+
+    with tab_b:
+        render_team(team_b)
 
 
 
 
-    if "selected_match" not in st.session_state:
-        st.stop()
-
-    team_a, team_b = st.session_state.selected_match.split("@")
-
+    
     # -----------------------------------
     # Apply Line Test
     # -----------------------------------
