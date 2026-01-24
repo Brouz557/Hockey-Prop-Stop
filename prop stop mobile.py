@@ -47,29 +47,6 @@ TEAM_ABBREV_MAP = {
 
 
 st.set_page_config(page_title="Puck Shotz Hockey Analytics (Test)", layout="wide", page_icon="🏒")
-# ---------------------------------------------------------------
-# Header (Mobile)
-# ---------------------------------------------------------------
-st.markdown(
-    """
-    <div style="
-        text-align:center;
-        background-color:#0A3A67;
-        padding:12px;
-        border-radius:10px;
-        margin-bottom:12px;
-    ">
-      <img src="https://raw.githubusercontent.com/Brouz557/Hockey-Prop-Stop/694ae2a448204908099ce2899bd479052d01b518/modern%20hockey%20puck%20l.png"
-           style="max-width:180px;">
-    </div>
-
-    <h3 style="text-align:center;color:#1E5A99;margin-top:6px;">
-        Puck Shotz Hockey Analytics
-    </h3>
-    """,
-    unsafe_allow_html=True
-)
-
 st.warning("🧪 TEST MODE — Sandbox version. Changes here won’t affect your main app.")
 
 # ---------------------------------------------------------------
