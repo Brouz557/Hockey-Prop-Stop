@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Puck Shotz Hockey Analytics — Mobile Cards (BASELINE)
+# 🏒 Puck Shotz Hockey Analytics — Mobile Cards (LOGOS + SORTED)
 # ---------------------------------------------------------------
 import streamlit as st
 import pandas as pd
@@ -17,7 +17,7 @@ st.set_page_config(
 )
 
 # ---------------------------------------------------------------
-# Header (WORKING VERSION)
+# Header (logo + colors restored)
 # ---------------------------------------------------------------
 st.markdown("""
 <div style='text-align:center; background-color:#0A3A67;
@@ -41,7 +41,7 @@ TEAM_ABBREV_MAP = {
 }
 
 # ---------------------------------------------------------------
-# Auto-load data
+# Auto-load data (same behavior as desktop app)
 # ---------------------------------------------------------------
 def safe_read(path):
     try:
@@ -85,7 +85,7 @@ shots_df["player"] = shots_df["player"].astype(str).str.strip()
 game_col = next(c for c in shots_df.columns if "game" in c)
 
 # ---------------------------------------------------------------
-# ESPN Matchups
+# ESPN Matchups (logos used ONLY for teams)
 # ---------------------------------------------------------------
 @st.cache_data(ttl=300)
 def get_games():
@@ -117,7 +117,7 @@ if st.button("🚀 Run Model (All Games)", use_container_width=True):
     st.session_state.run_model = True
 
 # ---------------------------------------------------------------
-# Build model (UNCHANGED)
+# Build model (unchanged math)
 # ---------------------------------------------------------------
 def build_model(team_a, team_b):
     results = []
@@ -136,8 +136,11 @@ def build_model(team_a, team_b):
         if len(sog_vals) < 3:
             continue
 
-        l3, l5, l10 = np.mean(sog_vals[-3:]), np.mean(sog_vals[-5:]), np.mean(sog_vals[-10:])
-        lam = 0.55*l10 + 0.3*l5 + 0.15*l3
+        l3 = np.mean(sog_vals[-3:])
+        l5 = np.mean(sog_vals[-5:])
+        l10 = np.mean(sog_vals[-10:])
+
+        lam = 0.55 * l10 + 0.3 * l5 + 0.15 * l3
 
         results.append({
             "Player": player,
@@ -165,7 +168,18 @@ if st.session_state.get("run_model"):
         st.session_state.results = pd.concat(tables, ignore_index=True)
 
 # ---------------------------------------------------------------
-# DISPLAY — MATCHUP BUTTONS + EXTENDED CARD VIEW
+# Helper: team logo icon for player cards
+# ---------------------------------------------------------------
+def get_team_logo(team):
+    for g in games:
+        if g["away"] == team:
+            return g["away_logo"]
+        if g["home"] == team:
+            return g["home_logo"]
+    return ""
+
+# ---------------------------------------------------------------
+# DISPLAY — buttons + sorted mobile cards
 # ---------------------------------------------------------------
 if "results" in st.session_state:
     df = st.session_state.results
@@ -194,7 +208,7 @@ if "results" in st.session_state:
 
     team_a, team_b = st.session_state.selected_match.split("@")
 
-    # Selected matchup logos (WORKING)
+    # Selected matchup header
     sel = next(g for g in games if g["away"] == team_a and g["home"] == team_b)
     components.html(
         f"""
@@ -213,12 +227,18 @@ if "results" in st.session_state:
 
     def render_team(team, tab):
         with tab:
-            team_df = df[
-                (df["Team"] == team) &
-                (df["Matchup"] == st.session_state.selected_match)
-            ].drop_duplicates(subset=["Player"])
+            team_df = (
+                df[
+                    (df["Team"] == team) &
+                    (df["Matchup"] == st.session_state.selected_match)
+                ]
+                .drop_duplicates(subset=["Player"])
+                .sort_values("Final Projection", ascending=False)
+            )
 
             for _, r in team_df.iterrows():
+                logo = get_team_logo(team)
+
                 components.html(
                     f"""
                     <div style="
@@ -229,16 +249,20 @@ if "results" in st.session_state:
                         margin-bottom:16px;
                         color:#FFFFFF;
                     ">
-                        <div style="font-size:16px;font-weight:700;">
-                            {r.get('Player','')} – {r.get('Team','')}
+                        <div style="display:flex;align-items:center;margin-bottom:6px;">
+                            <img src="{logo}" style="width:34px;height:34px;
+                                 object-fit:contain;margin-right:10px;">
+                            <div style="font-size:16px;font-weight:700;">
+                                {r['Player']} – {r['Team']}
+                            </div>
                         </div>
-                        <div>Final Projection: <b>{r.get('Final Projection','')}</b></div>
-                        <div>L3: {r.get('L3','')}</div>
-                        <div>L5: {r.get('L5','')}</div>
-                        <div>L10: {r.get('L10','')}</div>
+                        <div>Final Projection: <b>{r['Final Projection']}</b></div>
+                        <div>L3: {r['L3']}</div>
+                        <div>L5: {r['L5']}</div>
+                        <div>L10: {r['L10']}</div>
                     </div>
                     """,
-                    height=220
+                    height=240
                 )
 
     render_team(team_a, tabs[0])
