@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Puck Shotz Hockey Analytics — Mobile Cards (STABLE BASE)
+# 🏒 Puck Shotz Hockey Analytics — Mobile Cards (Extended View)
 # ---------------------------------------------------------------
 import streamlit as st
 import pandas as pd
@@ -9,35 +9,27 @@ from scipy.stats import poisson
 import streamlit.components.v1 as components
 
 # ---------------------------------------------------------------
-# Page config
+# Page config (mobile friendly)
 # ---------------------------------------------------------------
 st.set_page_config(
     page_title="Puck Shotz Hockey Analytics (Mobile)",
-    layout="centered",
+    layout="wide",
     page_icon="🏒"
 )
 
 # ---------------------------------------------------------------
-# Header (RESTORED)
+# Header (restored)
 # ---------------------------------------------------------------
-st.markdown(
-    """
-    <div style="
-        text-align:center;
-        background-color:#0A3A67;
-        padding:14px;
-        border-radius:10px;
-        margin-bottom:12px;
-    ">
-      <img src="https://raw.githubusercontent.com/Brouz557/Hockey-Prop-Stop/694ae2a448204908099ce2899bd479052d01b518/modern%20hockey%20puck%20l.png"
-           style="max-width:180px;">
-    </div>
-    <h3 style="text-align:center;color:#1E5A99;margin-top:0;">
-        Puck Shotz Hockey Analytics
-    </h3>
-    """,
-    unsafe_allow_html=True
-)
+st.markdown("""
+<div style='text-align:center; background-color:#0A3A67; padding:14px;
+            border-radius:10px; margin-bottom:10px;'>
+  <img src='https://raw.githubusercontent.com/Brouz557/Hockey-Prop-Stop/694ae2a448204908099ce2899bd479052d01b518/modern%20hockey%20puck%20l.png'
+       style='max-width:200px;'>
+</div>
+<h3 style='text-align:center;color:#1E5A99;margin-top:0;'>
+    Puck Shotz Hockey Analytics
+</h3>
+""", unsafe_allow_html=True)
 
 # ---------------------------------------------------------------
 # Team Abbreviation Normalization
@@ -50,7 +42,7 @@ TEAM_ABBREV_MAP = {
 }
 
 # ---------------------------------------------------------------
-# Auto-load data (same behavior as desktop)
+# Auto-load data (same as desktop)
 # ---------------------------------------------------------------
 def safe_read(path):
     try:
@@ -60,30 +52,28 @@ def safe_read(path):
     except Exception:
         return pd.DataFrame()
 
-def find_file(filename):
-    base_paths = [".", "data", "/mount/src/hockey-prop-stop/data"]
-    for p in base_paths:
-        fp = os.path.join(p, filename)
+def find_file(name):
+    for p in [".", "data", "/mount/src/hockey-prop-stop/data"]:
+        fp = os.path.join(p, name)
         if os.path.exists(fp):
             return fp
     return None
 
 @st.cache_data(show_spinner=False)
 def load_all():
-    skaters = safe_read(find_file("Skaters.xlsx"))
-    shots   = safe_read(find_file("SHOT DATA.xlsx"))
-    goalies = safe_read(find_file("GOALTENDERS.xlsx"))
-    lines   = safe_read(find_file("LINE DATA.xlsx"))
-    teams   = safe_read(find_file("TEAMS.xlsx"))
-    return skaters, shots, goalies, lines, teams
+    return (
+        safe_read(find_file("Skaters.xlsx")),
+        safe_read(find_file("SHOT DATA.xlsx")),
+        safe_read(find_file("GOALTENDERS.xlsx")),
+        safe_read(find_file("LINE DATA.xlsx")),
+        safe_read(find_file("TEAMS.xlsx")),
+    )
 
 skaters_df, shots_df, goalies_df, lines_df, teams_df = load_all()
-
 if skaters_df.empty or shots_df.empty:
-    st.error("❌ Required data files not found.")
+    st.error("Missing required data files.")
     st.stop()
 
-# Normalize columns
 for df in [skaters_df, shots_df, goalies_df, lines_df, teams_df]:
     df.columns = df.columns.str.lower().str.strip()
 
@@ -99,7 +89,7 @@ game_col = next(c for c in shots_df.columns if "game" in c)
 # ESPN Matchups
 # ---------------------------------------------------------------
 @st.cache_data(ttl=300)
-def get_todays_games():
+def get_games():
     url = "https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard"
     data = requests.get(url, timeout=10).json()
     games = []
@@ -107,22 +97,16 @@ def get_todays_games():
     for e in data.get("events", []):
         comps = e.get("competitions", [{}])[0].get("competitors", [])
         if len(comps) == 2:
-            away, home = comps
+            a, h = comps
             games.append({
-                "away": TEAM_ABBREV_MAP.get(
-                    away["team"]["abbreviation"],
-                    away["team"]["abbreviation"]
-                ),
-                "home": TEAM_ABBREV_MAP.get(
-                    home["team"]["abbreviation"],
-                    home["team"]["abbreviation"]
-                ),
-                "away_logo": away["team"]["logo"],
-                "home_logo": home["team"]["logo"]
+                "away": TEAM_ABBREV_MAP.get(a["team"]["abbreviation"], a["team"]["abbreviation"]),
+                "home": TEAM_ABBREV_MAP.get(h["team"]["abbreviation"], h["team"]["abbreviation"]),
+                "away_logo": a["team"]["logo"],
+                "home_logo": h["team"]["logo"]
             })
     return games
 
-games = get_todays_games()
+games = get_games()
 if not games:
     st.warning("No games found today.")
     st.stop()
@@ -134,21 +118,18 @@ if st.button("🚀 Run Model (All Games)", use_container_width=True):
     st.session_state.run_model = True
 
 # ---------------------------------------------------------------
-# Build simple SOG model (stable)
+# Build model (same structure, stable)
 # ---------------------------------------------------------------
 def build_model(team_a, team_b):
     results = []
-
     roster = skaters_df[skaters_df[team_col].isin([team_a, team_b])]
-    grouped = {
-        n.lower(): g for n, g in shots_df.groupby(shots_df["player"].str.lower())
-    }
+    grouped = {n.lower(): g for n, g in shots_df.groupby(shots_df["player"].str.lower())}
 
-    for _, row in roster.iterrows():
-        player = str(row[player_col])
-        team = row[team_col]
-
+    for _, r in roster.iterrows():
+        player = str(r[player_col])
+        team = r[team_col]
         df_p = grouped.get(player.lower())
+
         if df_p is None or "sog" not in df_p.columns:
             continue
 
@@ -156,41 +137,36 @@ def build_model(team_a, team_b):
         if len(sog_vals) < 3:
             continue
 
-        l3 = np.mean(sog_vals[-3:])
-        l5 = np.mean(sog_vals[-5:])
-        l10 = np.mean(sog_vals[-10:])
-
-        lam = 0.55 * l10 + 0.30 * l5 + 0.15 * l3
+        l3, l5, l10 = np.mean(sog_vals[-3:]), np.mean(sog_vals[-5:]), np.mean(sog_vals[-10:])
+        lam = 0.55*l10 + 0.3*l5 + 0.15*l3
 
         results.append({
             "Player": player,
             "Team": team,
             "Final Projection": round(lam, 2),
+            "L3": ", ".join(map(str, sog_vals[-3:])),
             "L5": ", ".join(map(str, sog_vals[-5:])),
-            "L10": ", ".join(map(str, sog_vals[-10:]))
+            "L10": ", ".join(map(str, sog_vals[-10:])),
         })
 
     return pd.DataFrame(results)
 
 # ---------------------------------------------------------------
-# Run model for all games
+# Run model
 # ---------------------------------------------------------------
 if st.session_state.get("run_model"):
-    all_rows = []
-
+    tables = []
     for g in games:
         df = build_model(g["away"], g["home"])
         if not df.empty:
             df["Matchup"] = f"{g['away']}@{g['home']}"
-            all_rows.append(df)
+            tables.append(df)
 
-    if all_rows:
-        st.session_state.results = pd.concat(all_rows, ignore_index=True)
-    else:
-        st.warning("No results generated.")
+    if tables:
+        st.session_state.results = pd.concat(tables, ignore_index=True)
 
 # ---------------------------------------------------------------
-# DISPLAY — STABLE MATCHUP BUTTONS + CARDS
+# DISPLAY — MATCHUP BUTTONS + EXTENDED CARD CONTAINER
 # ---------------------------------------------------------------
 if "results" in st.session_state:
     df = st.session_state.results
@@ -207,16 +183,16 @@ if "results" in st.session_state:
 
     team_a, team_b = st.session_state.selected_match.split("@")
 
-    # Tabs per team
-    tab_a, tab_b = st.tabs([team_a, team_b])
+    tabs = st.tabs([team_a, team_b])
 
     def render_team(team, tab):
         with tab:
             team_df = df[df["Team"] == team]
 
-            if team_df.empty:
-                st.info("No players available.")
-                return
+            components.html(
+                "<div style='height:720px; overflow-y:auto;'>",
+                height=0
+            )
 
             for _, r in team_df.iterrows():
                 components.html(
@@ -224,21 +200,24 @@ if "results" in st.session_state:
                     <div style="
                         background:#0F2743;
                         border:1px solid #1E5A99;
-                        border-radius:14px;
-                        padding:14px;
-                        margin-bottom:14px;
+                        border-radius:16px;
+                        padding:16px;
+                        margin-bottom:16px;
                         color:#FFFFFF;
                     ">
-                        <div style="font-weight:700;margin-bottom:6px;">
+                        <div style="font-size:16px;font-weight:700;">
                             {r.get('Player','')} – {r.get('Team','')}
                         </div>
-                        <div>Final Projection: <b>{r.get('Final Projection','')}</b></div>
+                        <div style="margin-top:6px;">
+                            Final Projection: <b>{r.get('Final Projection','')}</b>
+                        </div>
+                        <div>L3: {r.get('L3','')}</div>
                         <div>L5: {r.get('L5','')}</div>
                         <div>L10: {r.get('L10','')}</div>
                     </div>
                     """,
-                    height=180
+                    height=210
                 )
 
-    render_team(team_a, tab_a)
-    render_team(team_b, tab_b)
+    render_team(team_a, tabs[0])
+    render_team(team_b, tabs[1])
