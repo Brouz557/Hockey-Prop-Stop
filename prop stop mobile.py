@@ -306,6 +306,18 @@ if run_model:
         st.warning("⚠️ No valid data generated.")
 
 # ---------------------------------------------------------------
+# Mobile-only trend renderer (DO NOT store HTML in dataframe)
+# ---------------------------------------------------------------
+def render_trend_html(trend_score):
+    if trend_score > 0.05:
+        return "<span style='color:#00FF00;font-weight:bold;'>🟢 Above Baseline</span>"
+    elif trend_score < -0.05:
+        return "<span style='color:#FF4B4B;font-weight:bold;'>🔴 Below Baseline</span>"
+    else:
+        return "<span style='color:#D6D6D6;'>⚪ Neutral</span>"
+
+
+# ---------------------------------------------------------------
 # Display (Mobile-First: Matchup → Tabs → Player Cards)
 # ---------------------------------------------------------------
 if "results" in st.session_state:
@@ -324,7 +336,7 @@ if "results" in st.session_state:
         return ""
 
     # -----------------------------------
-    # Matchup buttons (full-width mobile)
+    # Matchup buttons (mobile)
     # -----------------------------------
     st.markdown("## Matchups")
     for m in games:
@@ -338,7 +350,7 @@ if "results" in st.session_state:
     team_a, team_b = st.session_state.selected_match.split("@")
 
     # -----------------------------------
-    # Apply Line Test (unchanged logic)
+    # Apply Line Test (same logic as desktop)
     # -----------------------------------
     if "line_test_val" in st.session_state:
         test_line = st.session_state.line_test_val
@@ -360,7 +372,7 @@ if "results" in st.session_state:
         df["Playable Odds"] = df["Prob ≥ Line (%)"].apply(safe_odds)
 
     # -----------------------------------
-    # Team Tabs
+    # Tabs (Away / Home)
     # -----------------------------------
     tab_a, tab_b = st.tabs([team_a, team_b])
 
@@ -399,7 +411,7 @@ if "results" in st.session_state:
 
                         <div style="margin-top:6px;">
                             {r.get("Injury","")}
-                            {r.get("Form Indicator","")}
+                            {render_trend_html(r["Trend Score"])}
                         </div>
 
                         <div style="margin-top:8px;font-size:14px;color:#D6D6D6;">
