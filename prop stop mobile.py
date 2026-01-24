@@ -1,10 +1,11 @@
 # ---------------------------------------------------------------
-# 🏒 Puck Shotz Hockey Analytics — Mobile Cards (WITH LOGOS)
+# 🏒 Puck Shotz Hockey Analytics — Mobile (BASELINE WORKING)
 # ---------------------------------------------------------------
 import streamlit as st
 import pandas as pd
 import numpy as np
-import os, requests
+import os, requests, html, json
+from scipy.stats import poisson
 import streamlit.components.v1 as components
 
 # ---------------------------------------------------------------
@@ -17,13 +18,13 @@ st.set_page_config(
 )
 
 # ---------------------------------------------------------------
-# Header (restored)
+# Header (LOGO PRESENT — THIS IS THE ONE YOU LOST)
 # ---------------------------------------------------------------
 st.markdown("""
-<div style='text-align:center; background-color:#0A3A67; padding:14px;
-            border-radius:10px; margin-bottom:10px;'>
+<div style='text-align:center; background-color:#0A3A67;
+            padding:14px; border-radius:8px; margin-bottom:12px;'>
   <img src='https://raw.githubusercontent.com/Brouz557/Hockey-Prop-Stop/694ae2a448204908099ce2899bd479052d01b518/modern%20hockey%20puck%20l.png'
-       style='max-width:200px;'>
+       width='200'>
 </div>
 <h3 style='text-align:center;color:#1E5A99;margin-top:0;'>
     Puck Shotz Hockey Analytics
@@ -41,7 +42,7 @@ TEAM_ABBREV_MAP = {
 }
 
 # ---------------------------------------------------------------
-# Auto-load data
+# Auto-load data (same as desktop)
 # ---------------------------------------------------------------
 def safe_read(path):
     try:
@@ -117,7 +118,7 @@ if st.button("🚀 Run Model (All Games)", use_container_width=True):
     st.session_state.run_model = True
 
 # ---------------------------------------------------------------
-# Build model (stable)
+# Build model (unchanged logic)
 # ---------------------------------------------------------------
 def build_model(team_a, team_b):
     results = []
@@ -165,56 +166,59 @@ if st.session_state.get("run_model"):
         st.session_state.results = pd.concat(tables, ignore_index=True)
 
 # ---------------------------------------------------------------
-# DISPLAY — MATCHUP BUTTONS + LOGOS + EXTENDED CARDS
+# DISPLAY — COLORED LOGO BUTTONS + EXTENDED CONTAINER
 # ---------------------------------------------------------------
 if "results" in st.session_state:
     df = st.session_state.results
 
     st.markdown("## Matchups")
 
-    for g in games:
+    cols = st.columns(3)
+    for i, g in enumerate(games):
         matchup_id = f"{g['away']}@{g['home']}"
-        if st.button(matchup_id, use_container_width=True):
-            st.session_state.selected_match = matchup_id
+        with cols[i % 3]:
+            if st.button(
+                f"{g['away']} @ {g['home']}",
+                use_container_width=True
+            ):
+                st.session_state.selected_match = matchup_id
+
+            st.markdown(
+                f"""
+                <div style="display:flex;justify-content:center;gap:8px;margin-top:4px;">
+                    <img src="{g['away_logo']}" height="22">
+                    <img src="{g['home_logo']}" height="22">
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
 
     if "selected_match" not in st.session_state:
         st.stop()
 
     team_a, team_b = st.session_state.selected_match.split("@")
 
-    # ---- LOGOS (THIS IS THE VERSION YOU REMEMBER) ----
-    sel_game = next(
-        g for g in games if g["away"] == team_a and g["home"] == team_b
-    )
+    # ---- SELECTED MATCHUP LOGOS (THIS WAS PRESENT) ----
+    sel = next(g for g in games if g["away"] == team_a and g["home"] == team_b)
 
     components.html(
         f"""
-        <div style="
-            display:flex;
-            justify-content:center;
-            align-items:center;
-            gap:14px;
-            margin:12px 0 18px 0;
-            font-size:18px;
-            font-weight:700;
-            color:#FFFFFF;
-        ">
-            <img src="{sel_game['away_logo']}" height="32">
+        <div style="display:flex;justify-content:center;align-items:center;
+                    gap:14px;margin:14px 0 20px 0;font-size:18px;
+                    font-weight:700;color:#FFFFFF;">
+            <img src="{sel['away_logo']}" height="32">
             <span>{team_a} @ {team_b}</span>
-            <img src="{sel_game['home_logo']}" height="32">
+            <img src="{sel['home_logo']}" height="32">
         </div>
         """,
         height=70
     )
 
-    # ---- TEAM TABS ----
-    tab_a, tab_b = st.tabs([team_a, team_b])
+    tabs = st.tabs([team_a, team_b])
 
     def render_team(team, tab):
         with tab:
-            team_df = df[df["Team"] == team]
-
-            for _, r in team_df.iterrows():
+            for _, r in df[df["Team"] == team].iterrows():
                 components.html(
                     f"""
                     <div style="
@@ -228,9 +232,7 @@ if "results" in st.session_state:
                         <div style="font-size:16px;font-weight:700;">
                             {r.get('Player','')} – {r.get('Team','')}
                         </div>
-                        <div style="margin-top:6px;">
-                            Final Projection: <b>{r.get('Final Projection','')}</b>
-                        </div>
+                        <div>Final Projection: <b>{r.get('Final Projection','')}</b></div>
                         <div>L3: {r.get('L3','')}</div>
                         <div>L5: {r.get('L5','')}</div>
                         <div>L10: {r.get('L10','')}</div>
@@ -239,5 +241,5 @@ if "results" in st.session_state:
                     height=220
                 )
 
-    render_team(team_a, tab_a)
-    render_team(team_b, tab_b)
+    render_team(team_a, tabs[0])
+    render_team(team_b, tabs[1])
