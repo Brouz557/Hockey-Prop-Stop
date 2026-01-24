@@ -336,7 +336,18 @@ if "results" in st.session_state:
         return ""
 
     # -----------------------------------
-    # Matchup buttons (mobile)
+    # Helper: render trend (HTML only)
+    # -----------------------------------
+    def render_trend_html(trend_score):
+        if trend_score > 0.05:
+            return "<span style='color:#00FF00;font-weight:bold;'>🟢 Above Baseline</span>"
+        elif trend_score < -0.05:
+            return "<span style='color:#FF4B4B;font-weight:bold;'>🔴 Below Baseline</span>"
+        else:
+            return "<span style='color:#D6D6D6;'>⚪ Neutral</span>"
+
+    # -----------------------------------
+    # Matchup buttons
     # -----------------------------------
     st.markdown("## Matchups")
     for m in games:
@@ -350,15 +361,12 @@ if "results" in st.session_state:
     team_a, team_b = st.session_state.selected_match.split("@")
 
     # -----------------------------------
-    # Apply Line Test (same logic as desktop)
+    # Apply Line Test
     # -----------------------------------
     if "line_test_val" in st.session_state:
         test_line = st.session_state.line_test_val
-
         df["Prob ≥ Line (%)"] = df["Final Projection"].apply(
-            lambda lam: round(
-                (1 - poisson.cdf(test_line - 1, mu=max(lam, 0.01))) * 100, 1
-            )
+            lambda lam: round((1 - poisson.cdf(test_line - 1, mu=max(lam, 0.01))) * 100, 1)
         )
 
         def safe_odds(p):
@@ -367,71 +375,5 @@ if "results" in st.session_state:
                 odds_val = -100 * ((p / 100) / (1 - p / 100))
             else:
                 odds_val = 100 * ((1 - p / 100) / (p / 100))
-            return f"{'+' if odds_val > 0 else ''}{int(round(odds_val))}"
+            return f"{'+' if odds_val > 0 else ''}{int(round(odds_
 
-        df["Playable Odds"] = df["Prob ≥ Line (%)"].apply(safe_odds)
-
-    # -----------------------------------
-    # Tabs (Away / Home)
-    # -----------------------------------
-    tab_a, tab_b = st.tabs([team_a, team_b])
-
-    def render_team(team, tab):
-        with tab:
-            team_df = (
-                df[df["Team"] == team]
-                .sort_values(["Final Projection", "Line Adj"], ascending=False)
-            )
-
-            if team_df.empty:
-                st.info("No players available.")
-                return
-
-            for _, r in team_df.iterrows():
-                st.markdown(
-                    f"""
-                    <div style="
-                        background:#0F2743;
-                        border:1px solid #1E5A99;
-                        border-radius:14px;
-                        padding:14px;
-                        margin-bottom:14px;
-                    ">
-                        <div style="
-                            display:flex;
-                            align-items:center;
-                            gap:10px;
-                            font-size:16px;
-                            font-weight:700;
-                            color:#FFFFFF;
-                        ">
-                            <img src="{get_team_logo(r['Team'])}" height="22">
-                            <span>{r['Player']} – {r['Team']}</span>
-                        </div>
-
-                        <div style="margin-top:6px;">
-                            {r.get("Injury","")}
-                            {render_trend_html(r["Trend Score"])}
-                        </div>
-
-                        <div style="margin-top:8px;font-size:14px;color:#D6D6D6;">
-                            <b>Final Projection:</b> {r['Final Projection']}<br>
-                            <b>Prob ≥ Line:</b> {r.get('Prob ≥ Line (%)','')}%<br>
-                            <b>Playable Odds:</b> {r.get('Playable Odds','')}<br>
-                            <b>Line Adj:</b> {r['Line Adj']}<br>
-                            <b>xG:</b> {r['Exp Goals (xG)']}<br>
-                            <b>Shooting %:</b> {r['Shooting %']}
-                        </div>
-
-                        <div style="margin-top:8px;font-size:12px;color:#9DB6D8;">
-                            <b>L3:</b> {r['L3 Shots']}<br>
-                            <b>L5:</b> {r['L5 Shots']}<br>
-                            <b>L10:</b> {r['L10 Shots']}
-                        </div>
-                    </div>
-                    """,
-                    unsafe_allow_html=True
-                )
-
-    render_team(team_a, tab_a)
-    render_team(team_b, tab_b)
