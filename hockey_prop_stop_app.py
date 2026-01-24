@@ -384,7 +384,7 @@ if "results" in st.session_state:
     html_table=df[existing_cols].to_html(index=False,escape=False)
     csv = df[existing_cols].to_csv(index=False).encode("utf-8")
 
-st.download_button(
+    st.download_button(
     label="💾 Download Results (CSV)",
     data=csv,
     file_name="puck_shotz_results.csv",
@@ -414,5 +414,6 @@ st.download_button(
     </style>
     <div style='overflow-x:auto;height:650px;'>{html_table}</div>
     """,height=700,scrolling=True)
+
 
 
