@@ -8,10 +8,7 @@ import pandas as pd
 SCOREBOARD_URL = "https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard"
 SUMMARY_URL = "https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/summary?event={}"
 
-st.set_page_config(
-    page_title="NHL Actual Shots on Goal (ESPN)",
-    layout="wide"
-)
+st.set_page_config(page_title="NHL Actual Shots on Goal (ESPN)", layout="wide")
 
 st.title("📊 NHL Actual Shots on Goal (ESPN)")
 st.caption("Pulls box scores ONLY for games marked FINAL")
@@ -25,7 +22,6 @@ def get_final_games_today():
     data = r.json()
 
     games = []
-
     for event in data.get("events", []):
         status = event.get("status", {}).get("type", {}).get("name")
 
@@ -48,7 +44,7 @@ def get_final_games_today():
     return games
 
 # -------------------------------------------------
-# PULL BOX SCORE SOG (CURRENT ESPN SCHEMA)
+# PULL BOX SCORE SOG (FINAL FIX)
 # -------------------------------------------------
 def get_boxscore_sog(game_id, game_date):
     r = requests.get(SUMMARY_URL.format(game_id), timeout=10)
@@ -63,7 +59,10 @@ def get_boxscore_sog(game_id, game_date):
         team_abbr = team_block.get("team", {}).get("abbreviation")
 
         for stat_group in team_block.get("statistics", []):
-            if stat_group.get("name") != "skaters":
+
+            # ✅ FIX: do NOT assume "skaters"
+            # Only explicitly skip goalies
+            if stat_group.get("name") == "goalies":
                 continue
 
             for athlete in stat_group.get("athletes", []):
@@ -141,3 +140,4 @@ if "actuals" in st.session_state:
             file_name="nhl_actual_sog.csv",
             mime="text/csv"
         )
+
