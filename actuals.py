@@ -1,37 +1,23 @@
 import streamlit as st
 import requests
 import pandas as pd
-from datetime import datetime, timedelta
-import pytz
 
-# --------------------------------------------------
-# DATE (YESTERDAY, ESPN LEAGUE DAY - EASTERN TIME)
-# --------------------------------------------------
-ET = pytz.timezone("US/Eastern")
-DATE = (datetime.now(ET) - timedelta(days=1)).strftime("%Y%m%d")
+st.set_page_config(page_title="NHL Box Score Exporter", layout="wide")
+st.title("🏒 NHL Box Score → Table Export")
 
-SCOREBOARD_URL = f"https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard?dates={DATE}"
+st.caption("Enter an ESPN NHL game ID and export skater box score data")
+
+game_id = st.text_input(
+    "Enter ESPN Game ID",
+    placeholder="e.g. 401803161"
+)
+
 SUMMARY_URL = "https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/summary?event={}"
 
-st.set_page_config(page_title="NHL Actual SOG (All Games)", layout="wide")
-st.title("🏒 NHL Actual Shots on Goal — All Games (Yesterday)")
-st.caption(f"Brute-force pull for {DATE}")
-
-# --------------------------------------------------
-# GET ALL GAME IDS
-# --------------------------------------------------
-@st.cache_data(show_spinner=False)
-def get_game_ids():
-    r = requests.get(SCOREBOARD_URL, timeout=10)
-    events = r.json().get("events", [])
-    return [e["id"] for e in events]
-
-# --------------------------------------------------
-# PULL SOG FOR ONE GAME
-# --------------------------------------------------
-def pull_game_sog(game_id):
+def pull_boxscore(game_id):
     r = requests.get(SUMMARY_URL.format(game_id), timeout=10)
     data = r.json()
+
     rows = []
 
     for team in data.get("boxscore", {}).get("players", []):
@@ -42,51 +28,36 @@ def pull_game_sog(game_id):
                 continue
 
             for athlete in group.get("athletes", []):
-                player = athlete.get("athlete", {}).get("displayName")
+                row = {
+                    "team": team_abbr,
+                    "player": athlete.get("athlete", {}).get("displayName")
+                }
+
                 for stat in athlete.get("stats", []):
-                    if isinstance(stat, dict) and stat.get("name") == "shotsOnGoal":
-                        rows.append({
-                            "date": DATE,
-                            "game_id": game_id,
-                            "team": team_abbr,
-                            "player": player,
-                            "actual_sog": stat.get("value", 0)
-                        })
-                        break
+                    if isinstance(stat, dict):
+                        row[stat["name"]] = stat.get("value")
 
-    return rows
+                rows.append(row)
 
-# --------------------------------------------------
-# RUN
-# --------------------------------------------------
-if st.button("📥 Pull All Games from Yesterday"):
-    with st.spinner("Pulling ESPN boxscores..."):
-        game_ids = get_game_ids()
-        st.write(f"Games found: {len(game_ids)}")
+    return pd.DataFrame(rows)
 
-        all_rows = []
-        games_with_stats = 0
-
-        for gid in game_ids:
-            rows = pull_game_sog(gid)
-            if rows:
-                games_with_stats += 1
-                all_rows.extend(rows)
-
-        df = pd.DataFrame(all_rows)
-
-        st.write(f"Games with skater stats: {games_with_stats}")
+if st.button("📊 Pull Box Score"):
+    if not game_id.strip():
+        st.warning("Please enter a game ID.")
+    else:
+        with st.spinner("Pulling box score..."):
+            df = pull_boxscore(game_id)
 
         if df.empty:
-            st.warning("No skater stats published yet for this league day.")
+            st.error("No skater stats found for this game.")
         else:
-            st.success(f"Pulled {len(df)} skater rows")
+            st.success(f"Pulled {len(df)} skaters")
             st.dataframe(df, use_container_width=True)
 
             csv = df.to_csv(index=False).encode("utf-8")
             st.download_button(
-                "💾 Download Actuals CSV",
+                "💾 Download Box Score CSV",
                 csv,
-                file_name=f"nhl_actual_sog_{DATE}.csv",
+                file_name=f"boxscore_{game_id}.csv",
                 mime="text/csv"
             )
