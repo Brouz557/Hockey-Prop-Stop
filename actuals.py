@@ -1,26 +1,39 @@
 import streamlit as st
 import requests
 import pandas as pd
+from datetime import datetime, timedelta
 
 # --------------------------------------------------
 # APP CONFIG
 # --------------------------------------------------
-st.set_page_config(page_title="NHL Box Score Exporter", layout="wide")
-st.title("🏒 NHL Box Score Exporter")
-st.caption("Exports Goals, Assists, Shots on Goal, and TOI from ESPN NHL box scores")
+st.set_page_config(page_title="NHL Actual SOG Exporter", layout="wide")
+st.title("🏒 NHL Actuals Exporter (All Games)")
+st.caption("Pulls Goals, Assists, Shots on Goal, and TOI from ESPN for all games on a selected date")
 
+SCOREBOARD_URL = "https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard?dates={}"
 SUMMARY_URL = "https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/summary?event={}"
 
 # --------------------------------------------------
-# INPUT
+# DATE SELECTOR
 # --------------------------------------------------
-game_id = st.text_input(
-    "Enter ESPN NHL Game ID",
-    placeholder="e.g. 401803161"
+game_date = st.date_input(
+    "Select game date",
+    value=datetime.utcnow() - timedelta(days=1)
 )
 
+date_str = game_date.strftime("%Y%m%d")
+
 # --------------------------------------------------
-# BOX SCORE PULL FUNCTION (FINAL + BULLETPROOF)
+# GET ALL GAME IDS FOR DATE
+# --------------------------------------------------
+@st.cache_data(show_spinner=False)
+def get_game_ids_for_date(date_str):
+    r = requests.get(SCOREBOARD_URL.format(date_str), timeout=10)
+    data = r.json()
+    return [event["id"] for event in data.get("events", [])]
+
+# --------------------------------------------------
+# PULL BOXSCORE FOR ONE GAME (FINAL + BULLETPROOF)
 # --------------------------------------------------
 def pull_boxscore(game_id):
     r = requests.get(SUMMARY_URL.format(game_id), timeout=10)
@@ -32,7 +45,7 @@ def pull_boxscore(game_id):
         team_abbr = team.get("team", {}).get("abbreviation")
 
         for group in team.get("statistics", []):
-            # Skip goalie groups
+            # Skip goalies
             if group.get("name") == "goalies":
                 continue
 
@@ -54,7 +67,7 @@ def pull_boxscore(game_id):
 
                     value = stats[i]
 
-                    # ---- AUTHORITATIVE LOGIC ----
+                    # ---- ESPN QUIRK HANDLING ----
                     if label == "S":
                         row["sog"] = value
                         found = True
@@ -75,32 +88,42 @@ def pull_boxscore(game_id):
                         row["toi"] = value
                         found = True
 
-                # Only keep players with real stats
                 if found:
                     rows.append(row)
 
     return pd.DataFrame(rows)
 
 # --------------------------------------------------
-# RUN
+# RUN ALL GAMES
 # --------------------------------------------------
-if st.button("📊 Pull Box Score"):
-    if not game_id.strip():
-        st.warning("Please enter a valid ESPN game ID.")
-    else:
-        with st.spinner("Pulling box score from ESPN..."):
-            df = pull_boxscore(game_id)
+if st.button("📊 Pull ALL Games for Selected Date"):
+    with st.spinner("Pulling ESPN box scores..."):
+        game_ids = get_game_ids_for_date(date_str)
+        st.write(f"Games found: {len(game_ids)}")
 
-        if df.empty:
-            st.error("No skater stats found for this game.")
+        all_dfs = []
+        games_with_data = 0
+
+        for gid in game_ids:
+            df_game = pull_boxscore(gid)
+            if not df_game.empty:
+                df_game["game_id"] = gid
+                df_game["date"] = date_str
+                all_dfs.append(df_game)
+                games_with_data += 1
+
+        if not all_dfs:
+            st.error("No skater stats found for any games.")
         else:
-            st.success(f"Pulled {len(df)} skaters")
-            st.dataframe(df, use_container_width=True)
+            final_df = pd.concat(all_dfs, ignore_index=True)
+            st.success(f"Pulled skater stats from {games_with_data} games")
 
-            csv = df.to_csv(index=False).encode("utf-8")
+            st.dataframe(final_df, use_container_width=True)
+
+            csv = final_df.to_csv(index=False).encode("utf-8")
             st.download_button(
-                label="💾 Download Box Score CSV",
-                data=csv,
-                file_name=f"boxscore_{game_id}.csv",
+                "💾 Download Actuals CSV",
+                csv,
+                file_name=f"nhl_actuals_{date_str}.csv",
                 mime="text/csv"
             )
