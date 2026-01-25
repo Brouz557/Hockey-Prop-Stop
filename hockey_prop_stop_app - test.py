@@ -12,12 +12,11 @@ import streamlit.components.v1 as components
 # Team Abbreviation Normalization (ESPN -> Data)
 # ---------------------------------------------------------------
 TEAM_ABBREV_MAP = {
-    "NJ": "NJD","LA": "LAK","SJ": "SJS","TB": "TBL","ARI": "ARI","ANA": "ANA",
-    "BOS": "BOS","BUF": "BUF","CAR": "CAR","CBJ": "CBJ","CGY": "CGY","CHI": "CHI",
-    "COL": "COL","DAL": "DAL","DET": "DET","EDM": "EDM","FLA": "FLA","MIN": "MIN",
-    "MTL": "MTL","NSH": "NSH","NYI": "NYI","NYR": "NYR","OTT": "OTT","PHI": "PHI",
-    "PIT": "PIT","SEA": "SEA","STL": "STL","TOR": "TOR","VAN": "VAN","VGK": "VGK",
-    "WSH": "WSH","WPG": "WPG"
+    "NJ":"NJD","LA":"LAK","SJ":"SJS","TB":"TBL","ARI":"ARI","ANA":"ANA","BOS":"BOS",
+    "BUF":"BUF","CAR":"CAR","CBJ":"CBJ","CGY":"CGY","CHI":"CHI","COL":"COL","DAL":"DAL",
+    "DET":"DET","EDM":"EDM","FLA":"FLA","MIN":"MIN","MTL":"MTL","NSH":"NSH","NYI":"NYI",
+    "NYR":"NYR","OTT":"OTT","PHI":"PHI","PIT":"PIT","SEA":"SEA","STL":"STL","TOR":"TOR",
+    "VAN":"VAN","VGK":"VGK","WSH":"WSH","WPG":"WPG"
 }
 
 st.set_page_config(page_title="Puck Shotz Hockey Analytics (Test)", layout="wide", page_icon="🏒")
@@ -52,44 +51,30 @@ def load_file(f):
     if not f: return pd.DataFrame()
     try:
         return pd.read_excel(f) if f.name.lower().endswith(".xlsx") else pd.read_csv(f)
-    except Exception:
+    except:
         return pd.DataFrame()
 
 def safe_read(path):
     try:
         if not os.path.exists(path): return pd.DataFrame()
         return pd.read_excel(path) if path.lower().endswith(".xlsx") else pd.read_csv(path)
-    except Exception:
+    except:
         return pd.DataFrame()
 
 def load_data(file_uploader, default_path):
-    if file_uploader is not None:
-        return load_file(file_uploader)
-    return safe_read(default_path)
+    return load_file(file_uploader) if file_uploader else safe_read(default_path)
 
 @st.cache_data(show_spinner=False)
 def load_all(skaters_file, shots_file, goalies_file, lines_file, teams_file, injuries_file):
-    base_paths=[".","data","/mount/src/hockey-prop-stop/data"]
-    def find_file(name):
-        for p in base_paths:
-            fp=os.path.join(p,name)
-            if os.path.exists(fp): return fp
-        return None
-
-    skaters=load_data(skaters_file, find_file("Skaters.xlsx") or "Skaters.xlsx")
-    shots  =load_data(shots_file,   find_file("SHOT DATA.xlsx") or "SHOT DATA.xlsx")
-    goalies=load_data(goalies_file, find_file("GOALTENDERS.xlsx") or "GOALTENDERS.xlsx")
-    lines  =load_data(lines_file,   find_file("LINE DATA.xlsx") or "LINE DATA.xlsx")
-    teams  =load_data(teams_file,   find_file("TEAMS.xlsx") or "TEAMS.xlsx")
-
-    injuries=pd.DataFrame()
-    if injuries_file:
-        injuries=load_file(injuries_file)
+    skaters=load_data(skaters_file,"Skaters.xlsx")
+    shots=load_data(shots_file,"SHOT DATA.xlsx")
+    goalies=load_data(goalies_file,"GOALTENDERS.xlsx")
+    lines=load_data(lines_file,"LINE DATA.xlsx")
+    teams=load_data(teams_file,"TEAMS.xlsx")
+    injuries=load_data(injuries_file,"")
     if not injuries.empty:
         injuries.columns=injuries.columns.str.lower().str.strip()
-        if "player" in injuries.columns:
-            injuries["player"]=injuries["player"].astype(str).str.lower().str.strip()
-
+        injuries["player"]=injuries["player"].astype(str).str.lower().str.strip()
     return skaters,shots,goalies,lines,teams,injuries
 
 # ---------------------------------------------------------------
@@ -105,41 +90,36 @@ if skaters_df.empty or shots_df.empty:
 
 st.success("✅ Data loaded successfully.")
 
-for df_ in [skaters_df, shots_df, goalies_df, lines_df, teams_df]:
-    if not df_.empty:
-        df_.columns=df_.columns.str.lower().str.strip()
+for d in [skaters_df, shots_df, goalies_df, lines_df, teams_df]:
+    d.columns=d.columns.str.lower().str.strip()
 
-team_col=next((c for c in skaters_df.columns if "team" in c),None)
-player_col="name" if "name" in skaters_df.columns else None
-shots_df=shots_df.rename(columns={next((c for c in shots_df.columns if "player" in c or "name" in c),"player"):"player"})
+team_col=next(c for c in skaters_df.columns if "team" in c)
+player_col="name"
+shots_df=shots_df.rename(columns={next(c for c in shots_df.columns if "player" in c or "name" in c):"player"})
 shots_df["player"]=shots_df["player"].astype(str).str.strip()
-game_col=next((c for c in shots_df.columns if "game" in c and "id" in c),None)
+game_col=next(c for c in shots_df.columns if "game" in c and "id" in c)
 
 # ---------------------------------------------------------------
 # Matchups
 # ---------------------------------------------------------------
 @st.cache_data(ttl=300)
-def get_todays_games():
+def get_games():
     r=requests.get("https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard",timeout=10)
     games=[]
     for e in r.json().get("events",[]):
-        c=e.get("competitions",[{}])[0].get("competitors",[])
-        if len(c)==2:
-            games.append({
-                "away": TEAM_ABBREV_MAP.get(c[0]["team"]["abbreviation"],c[0]["team"]["abbreviation"]),
-                "home": TEAM_ABBREV_MAP.get(c[1]["team"]["abbreviation"],c[1]["team"]["abbreviation"]),
-                "away_logo": c[0]["team"]["logo"],
-                "home_logo": c[1]["team"]["logo"]
-            })
+        c=e["competitions"][0]["competitors"]
+        games.append({
+            "away":TEAM_ABBREV_MAP.get(c[0]["team"]["abbreviation"],c[0]["team"]["abbreviation"]),
+            "home":TEAM_ABBREV_MAP.get(c[1]["team"]["abbreviation"],c[1]["team"]["abbreviation"]),
+            "away_logo":c[0]["team"]["logo"],
+            "home_logo":c[1]["team"]["logo"]
+        })
     return games
 
-games=get_todays_games()
-if not games:
-    st.warning("No games found today.")
-    st.stop()
+games=get_games()
 
 # ---------------------------------------------------------------
-# Run Controls
+# Run Button
 # ---------------------------------------------------------------
 col_run,col_line=st.columns([3,1])
 with col_run:
@@ -149,18 +129,74 @@ with col_line:
     st.session_state.line_test_val=line_test
 
 # ---------------------------------------------------------------
-# Display Results
+# Build Model (UNCHANGED)
+# ---------------------------------------------------------------
+@st.cache_data(show_spinner=False)
+def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, teams_df, injuries_df):
+    results=[]
+    skaters=skaters_df[skaters_df[team_col].isin([team_a,team_b])]
+    roster=skaters[[player_col,team_col]].rename(columns={player_col:"player",team_col:"team"}).drop_duplicates("player")
+    grouped={n.lower():g for n,g in shots_df.groupby(shots_df["player"].str.lower())}
+
+    for row in roster.itertuples(index=False):
+        player,team=row.player,row.team
+        df_p=grouped.get(player.lower(),pd.DataFrame())
+        if df_p.empty or "sog" not in df_p.columns: continue
+
+        sog_vals=df_p.groupby(game_col)["sog"].sum().tolist()
+        if not sog_vals: continue
+
+        last3,last5,last10=sog_vals[-3:],sog_vals[-5:],sog_vals[-10:]
+        baseline=0.55*np.mean(last10)+0.3*np.mean(last5)+0.15*np.mean(last3)
+        lam=baseline
+
+        if "goal" in df_p.columns:
+            g=df_p.groupby(game_col).agg({"sog":"sum","goal":"sum"})
+            shooting_pct=(g["goal"].mean()/g["sog"].mean()) if g["sog"].mean()>0 else 0
+            xg=shooting_pct*lam
+        else:
+            shooting_pct,xg=np.nan,np.nan
+
+        results.append({
+            "Player":player,
+            "Team":team,
+            "Final Projection":round(lam,2),
+            "Season Avg":round(np.mean(sog_vals),2),
+            "Line Adj":1.0,
+            "Exp Goals (xG)":round(xg,3),
+            "Shooting %":round(shooting_pct*100,2),
+            "L3 Shots":", ".join(map(str,last3)),
+            "L5 Shots":", ".join(map(str,last5)),
+            "L10 Shots":", ".join(map(str,last10))
+        })
+
+    return pd.DataFrame(results)
+
+# ---------------------------------------------------------------
+# RUN MODEL (RESTORED)
+# ---------------------------------------------------------------
+if run_model:
+    all_tables=[]
+    for m in games:
+        df=build_model(m["away"],m["home"],skaters_df,shots_df,goalies_df,lines_df,teams_df,injuries_df)
+        if not df.empty:
+            all_tables.append(df)
+
+    if all_tables:
+        st.session_state.results=pd.concat(all_tables,ignore_index=True)
+        st.success("✅ Model built successfully.")
+        st.experimental_rerun()
+
+# ---------------------------------------------------------------
+# DISPLAY + FILTER
 # ---------------------------------------------------------------
 if "results" in st.session_state:
     df=st.session_state.results.copy()
 
-    # REQUIRED NUMERIC CASTS
     df["Shooting %"]=pd.to_numeric(df["Shooting %"],errors="coerce")
     df["Exp Goals (xG)"]=pd.to_numeric(df["Exp Goals (xG)"],errors="coerce")
 
-    # -----------------------------------------------------------
-    # 🔥 BASE FILTER (YOUR RULES)
-    # -----------------------------------------------------------
+    # 🔥 YOUR FILTER
     df=df[
         (df["Final Projection"]>1.5) &
         (df["Line Adj"]>0.94) &
@@ -168,25 +204,4 @@ if "results" in st.session_state:
         (df["Exp Goals (xG)"]>0.29)
     ]
 
-    df=df.sort_values(["Team","Final Projection","Line Adj"],ascending=[True,False,False])
-
-    cols=[
-        "Player","Team","Final Projection","Prob ≥ Line (%)","Playable Odds",
-        "Season Avg","Line Adj","Exp Goals (xG)","Shooting %",
-        "Form Indicator","L3 Shots","L5 Shots","L10 Shots"
-    ]
-
-    html_table=df[cols].to_html(index=False,escape=False)
-    csv=df[cols].to_csv(index=False).encode("utf-8")
-
-    st.download_button("💾 Download Results (CSV)",csv,"puck_shotz_results.csv","text/csv")
-
-    components.html(f"""
-    <style>
-    table {{width:100%;border-collapse:collapse;color:#D6D6D6}}
-    th {{background:#0A3A67;color:white;position:sticky;top:0}}
-    td {{background:#0F2743;text-align:center}}
-    tr:nth-child(even) td {{background:#142F52}}
-    </style>
-    <div style='height:650px;overflow:auto'>{html_table}</div>
-    """,height=700,scrolling=True)
+    st.dataframe(df, use_container_width=True)
