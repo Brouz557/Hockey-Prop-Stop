@@ -8,10 +8,13 @@ import pandas as pd
 SCOREBOARD_URL = "https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard"
 SUMMARY_URL = "https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/summary?event={}"
 
-st.set_page_config(page_title="NHL Actual Shots on Goal (ESPN)", layout="wide")
+st.set_page_config(
+    page_title="NHL Actual Shots on Goal (ESPN)",
+    layout="wide"
+)
 
 st.title("📊 NHL Actual Shots on Goal (ESPN)")
-st.caption("Pulls box scores ONLY for games marked FINAL")
+st.caption("FINAL games only • Robust ESPN schema handling")
 
 # -------------------------------------------------
 # GET TODAY'S FINAL GAMES ONLY
@@ -22,9 +25,9 @@ def get_final_games_today():
     data = r.json()
 
     games = []
+
     for event in data.get("events", []):
         status = event.get("status", {}).get("type", {}).get("name")
-
         if status != "STATUS_FINAL":
             continue
 
@@ -44,7 +47,7 @@ def get_final_games_today():
     return games
 
 # -------------------------------------------------
-# PULL BOX SCORE SOG (FINAL FIX)
+# PULL BOX SCORE SOG (FULLY DEFENSIVE)
 # -------------------------------------------------
 def get_boxscore_sog(game_id, game_date):
     r = requests.get(SUMMARY_URL.format(game_id), timeout=10)
@@ -60,20 +63,38 @@ def get_boxscore_sog(game_id, game_date):
 
         for stat_group in team_block.get("statistics", []):
 
-            # ✅ FIX: do NOT assume "skaters"
-            # Only explicitly skip goalies
+            # Skip goalies explicitly
             if stat_group.get("name") == "goalies":
                 continue
 
             for athlete in stat_group.get("athletes", []):
                 player_name = athlete.get("athlete", {}).get("displayName")
+                stats = athlete.get("stats")
 
                 sog = None
-                for stat in athlete.get("stats", []):
-                    if stat.get("name") == "shotsOnGoal":
-                        sog = stat.get("value")
-                        break
 
+                # ---------------------------------
+                # CASE 1: stats is list (positional)
+                # ---------------------------------
+                if isinstance(stats, list):
+                    if len(stats) > 5:
+                        try:
+                            sog = int(stats[5])
+                        except:
+                            sog = None
+
+                # ---------------------------------
+                # CASE 2: stats is list of dicts
+                # ---------------------------------
+                elif isinstance(stats, dict):
+                    for stat in stats:
+                        if isinstance(stat, dict) and stat.get("name") == "shotsOnGoal":
+                            sog = stat.get("value")
+                            break
+
+                # ---------------------------------
+                # FAILSAFE
+                # ---------------------------------
                 if sog is None:
                     continue
 
@@ -140,4 +161,3 @@ if "actuals" in st.session_state:
             file_name="nhl_actual_sog.csv",
             mime="text/csv"
         )
-
