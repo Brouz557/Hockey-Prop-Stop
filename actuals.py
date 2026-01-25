@@ -20,7 +20,7 @@ game_id = st.text_input(
 )
 
 # --------------------------------------------------
-# BOX SCORE PULL FUNCTION (FINAL + CORRECT)
+# BOX SCORE PULL FUNCTION (FINAL + BULLETPROOF)
 # --------------------------------------------------
 def pull_boxscore(game_id):
     r = requests.get(SUMMARY_URL.format(game_id), timeout=10)
@@ -28,19 +28,11 @@ def pull_boxscore(game_id):
 
     rows = []
 
-    # Exact ESPN NHL labels -> clean column names
-    STAT_MAP = {
-        "G": "goals",
-        "A": "assists",
-        "SOG": "sog",
-        "TOI": "toi"
-    }
-
     for team in data.get("boxscore", {}).get("players", []):
         team_abbr = team.get("team", {}).get("abbreviation")
 
         for group in team.get("statistics", []):
-            # Skip goalie stats
+            # Skip goalie groups
             if group.get("name") == "goalies":
                 continue
 
@@ -54,15 +46,37 @@ def pull_boxscore(game_id):
                     "player": athlete.get("athlete", {}).get("displayName"),
                 }
 
-                found_stat = False
+                found = False
 
                 for i, label in enumerate(labels):
-                    if label in STAT_MAP and i < len(stats):
-                        row[STAT_MAP[label]] = stats[i]
-                        found_stat = True
+                    if i >= len(stats):
+                        continue
 
-                # Only keep players with at least one stat
-                if found_stat:
+                    value = stats[i]
+
+                    # ---- AUTHORITATIVE LOGIC ----
+                    if label == "S":
+                        row["sog"] = value
+                        found = True
+
+                    elif label == "SOG" and "sog" not in row:
+                        row["sog"] = value
+                        found = True
+
+                    elif label == "G":
+                        row["goals"] = value
+                        found = True
+
+                    elif label == "A":
+                        row["assists"] = value
+                        found = True
+
+                    elif label == "TOI":
+                        row["toi"] = value
+                        found = True
+
+                # Only keep players with real stats
+                if found:
                     rows.append(row)
 
     return pd.DataFrame(rows)
