@@ -1,20 +1,36 @@
 import streamlit as st
 import requests
 import pandas as pd
-from datetime import datetime
 
+# -------------------------------------------------
+# ESPN ENDPOINTS
+# -------------------------------------------------
 SCOREBOARD_URL = "https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard"
 SUMMARY_URL = "https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/summary?event={}"
 
+st.set_page_config(page_title="NHL Actual Shots on Goal (ESPN)", layout="wide")
+st.title("📊 Pull NHL Actual Shots on Goal (ESPN)")
+st.caption("Pulls box scores ONLY for games marked FINAL")
+
+# -------------------------------------------------
+# STEP 1: GET TODAY'S FINAL GAMES ONLY
+# -------------------------------------------------
 @st.cache_data(show_spinner=False)
-def get_todays_games():
+def get_final_games_today():
     r = requests.get(SCOREBOARD_URL, timeout=10)
     data = r.json()
-    games = []
 
+    games = []
     for event in data.get("events", []):
+        status = event.get("status", {}).get("type", {}).get("name")
+
+        # >>> OPTION B: FINAL GAMES ONLY
+        if status != "STATUS_FINAL":
+            continue
+
         game_id = event.get("id")
         date = event.get("date", "")[:10]
+
         competitors = event.get("competitions", [{}])[0].get("competitors", [])
         teams = {c["homeAway"]: c["team"]["abbreviation"] for c in competitors}
 
@@ -24,60 +40,91 @@ def get_todays_games():
             "home": teams.get("home"),
             "away": teams.get("away")
         })
+
     return games
 
+# -------------------------------------------------
+# STEP 2: PULL BOX SCORE SOG
+# -------------------------------------------------
 def get_boxscore_sog(game_id, game_date):
     r = requests.get(SUMMARY_URL.format(game_id), timeout=10)
     data = r.json()
-    rows = []
 
-    for team in data.get("boxscore", {}).get("teams", []):
+    rows = []
+    teams = data.get("boxscore", {}).get("teams", [])
+
+    for team in teams:
         team_abbr = team.get("team", {}).get("abbreviation")
 
-        for cat in team.get("statistics", []):
-            if cat.get("name") != "skaters":
+        for category in team.get("statistics", []):
+            if category.get("name") != "skaters":
                 continue
 
-            for ath in cat.get("athletes", []):
-                stats = ath.get("stats", [])
+            for athlete in category.get("athletes", []):
+                stats = athlete.get("stats", [])
+
+                # ESPN skater stats index:
+                # [GP, G, A, PTS, +/-, SOG, ...]
                 if len(stats) < 6:
                     continue
 
-                rows.append({
-                    "date": game_date,
-                    "game_id": game_id,
-                    "team": team_abbr,
-                    "player": ath.get("athlete", {}).get("displayName"),
-                    "sog": int(stats[5])
-                })
+                try:
+                    rows.append({
+                        "date": game_date,
+                        "game_id": game_id,
+                        "team": team_abbr,
+                        "player": athlete.get("athlete", {}).get("displayName"),
+                        "sog": int(stats[5])
+                    })
+                except:
+                    continue
+
     return rows
 
+# -------------------------------------------------
+# STEP 3: BUILD ACTUALS TABLE
+# -------------------------------------------------
 def build_actuals():
-    games = get_todays_games()
+    games = get_final_games_today()
     all_rows = []
 
     for g in games:
         rows = get_boxscore_sog(g["game_id"], g["date"])
         all_rows.extend(rows)
 
-    return pd.DataFrame(all_rows)
+    return pd.DataFrame(all_rows), games
 
-# ---------------- STREAMLIT UI ----------------
-st.header("📊 Pull NHL Actual Shots on Goal (ESPN)")
-
-if st.button("📥 Pull Actuals for Today’s Games"):
-    with st.spinner("Pulling ESPN box scores..."):
-        actuals_df = build_actuals()
+# -------------------------------------------------
+# STREAMLIT UI
+# -------------------------------------------------
+if st.button("📥 Pull Actuals for FINAL Games Today"):
+    with st.spinner("Pulling ESPN box scores for FINAL games..."):
+        actuals_df, games = build_actuals()
         st.session_state.actuals = actuals_df
-        st.success(f"Pulled {len(actuals_df)} skater rows")
+        st.session_state.final_games = games
+
+# -------------------------------------------------
+# DISPLAY RESULTS
+# -------------------------------------------------
+if "final_games" in st.session_state:
+    st.subheader("✅ Final Games Found")
+    for g in st.session_state.final_games:
+        st.write(f"{g['away']} @ {g['home']}")
 
 if "actuals" in st.session_state:
-    st.dataframe(st.session_state.actuals, use_container_width=True)
+    df = st.session_state.actuals
 
-    csv = st.session_state.actuals.to_csv(index=False).encode("utf-8")
-    st.download_button(
-        "💾 Download Actuals CSV",
-        csv,
-        file_name="nhl_actual_sog.csv",
-        mime="text/csv"
-    )
+    st.success(f"Pulled {len(df)} skater rows")
+
+    if df.empty:
+        st.warning("No skater stats available yet. Games may have just ended.")
+    else:
+        st.dataframe(df, use_container_width=True)
+
+        csv = df.to_csv(index=False).encode("utf-8")
+        st.download_button(
+            "💾 Download Actuals CSV",
+            csv,
+            file_name="nhl_actual_sog.csv",
+            mime="text/csv"
+        )
