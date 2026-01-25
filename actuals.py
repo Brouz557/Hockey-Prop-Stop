@@ -8,16 +8,12 @@ import pandas as pd
 SCOREBOARD_URL = "https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard"
 SUMMARY_URL = "https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/summary?event={}"
 
-st.set_page_config(
-    page_title="NHL Actual Shots on Goal (ESPN)",
-    layout="wide"
-)
-
+st.set_page_config(page_title="NHL Actual Shots on Goal (ESPN)", layout="wide")
 st.title("📊 NHL Actual Shots on Goal (ESPN)")
-st.caption("Pulls box scores ONLY for games marked FINAL")
+st.caption("Uses ESPN boxscore.players schema (current)")
 
 # -------------------------------------------------
-# STEP 1: GET TODAY'S FINAL GAMES ONLY
+# GET FINAL GAMES ONLY
 # -------------------------------------------------
 @st.cache_data(show_spinner=False)
 def get_final_games_today():
@@ -25,11 +21,8 @@ def get_final_games_today():
     data = r.json()
 
     games = []
-
     for event in data.get("events", []):
         status = event.get("status", {}).get("type", {}).get("name")
-
-        # FINAL GAMES ONLY
         if status != "STATUS_FINAL":
             continue
 
@@ -49,92 +42,25 @@ def get_final_games_today():
     return games
 
 # -------------------------------------------------
-# STEP 2: PULL BOX SCORE SOG (ROBUST VERSION)
+# PULL BOX SCORE SOG (CORRECT SCHEMA)
 # -------------------------------------------------
 def get_boxscore_sog(game_id, game_date):
     r = requests.get(SUMMARY_URL.format(game_id), timeout=10)
     data = r.json()
 
     rows = []
-    teams = data.get("boxscore", {}).get("teams", [])
 
-    for team in teams:
-        team_abbr = team.get("team", {}).get("abbreviation")
+    for team_block in data.get("boxscore", {}).get("players", []):
+        team_abbr = team_block.get("team", {}).get("abbreviation")
 
-        for category in team.get("statistics", []):
-            athletes = category.get("athletes", [])
-            if not athletes:
+        for stat_group in team_block.get("statistics", []):
+            if stat_group.get("name") != "skaters":
                 continue
 
-            for athlete in athletes:
-                stats = athlete.get("stats", [])
+            for athlete in stat_group.get("athletes", []):
+                player_name = athlete.get("athlete", {}).get("displayName")
 
-                # Skaters always have SOG at index 5
-                # Goalies either don't or have a different layout
-                if len(stats) < 6:
-                    continue
-
-                try:
-                    rows.append({
-                        "date": game_date,
-                        "game_id": game_id,
-                        "team": team_abbr,
-                        "player": athlete.get("athlete", {}).get("displayName"),
-                        "sog": int(stats[5])
-                    })
-                except:
-                    continue
-
-    return rows
-
-# -------------------------------------------------
-# STEP 3: BUILD ACTUALS TABLE
-# -------------------------------------------------
-def build_actuals():
-    games = get_final_games_today()
-    all_rows = []
-
-    for g in games:
-        rows = get_boxscore_sog(g["game_id"], g["date"])
-        all_rows.extend(rows)
-
-    return pd.DataFrame(all_rows), games
-
-# -------------------------------------------------
-# STREAMLIT UI
-# -------------------------------------------------
-st.divider()
-
-if st.button("📥 Pull Actuals for FINAL Games Today"):
-    with st.spinner("Pulling ESPN box scores..."):
-        actuals_df, final_games = build_actuals()
-        st.session_state.actuals = actuals_df
-        st.session_state.final_games = final_games
-
-# -------------------------------------------------
-# DISPLAY RESULTS
-# -------------------------------------------------
-if "final_games" in st.session_state:
-    st.subheader("✅ Final Games Found")
-    if not st.session_state.final_games:
-        st.warning("No games are FINAL yet today.")
-    else:
-        for g in st.session_state.final_games:
-            st.write(f"{g['away']} @ {g['home']}")
-
-if "actuals" in st.session_state:
-    df = st.session_state.actuals
-
-    if df.empty:
-        st.warning("Games are final, but no skater stats were returned.")
-    else:
-        st.success(f"Pulled {len(df)} skater rows")
-        st.dataframe(df, use_container_width=True)
-
-        csv = df.to_csv(index=False).encode("utf-8")
-        st.download_button(
-            "💾 Download Actuals CSV",
-            csv,
-            file_name="nhl_actual_sog.csv",
-            mime="text/csv"
-        )
+                sog = None
+                for stat in athlete.get("stats", []):
+                    if stat.get("name") == "shotsOnGoal":
+                        sog = stat.get("
