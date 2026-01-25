@@ -2,11 +2,13 @@ import streamlit as st
 import requests
 import pandas as pd
 from datetime import datetime, timedelta
+import pytz
 
 # --------------------------------------------------
-# DATE (YESTERDAY, UTC)
+# DATE (YESTERDAY, ESPN LEAGUE DAY - EASTERN TIME)
 # --------------------------------------------------
-DATE = (datetime.utcnow() - timedelta(days=1)).strftime("%Y%m%d")
+ET = pytz.timezone("US/Eastern")
+DATE = (datetime.now(ET) - timedelta(days=1)).strftime("%Y%m%d")
 
 SCOREBOARD_URL = f"https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard?dates={DATE}"
 SUMMARY_URL = "https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/summary?event={}"
@@ -76,7 +78,7 @@ if st.button("📥 Pull All Games from Yesterday"):
         st.write(f"Games with skater stats: {games_with_stats}")
 
         if df.empty:
-            st.warning("No skater stats published yet for yesterday.")
+            st.warning("No skater stats published yet for this league day.")
         else:
             st.success(f"Pulled {len(df)} skater rows")
             st.dataframe(df, use_container_width=True)
