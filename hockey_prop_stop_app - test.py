@@ -7,11 +7,12 @@ import numpy as np
 import os, requests, html, json
 from scipy.stats import poisson
 import streamlit.components.v1 as components
+
 # ---------------------------------------------------------------
 # Team Abbreviation Normalization (ESPN -> Data)
 # ---------------------------------------------------------------
 TEAM_ABBREV_MAP = {
-    "NJ":  "NJD","LA":  "LAK","SJ":  "SJS","TB":  "TBL","ARI": "ARI","ANA": "ANA",
+    "NJ": "NJD","LA": "LAK","SJ": "SJS","TB": "TBL","ARI": "ARI","ANA": "ANA",
     "BOS": "BOS","BUF": "BUF","CAR": "CAR","CBJ": "CBJ","CGY": "CGY","CHI": "CHI",
     "COL": "COL","DAL": "DAL","DET": "DET","EDM": "EDM","FLA": "FLA","MIN": "MIN",
     "MTL": "MTL","NSH": "NSH","NYI": "NYI","NYR": "NYR","OTT": "OTT","PHI": "PHI",
@@ -21,6 +22,17 @@ TEAM_ABBREV_MAP = {
 
 st.set_page_config(page_title="Puck Shotz Hockey Analytics (Test)", layout="wide", page_icon="🏒")
 st.warning("Production Version")
+
+# ---------------------------------------------------------------
+# Header
+# ---------------------------------------------------------------
+st.markdown("""
+<div style='text-align:center; background-color:#0A3A67; padding:15px; border-radius:6px; margin-bottom:10px;'>
+  <img src='https://raw.githubusercontent.com/Brouz557/Hockey-Prop-Stop/694ae2a448204908099ce2899bd479052d01b518/modern%20hockey%20puck%20l.png' width='220'>
+</div>
+<h1 style='text-align:center;color:#1E5A99;'>Puck Shotz Hockey Analytics</h1>
+<p style='text-align:center;color:#D6D6D6;'>Automatically runs all of today’s NHL matchups with inline logos, instant filters, injuries, and expected goals.</p>
+""", unsafe_allow_html=True)
 
 # ---------------------------------------------------------------
 # Sidebar Uploaders
@@ -63,6 +75,7 @@ def load_all(skaters_file, shots_file, goalies_file, lines_file, teams_file, inj
             fp=os.path.join(p,name)
             if os.path.exists(fp): return fp
         return None
+
     skaters=load_data(skaters_file, find_file("Skaters.xlsx") or "Skaters.xlsx")
     shots  =load_data(shots_file,   find_file("SHOT DATA.xlsx") or "SHOT DATA.xlsx")
     goalies=load_data(goalies_file, find_file("GOALTENDERS.xlsx") or "GOALTENDERS.xlsx")
@@ -70,28 +83,31 @@ def load_all(skaters_file, shots_file, goalies_file, lines_file, teams_file, inj
     teams  =load_data(teams_file,   find_file("TEAMS.xlsx") or "TEAMS.xlsx")
 
     injuries=pd.DataFrame()
-    for p in ["injuries.xlsx","Injuries.xlsx","data/injuries.xlsx"]:
-        if os.path.exists(p):
-            injuries=load_file(open(p,"rb"));break
-    if injuries.empty:
+    if injuries_file:
         injuries=load_file(injuries_file)
     if not injuries.empty:
         injuries.columns=injuries.columns.str.lower().str.strip()
         if "player" in injuries.columns:
-            injuries["player"]=injuries["player"].astype(str).str.strip().str.lower()
+            injuries["player"]=injuries["player"].astype(str).str.lower().str.strip()
+
     return skaters,shots,goalies,lines,teams,injuries
 
 # ---------------------------------------------------------------
 # Load Data
 # ---------------------------------------------------------------
 skaters_df, shots_df, goalies_df, lines_df, teams_df, injuries_df = load_all(
-    skaters_file, shots_file, goalies_file, lines_file, teams_file, injuries_file)
+    skaters_file, shots_file, goalies_file, lines_file, teams_file, injuries_file
+)
+
 if skaters_df.empty or shots_df.empty:
     st.warning("⚠️ Missing data. Upload required files.")
     st.stop()
 
-for df in [skaters_df, shots_df, goalies_df, lines_df, teams_df]:
-    if not df.empty: df.columns=df.columns.str.lower().str.strip()
+st.success("✅ Data loaded successfully.")
+
+for df_ in [skaters_df, shots_df, goalies_df, lines_df, teams_df]:
+    if not df_.empty:
+        df_.columns=df_.columns.str.lower().str.strip()
 
 team_col=next((c for c in skaters_df.columns if "team" in c),None)
 player_col="name" if "name" in skaters_df.columns else None
@@ -100,93 +116,77 @@ shots_df["player"]=shots_df["player"].astype(str).str.strip()
 game_col=next((c for c in shots_df.columns if "game" in c and "id" in c),None)
 
 # ---------------------------------------------------------------
-# Run Button / Line Input
+# Matchups
+# ---------------------------------------------------------------
+@st.cache_data(ttl=300)
+def get_todays_games():
+    r=requests.get("https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard",timeout=10)
+    games=[]
+    for e in r.json().get("events",[]):
+        c=e.get("competitions",[{}])[0].get("competitors",[])
+        if len(c)==2:
+            games.append({
+                "away": TEAM_ABBREV_MAP.get(c[0]["team"]["abbreviation"],c[0]["team"]["abbreviation"]),
+                "home": TEAM_ABBREV_MAP.get(c[1]["team"]["abbreviation"],c[1]["team"]["abbreviation"]),
+                "away_logo": c[0]["team"]["logo"],
+                "home_logo": c[1]["team"]["logo"]
+            })
+    return games
+
+games=get_todays_games()
+if not games:
+    st.warning("No games found today.")
+    st.stop()
+
+# ---------------------------------------------------------------
+# Run Controls
 # ---------------------------------------------------------------
 col_run,col_line=st.columns([3,1])
-with col_run: run_model=st.button("🚀 Run Model (All Games)")
+with col_run:
+    run_model=st.button("🚀 Run Model (All Games)")
 with col_line:
-    line_test=st.number_input("Line to Test",0.0,10.0,3.5,0.5,key="line_test")
-    if "line_test_val" not in st.session_state:
-        st.session_state.line_test_val=line_test
-    elif st.session_state.line_test_val!=line_test:
-        st.session_state.line_test_val=line_test
-        if "results" in st.session_state:
-            st.rerun()
+    line_test=st.number_input("Line to Test",0.0,10.0,3.5,0.5)
+    st.session_state.line_test_val=line_test
 
 # ---------------------------------------------------------------
-# Run Model + Combine Games (UNCHANGED)
-# ---------------------------------------------------------------
-if run_model:
-    all_tables=[]
-    for m in games:
-        team_a,team_b=m["away"],m["home"]
-        df=build_model(team_a,team_b,skaters_df,shots_df,goalies_df,lines_df,teams_df,injuries_df)
-        if not df.empty:
-            df["Matchup"]=f"{team_a}@{team_b}"
-            all_tables.append(df)
-    if all_tables:
-        combined=pd.concat(all_tables,ignore_index=True)
-        st.session_state.results=combined
-        st.session_state.matchups=games
-        st.success("✅ Model built for all games.")
-        st.experimental_rerun()
-
-# ---------------------------------------------------------------
-# Display Buttons + Table
+# Display Results
 # ---------------------------------------------------------------
 if "results" in st.session_state:
     df=st.session_state.results.copy()
 
-    # ---------------- ADDED: MODEL SCORE + SIGNAL ----------------
-    test_line = st.session_state.line_test_val
+    # REQUIRED NUMERIC CASTS
+    df["Shooting %"]=pd.to_numeric(df["Shooting %"],errors="coerce")
+    df["Exp Goals (xG)"]=pd.to_numeric(df["Exp Goals (xG)"],errors="coerce")
 
-    def model_score_line(row):
-        score = 0.0
-        diff = row["Final Projection"] - test_line
-        if diff >= 1.0: score += 1.5
-        elif diff >= 0.4: score += 1.0
+    # -----------------------------------------------------------
+    # 🔥 BASE FILTER (YOUR RULES)
+    # -----------------------------------------------------------
+    df=df[
+        (df["Final Projection"]>1.5) &
+        (df["Line Adj"]>0.94) &
+        (df["Shooting %"]>5) &
+        (df["Exp Goals (xG)"]>0.29)
+    ]
 
-        prob = row.get("Prob ≥ Line (%)", 0)
-        if prob >= 60: score += 1.0
-        elif prob >= 55: score += 0.5
+    df=df.sort_values(["Team","Final Projection","Line Adj"],ascending=[True,False,False])
 
-        l10 = [int(x) for x in str(row["L10 Shots"]).split(",") if x.strip().isdigit()]
-        if sum(s >= test_line for s in l10) >= 5: score += 1.0
-
-        if row["Line Adj"] >= 1.05: score += 1.0
-
-        try:
-            if float(row["Exp Goals (xG)"]) >= 0.30: score += 1.0
-        except:
-            pass
-
-        return round(score,2)
-
-    def model_light(score):
-        if score >= 4.0:
-            return "<span style='color:#00FF00;font-weight:bold;'>🟢</span>"
-        elif score >= 2.5:
-            return "<span style='color:#FFD700;font-weight:bold;'>🟡</span>"
-        else:
-            return "<span style='color:#FF4B4B;font-weight:bold;'>🔴</span>"
-
-    df["Model Score"] = df.apply(model_score_line, axis=1)
-    df["Signal"] = df["Model Score"].apply(model_light)
-    # -------------------------------------------------------------
-
-    cols=["Signal","Model Score",
-          "Player","Team","Injury","Trend","Final Projection","Prob ≥ Line (%)",
-          "Playable Odds","Season Avg","Line Adj","Exp Goals (xG)","Shooting %",
-          "Form Indicator","L3 Shots","L5 Shots","L10 Shots"]
+    cols=[
+        "Player","Team","Final Projection","Prob ≥ Line (%)","Playable Odds",
+        "Season Avg","Line Adj","Exp Goals (xG)","Shooting %",
+        "Form Indicator","L3 Shots","L5 Shots","L10 Shots"
+    ]
 
     html_table=df[cols].to_html(index=False,escape=False)
-    csv = df[cols].to_csv(index=False).encode("utf-8")
+    csv=df[cols].to_csv(index=False).encode("utf-8")
 
-    st.download_button(
-        label="💾 Download Results (CSV)",
-        data=csv,
-        file_name="puck_shotz_results.csv",
-        mime="text/csv"
-    )
+    st.download_button("💾 Download Results (CSV)",csv,"puck_shotz_results.csv","text/csv")
 
-    components.html(f"<div style='overflow-x:auto;height:650px;'>{html_table}</div>",height=700)
+    components.html(f"""
+    <style>
+    table {{width:100%;border-collapse:collapse;color:#D6D6D6}}
+    th {{background:#0A3A67;color:white;position:sticky;top:0}}
+    td {{background:#0F2743;text-align:center}}
+    tr:nth-child(even) td {{background:#142F52}}
+    </style>
+    <div style='height:650px;overflow:auto'>{html_table}</div>
+    """,height=700,scrolling=True)
