@@ -8,8 +8,12 @@ import pandas as pd
 SCOREBOARD_URL = "https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard"
 SUMMARY_URL = "https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/summary?event={}"
 
-st.set_page_config(page_title="NHL Actual Shots on Goal (ESPN)", layout="wide")
-st.title("📊 Pull NHL Actual Shots on Goal (ESPN)")
+st.set_page_config(
+    page_title="NHL Actual Shots on Goal (ESPN)",
+    layout="wide"
+)
+
+st.title("📊 NHL Actual Shots on Goal (ESPN)")
 st.caption("Pulls box scores ONLY for games marked FINAL")
 
 # -------------------------------------------------
@@ -21,10 +25,11 @@ def get_final_games_today():
     data = r.json()
 
     games = []
+
     for event in data.get("events", []):
         status = event.get("status", {}).get("type", {}).get("name")
 
-        # >>> OPTION B: FINAL GAMES ONLY
+        # FINAL GAMES ONLY
         if status != "STATUS_FINAL":
             continue
 
@@ -44,7 +49,7 @@ def get_final_games_today():
     return games
 
 # -------------------------------------------------
-# STEP 2: PULL BOX SCORE SOG
+# STEP 2: PULL BOX SCORE SOG (ROBUST VERSION)
 # -------------------------------------------------
 def get_boxscore_sog(game_id, game_date):
     r = requests.get(SUMMARY_URL.format(game_id), timeout=10)
@@ -57,14 +62,15 @@ def get_boxscore_sog(game_id, game_date):
         team_abbr = team.get("team", {}).get("abbreviation")
 
         for category in team.get("statistics", []):
-            if category.get("name") != "skaters":
+            athletes = category.get("athletes", [])
+            if not athletes:
                 continue
 
-            for athlete in category.get("athletes", []):
+            for athlete in athletes:
                 stats = athlete.get("stats", [])
 
-                # ESPN skater stats index:
-                # [GP, G, A, PTS, +/-, SOG, ...]
+                # Skaters always have SOG at index 5
+                # Goalies either don't or have a different layout
                 if len(stats) < 6:
                     continue
 
@@ -97,28 +103,32 @@ def build_actuals():
 # -------------------------------------------------
 # STREAMLIT UI
 # -------------------------------------------------
+st.divider()
+
 if st.button("📥 Pull Actuals for FINAL Games Today"):
-    with st.spinner("Pulling ESPN box scores for FINAL games..."):
-        actuals_df, games = build_actuals()
+    with st.spinner("Pulling ESPN box scores..."):
+        actuals_df, final_games = build_actuals()
         st.session_state.actuals = actuals_df
-        st.session_state.final_games = games
+        st.session_state.final_games = final_games
 
 # -------------------------------------------------
 # DISPLAY RESULTS
 # -------------------------------------------------
 if "final_games" in st.session_state:
     st.subheader("✅ Final Games Found")
-    for g in st.session_state.final_games:
-        st.write(f"{g['away']} @ {g['home']}")
+    if not st.session_state.final_games:
+        st.warning("No games are FINAL yet today.")
+    else:
+        for g in st.session_state.final_games:
+            st.write(f"{g['away']} @ {g['home']}")
 
 if "actuals" in st.session_state:
     df = st.session_state.actuals
 
-    st.success(f"Pulled {len(df)} skater rows")
-
     if df.empty:
-        st.warning("No skater stats available yet. Games may have just ended.")
+        st.warning("Games are final, but no skater stats were returned.")
     else:
+        st.success(f"Pulled {len(df)} skater rows")
         st.dataframe(df, use_container_width=True)
 
         csv = df.to_csv(index=False).encode("utf-8")
