@@ -7,7 +7,7 @@ import pandas as pd
 # --------------------------------------------------
 st.set_page_config(page_title="NHL Box Score Exporter", layout="wide")
 st.title("🏒 NHL Box Score Exporter")
-st.caption("Export Goals, Assists, Shots on Goal, and TOI from an ESPN NHL game")
+st.caption("Exports Goals, Assists, Shots on Goal, and TOI from ESPN NHL box scores")
 
 SUMMARY_URL = "https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/summary?event={}"
 
@@ -20,7 +20,7 @@ game_id = st.text_input(
 )
 
 # --------------------------------------------------
-# BOX SCORE PULL FUNCTION
+# BOX SCORE PULL FUNCTION (FINAL + CORRECT)
 # --------------------------------------------------
 def pull_boxscore(game_id):
     r = requests.get(SUMMARY_URL.format(game_id), timeout=10)
@@ -28,18 +28,19 @@ def pull_boxscore(game_id):
 
     rows = []
 
-    KEEP_STATS = {
-        "goals",
-        "assists",
-        "shotsOnGoal",
-        "timeOnIce"
+    # Exact ESPN NHL labels -> clean column names
+    STAT_MAP = {
+        "G": "goals",
+        "A": "assists",
+        "SOG": "sog",
+        "TOI": "toi"
     }
 
     for team in data.get("boxscore", {}).get("players", []):
         team_abbr = team.get("team", {}).get("abbreviation")
 
         for group in team.get("statistics", []):
-            # Skip goalies
+            # Skip goalie stats
             if group.get("name") == "goalies":
                 continue
 
@@ -53,12 +54,16 @@ def pull_boxscore(game_id):
                     "player": athlete.get("athlete", {}).get("displayName"),
                 }
 
-                # Map labels to stat values
-                for i, label in enumerate(labels):
-                    if label in KEEP_STATS and i < len(stats):
-                        row[label] = stats[i]
+                found_stat = False
 
-                rows.append(row)
+                for i, label in enumerate(labels):
+                    if label in STAT_MAP and i < len(stats):
+                        row[STAT_MAP[label]] = stats[i]
+                        found_stat = True
+
+                # Only keep players with at least one stat
+                if found_stat:
+                    rows.append(row)
 
     return pd.DataFrame(rows)
 
