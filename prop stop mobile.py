@@ -86,7 +86,7 @@ shots_df["player"] = shots_df["player"].astype(str).str.strip()
 game_col = next(c for c in shots_df.columns if "game" in c)
 
 # ---------------------------------------------------------------
-# ESPN Matchups (logos only)
+# ESPN Matchups
 # ---------------------------------------------------------------
 @st.cache_data(ttl=300)
 def get_games():
@@ -112,7 +112,7 @@ if not games:
     st.stop()
 
 # ---------------------------------------------------------------
-# Line Test (FIXED STRING)
+# Line Test
 # ---------------------------------------------------------------
 st.session_state.setdefault("line_test_val", 3.5)
 
@@ -126,7 +126,7 @@ line_test = st.number_input(
 st.session_state.line_test_val = line_test
 
 # ---------------------------------------------------------------
-# Run model ONCE
+# Run model
 # ---------------------------------------------------------------
 if st.button("Run Model (All Games)", use_container_width=True):
     results = []
@@ -136,7 +136,6 @@ if st.button("Run Model (All Games)", use_container_width=True):
         roster = skaters_df[skaters_df[team_col].isin([team_a, team_b])]
         grouped = {n.lower(): d for n, d in shots_df.groupby(shots_df["player"].str.lower())}
 
-        # ---- Line adj ----
         line_adj = pd.DataFrame()
         if not lines_df.empty and {"line pairings","team","games","sog against"}.issubset(lines_df.columns):
             l = lines_df.copy()
@@ -159,7 +158,6 @@ if st.button("Run Model (All Games)", use_container_width=True):
             if len(sog_vals) < 3:
                 continue
 
-            # ---- Shooting % ----
             if "goal" in df_p.columns:
                 agg = df_p.groupby(game_col).agg({"sog":"sum","goal":"sum"})
                 total_shots = agg["sog"].sum()
@@ -224,6 +222,9 @@ def apply_line_test(df, line):
 if "base_results" in st.session_state:
     df = apply_line_test(st.session_state.base_results, st.session_state.line_test_val)
 
+    if "selected_match" not in st.session_state:
+        st.session_state.selected_match = f"{games[0]['away']}@{games[0]['home']}"
+
     st.markdown("## Matchups")
     cols = st.columns(3)
 
@@ -231,9 +232,6 @@ if "base_results" in st.session_state:
         with cols[i % 3]:
             if st.button(f"{g['away']} @ {g['home']}", use_container_width=True):
                 st.session_state.selected_match = f"{g['away']}@{g['home']}"
-
-    if "selected_match" not in st.session_state:
-        st.stop()
 
     team_a, team_b = st.session_state.selected_match.split("@")
     tabs = st.tabs([team_a, team_b])
@@ -253,3 +251,30 @@ if "base_results" in st.session_state:
                 .drop_duplicates("Player")
                 .sort_values("Final Projection", ascending=False)
             )
+
+            for _, r in tdf.iterrows():
+                components.html(
+                    f"""
+                    <div style="background:#0F2743;border:1px solid #1E5A99;
+                                border-radius:16px;padding:16px;margin-bottom:16px;color:#fff;">
+                        <div style="display:flex;align-items:center;margin-bottom:6px;">
+                            <img src="{team_logo(team)}" style="width:32px;height:32px;margin-right:10px;">
+                            <b>{r['Player']} – {r['Team']}</b>
+                        </div>
+                        <div>Final Projection: <b>{r['Final Projection']}</b></div>
+                        <div>Line Adj: <b>{r['Line Adj']}</b></div>
+                        <div>Form: <b>{r['Form']}</b></div>
+                        <div>Prob ≥ Line: <b>{r['Prob ≥ Line (%)']}%</b></div>
+                        <div>Playable Odds: <b>{r['Playable Odds']}</b></div>
+                        <div>Season Avg: {r['Season Avg']}</div>
+                        <div>Shooting %: <b>{r['Shooting %']}%</b></div>
+                        <div>L3: {r['L3']}</div>
+                        <div>L5: {r['L5']}</div>
+                        <div>L10: {r['L10']}</div>
+                    </div>
+                    """,
+                    height=340
+                )
+
+    render(team_a, tabs[0])
+    render(team_b, tabs[1])
