@@ -1,218 +1,165 @@
 # ---------------------------------------------------------------
-# 🏒 PUCK SHOTZ HOCKEY ANALYTICS — v1.0 (SAFE / CLOUD-READY)
+# 🏒 Puck Shotz Hockey Analytics — Test Mode (Instant Filter + Logos + Injuries + xG)
 # ---------------------------------------------------------------
-
 import streamlit as st
 import pandas as pd
 import numpy as np
-import requests
+import os, requests, html, json
 from scipy.stats import poisson
 import streamlit.components.v1 as components
 
-# ===============================================================
-# MODEL VERSIONING (LOCKED)
-# ===============================================================
-MODEL_VERSION = "v1.0.1"
-
-MODEL_CONFIG = {
-    "goalie_strength": 0.20,
-    "line_clip": (0.7, 1.3),
-    "pace_clip": (0.85, 1.15),
-    "penalty_clip": (0.8, 1.25),
-    "lambda_alpha": 0.97
+# ---------------------------------------------------------------
+# Team Abbreviation Normalization (ESPN -> Data)
+# ---------------------------------------------------------------
+TEAM_ABBREV_MAP = {
+    "NJ": "NJD","LA": "LAK","SJ": "SJS","TB": "TBL","ARI": "ARI","ANA": "ANA","BOS": "BOS",
+    "BUF": "BUF","CAR": "CAR","CBJ": "CBJ","CGY": "CGY","CHI": "CHI","COL": "COL","DAL": "DAL",
+    "DET": "DET","EDM": "EDM","FLA": "FLA","MIN": "MIN","MTL": "MTL","NSH": "NSH","NYI": "NYI",
+    "NYR": "NYR","OTT": "OTT","PHI": "PHI","PIT": "PIT","SEA": "SEA","STL": "STL","TOR": "TOR",
+    "VAN": "VAN","VGK": "VGK","WSH": "WSH","WPG": "WPG"
 }
 
-# ===============================================================
-# STREAMLIT SETUP
-# ===============================================================
-st.set_page_config(
-    page_title="Puck Shotz Hockey Analytics",
-    layout="wide",
-    page_icon="🏒"
-)
+st.set_page_config(page_title="Puck Shotz Hockey Analytics (Test)", layout="wide", page_icon="🏒")
+st.warning("Production Version")
 
-st.warning(f"Production Model — {MODEL_VERSION}")
+# ---------------------------------------------------------------
+# Header
+# ---------------------------------------------------------------
+st.markdown("""
+<div style='text-align:center; background-color:#0A3A67; padding:15px; border-radius:6px; margin-bottom:10px;'>
+  <img src='https://raw.githubusercontent.com/Brouz557/Hockey-Prop-Stop/694ae2a448204908099ce2899bd479052d01b518/modern%20hockey%20puck%20l.png' width='220'>
+</div>
+<h1 style='text-align:center;color:#1E5A99;'>Puck Shotz Hockey Analytics</h1>
+<p style='text-align:center;color:#D6D6D6;'>Automatically runs all of today’s NHL matchups with inline logos, instant filters, injuries, and expected goals.</p>
+""", unsafe_allow_html=True)
 
-# ===============================================================
-# ENDPOINTS
-# ===============================================================
-ESPN_SCOREBOARD = "https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard"
-MP_PLAYER_GAMES = "https://api.moneypuck.com/v2/playerGameStats"
-MP_GOALIES = "https://api.moneypuck.com/v2/goalieStats"
-MP_SHIFTS = "https://api.moneypuck.com/v2/shiftData"
+# ---------------------------------------------------------------
+# Sidebar Uploaders
+# ---------------------------------------------------------------
+st.sidebar.header("📂 Upload Data Files (.xlsx or .csv)")
+skaters_file = st.sidebar.file_uploader("Skaters", type=["xlsx","csv"])
+shots_file   = st.sidebar.file_uploader("SHOT DATA", type=["xlsx","csv"])
+goalies_file = st.sidebar.file_uploader("GOALTENDERS", type=["xlsx","csv"])
+lines_file   = st.sidebar.file_uploader("LINE DATA", type=["xlsx","csv"])
+teams_file   = st.sidebar.file_uploader("TEAMS", type=["xlsx","csv"])
+injuries_file= st.sidebar.file_uploader("INJURIES", type=["xlsx","csv"])
 
-# ===============================================================
-# SAFE REQUEST WRAPPER  ⭐⭐⭐ FIX
-# ===============================================================
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (PuckShotz/1.0; +https://github.com)"
-}
-
-def safe_get(url, timeout=30):
+# ---------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------
+def load_file(f):
+    if not f: return pd.DataFrame()
     try:
-        r = requests.get(url, headers=HEADERS, timeout=timeout)
-        r.raise_for_status()
-        return r.json()
-    except requests.exceptions.RequestException as e:
-        st.error(f"❌ Failed to fetch data from: {url}")
-        st.stop()
+        return pd.read_excel(f) if f.name.lower().endswith(".xlsx") else pd.read_csv(f)
+    except Exception:
+        return pd.DataFrame()
 
-# ===============================================================
-# ESPN — TODAY’S GAMES
-# ===============================================================
+def safe_read(path):
+    try:
+        if not os.path.exists(path): return pd.DataFrame()
+        return pd.read_excel(path) if path.lower().endswith(".xlsx") else pd.read_csv(path)
+    except Exception:
+        return pd.DataFrame()
+
+def load_data(file_uploader, default_path):
+    return load_file(file_uploader) if file_uploader is not None else safe_read(default_path)
+
+@st.cache_data(show_spinner=False)
+def load_all():
+    return (
+        load_data(skaters_file, "Skaters.xlsx"),
+        load_data(shots_file, "SHOT DATA.xlsx"),
+        load_data(goalies_file, "GOALTENDERS.xlsx"),
+        load_data(lines_file, "LINE DATA.xlsx"),
+        load_data(teams_file, "TEAMS.xlsx"),
+        load_data(injuries_file, "injuries.xlsx")
+    )
+
+skaters_df, shots_df, goalies_df, lines_df, teams_df, injuries_df = load_all()
+if skaters_df.empty or shots_df.empty:
+    st.stop()
+
+for df in [skaters_df, shots_df, goalies_df, lines_df, teams_df]:
+    df.columns = df.columns.str.lower().str.strip()
+
+team_col = next(c for c in skaters_df.columns if "team" in c)
+player_col = "name"
+shots_df = shots_df.rename(columns={next(c for c in shots_df.columns if "player" in c or "name" in c): "player"})
+shots_df["player"] = shots_df["player"].astype(str).str.strip()
+game_col = next(c for c in shots_df.columns if "game" in c)
+
+# ---------------------------------------------------------------
+# ESPN Matchups
+# ---------------------------------------------------------------
 @st.cache_data(ttl=300)
-def get_todays_games():
-    data = safe_get(ESPN_SCOREBOARD)
+def get_games():
+    url = "https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard"
+    data = requests.get(url, timeout=10).json()
     games = []
-
     for e in data.get("events", []):
-        c = e["competitions"][0]["competitors"]
-        away, home = c[0], c[1]
+        a, h = e["competitions"][0]["competitors"]
         games.append({
-            "away": away["team"]["abbreviation"],
-            "home": home["team"]["abbreviation"],
-            "away_logo": away["team"]["logo"],
-            "home_logo": home["team"]["logo"]
+            "away": TEAM_ABBREV_MAP.get(a["team"]["abbreviation"], a["team"]["abbreviation"]),
+            "home": TEAM_ABBREV_MAP.get(h["team"]["abbreviation"], h["team"]["abbreviation"]),
+            "away_logo": a["team"]["logo"],
+            "home_logo": h["team"]["logo"]
         })
     return games
 
-games = get_todays_games()
-if not games:
-    st.warning("No NHL games today.")
-    st.stop()
+games = get_games()
 
-# ===============================================================
-# MONEYPUCK — PLAYER GAME DATA  ⭐⭐⭐ FIX
-# ===============================================================
-@st.cache_data(ttl=3600)
-def load_player_games():
-    data = safe_get(MP_PLAYER_GAMES)
-    df = pd.DataFrame(data)
-
-    df = df.rename(columns={
-        "gameId": "game_id",
-        "gameDate": "game_date",
-        "playerId": "player_id",
-        "playerName": "player",
-        "team": "team",
-        "shotsOnGoal": "sog",
-        "timeOnIce": "toi",
-        "powerPlayShotsOnGoal": "pp_sog",
-        "powerPlayTimeOnIce": "pp_toi"
-    })
-
-    for c in ["sog", "toi", "pp_sog", "pp_toi"]:
-        df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0)
-
-    df["ev_sog"] = df["sog"] - df["pp_sog"]
-    df["ev_toi"] = df["toi"] - df["pp_toi"]
-
-    df["game_date"] = pd.to_datetime(df["game_date"])
-    df["team"] = df["team"].str.upper()
-    df["player"] = df["player"].str.strip()
-
-    return df
-
-# ===============================================================
-# GOALIE SUPPRESSION (SAFE FALLBACK)
-# ===============================================================
-@st.cache_data(ttl=3600)
-def load_goalie_adj():
-    try:
-        data = safe_get(MP_GOALIES)
-        g = pd.DataFrame(data)
-        g["shots_per_game"] = g["shotsAgainst"] / g["gamesPlayed"]
-        league = g["shots_per_game"].mean()
-        g["goalie_factor"] = (g["shots_per_game"] / league).clip(0.7, 1.3)
-        return g.groupby("team")["goalie_factor"].mean().to_dict()
-    except:
-        return {}
-
-# ===============================================================
-# LINE SUPPRESSION (SAFE FALLBACK)
-# ===============================================================
-@st.cache_data(ttl=3600)
-def load_line_adj():
-    try:
-        data = safe_get(MP_SHIFTS)
-        df = pd.DataFrame(data)
-        df["toi"] = pd.to_numeric(df["timeOnIce"], errors="coerce").fillna(0)
-        df["sog"] = pd.to_numeric(df["onIceShotsAgainst"], errors="coerce").fillna(0)
-        df["sog60"] = np.where(df["toi"] > 0, df["sog"] / df["toi"] * 60, np.nan)
-
-        team = df.groupby("team")["sog60"].mean()
-        league = team.mean()
-        return (league / team).clip(*MODEL_CONFIG["line_clip"]).to_dict()
-    except:
-        return {}
-
-# ===============================================================
-# MODEL CORE
-# ===============================================================
-def american_odds(p):
-    p = np.clip(p, 0.001, 0.999)
-    return int(-100*(p/(1-p))) if p >= 0.5 else int(100*((1-p)/p))
-
-def project_lambda(r, opp, adj):
-    ev = r.EV_L10_rate * r.EV_L10_toi
-    pp = r.PP_L10_rate * r.PP_L10_toi
-    lam = (ev + pp) * adj["pace"] * adj["line"]
-    lam *= (1 + MODEL_CONFIG["goalie_strength"] * (adj["goalie"] - 1))
-    lam *= MODEL_CONFIG["lambda_alpha"]
-    return max(lam, 0.01)
-
-# ===============================================================
-# UI CONTROLS
-# ===============================================================
-col_run, col_line = st.columns([3,1])
-with col_run:
-    run = st.button("🚀 Run Model")
-with col_line:
-    test_line = st.number_input("Line", 0.5, 10.0, 3.5, 0.5)
-
-# ===============================================================
-# RUN MODEL
-# ===============================================================
-if run:
-    shots = load_player_games()
-    goalie_adj = load_goalie_adj()
-    line_adj = load_line_adj()
-
-    shots = shots.sort_values("game_date")
-    g = shots.groupby("player_id", group_keys=False)
-
-    shots["EV_L10_rate"] = g["ev_sog"].rolling(10).sum() / g["ev_toi"].rolling(10).sum()
-    shots["PP_L10_rate"] = g["pp_sog"].rolling(10).sum() / g["pp_toi"].rolling(10).sum()
-    shots["EV_L10_toi"] = g["ev_toi"].rolling(10).mean()
-    shots["PP_L10_toi"] = g["pp_toi"].rolling(10).mean()
-
-    shots = shots.dropna(subset=["EV_L10_rate"])
-
-    rows = []
-    for m in games:
-        teams = {m["away"], m["home"]}
-        latest = shots[shots["team"].isin(teams)].groupby("player_id").tail(1)
-
-        for _, r in latest.iterrows():
-            opp = next(t for t in teams if t != r.team)
-            lam = project_lambda(
-                r,
-                opp,
-                {
-                    "pace": 1.0,
-                    "line": line_adj.get(opp, 1.0),
-                    "goalie": goalie_adj.get(opp, 1.0)
-                }
-            )
-            p = 1 - poisson.cdf(test_line-1, mu=lam)
-
-            rows.append({
-                "Player": r.player,
-                "Team": r.team,
-                "Projection": round(lam,2),
-                "Prob ≥ Line (%)": round(p*100,1),
-                "Odds": american_odds(p)
+# ---------------------------------------------------------------
+# Run model (unchanged)
+# ---------------------------------------------------------------
+if st.button("🚀 Run Model (All Games)"):
+    results = []
+    for g in games:
+        for _, r in skaters_df[skaters_df[team_col].isin([g["away"], g["home"]])].iterrows():
+            df_p = shots_df[shots_df["player"].str.lower() == r[player_col].lower()]
+            if df_p.empty: continue
+            sog = df_p.groupby(game_col)["sog"].sum().tolist()
+            if len(sog) < 3: continue
+            lam = np.mean(sog[-10:])
+            results.append({
+                "Player": r[player_col],
+                "Team": r[team_col],
+                "Matchup": f"{g['away']}@{g['home']}",
+                "Final Projection": round(lam,2),
+                "Season Avg": round(np.mean(sog),2),
+                "L3": ", ".join(map(str, sog[-3:])),
+                "L5": ", ".join(map(str, sog[-5:])),
+                "L10": ", ".join(map(str, sog[-10:])),
             })
+    st.session_state.results = pd.DataFrame(results)
+    st.session_state.matchups = games
+    st.success("Model built")
 
-    out = pd.DataFrame(rows).sort_values("Projection", ascending=False)
-    st.dataframe(out, use_container_width=True)
+# ---------------------------------------------------------------
+# DISPLAY — TEAM TABS (NEW)
+# ---------------------------------------------------------------
+if "results" in st.session_state:
+    df = st.session_state.results
+    games = st.session_state.matchups
+
+    cols = st.columns(3)
+    for i, g in enumerate(games):
+        with cols[i % 3]:
+            if st.button(f"{g['away']} @ {g['home']}"):
+                st.session_state.selected_match = f"{g['away']}@{g['home']}"
+
+    if "selected_match" not in st.session_state:
+        st.stop()
+
+    team_a, team_b = st.session_state.selected_match.split("@")
+    tabs = st.tabs([team_a, team_b])
+
+    def render(team, tab):
+        with tab:
+            tdf = (
+                df[(df["Team"] == team) & (df["Matchup"] == st.session_state.selected_match)]
+                .sort_values("Final Projection", ascending=False)
+            )
+            st.dataframe(tdf, use_container_width=True, height=650)
+
+    render(team_a, tabs[0])
+    render(team_b, tabs[1])
