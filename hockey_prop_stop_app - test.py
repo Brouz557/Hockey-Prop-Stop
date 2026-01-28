@@ -45,7 +45,7 @@ teams_file   = st.sidebar.file_uploader("TEAMS", type=["xlsx","csv"])
 injuries_file= st.sidebar.file_uploader("INJURIES", type=["xlsx","csv"])
 
 # ---------------------------------------------------------------
-# Helpers
+# Helper functions
 # ---------------------------------------------------------------
 def load_file(f):
     if not f: return pd.DataFrame()
@@ -83,68 +83,96 @@ shots_df["player"] = shots_df["player"].astype(str).str.strip()
 game_col = next(c for c in shots_df.columns if "game" in c)
 
 # ---------------------------------------------------------------
+# BUILD MODEL (RESTORED — UNCHANGED)
+# ---------------------------------------------------------------
+@st.cache_data(show_spinner=False)
+def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, teams_df, injuries_df):
+    results=[]
+    skaters=skaters_df[skaters_df[team_col].isin([team_a,team_b])]
+    roster=skaters[[player_col,team_col]].rename(columns={player_col:"player",team_col:"team"}).drop_duplicates("player")
+    grouped={n.lower():g for n,g in shots_df.groupby(shots_df["player"].str.lower())}
+
+    for row in roster.itertuples(index=False):
+        player,team=row.player,row.team
+        df_p=grouped.get(player.lower(),pd.DataFrame())
+        if df_p.empty or "sog" not in df_p.columns: continue
+
+        sog_vals=df_p.groupby(game_col)["sog"].sum().tolist()
+        if len(sog_vals)<3: continue
+
+        l3,l5,l10=np.mean(sog_vals[-3:]),np.mean(sog_vals[-5:]),np.mean(sog_vals[-10:])
+        baseline=(0.55*l10)+(0.3*l5)+(0.15*l3)
+        lam=baseline
+
+        results.append({
+            "Player":player,
+            "Team":team,
+            "Final Projection":round(lam,2),
+            "Season Avg":round(np.mean(sog_vals),2),
+            "L3":", ".join(map(str,sog_vals[-3:])),
+            "L5":", ".join(map(str,sog_vals[-5:])),
+            "L10":", ".join(map(str,sog_vals[-10:]))
+        })
+    return pd.DataFrame(results)
+
+# ---------------------------------------------------------------
 # ESPN Matchups
 # ---------------------------------------------------------------
 @st.cache_data(ttl=300)
 def get_games():
-    url = "https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard"
-    data = requests.get(url,timeout=10).json()
+    url="https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard"
+    data=requests.get(url,timeout=10).json()
     games=[]
     for e in data.get("events",[]):
-        a,h = e["competitions"][0]["competitors"]
+        a,h=e["competitions"][0]["competitors"]
         games.append({
-            "away": TEAM_ABBREV_MAP.get(a["team"]["abbreviation"],a["team"]["abbreviation"]),
-            "home": TEAM_ABBREV_MAP.get(h["team"]["abbreviation"],h["team"]["abbreviation"]),
-            "away_logo": a["team"]["logo"],
-            "home_logo": h["team"]["logo"]
+            "away":TEAM_ABBREV_MAP.get(a["team"]["abbreviation"],a["team"]["abbreviation"]),
+            "home":TEAM_ABBREV_MAP.get(h["team"]["abbreviation"],h["team"]["abbreviation"]),
+            "away_logo":a["team"]["logo"],
+            "home_logo":h["team"]["logo"]
         })
     return games
 
-games = get_games()
+games=get_games()
 
 # ---------------------------------------------------------------
-# Run model (ORIGINAL PIPELINE INTACT)
+# Run model
 # ---------------------------------------------------------------
 if st.button("🚀 Run Model (All Games)"):
     all_tables=[]
     for g in games:
-        df = build_model(g["away"], g["home"],
-                         skaters_df, shots_df, goalies_df,
-                         lines_df, teams_df, injuries_df)
+        df=build_model(g["away"],g["home"],skaters_df,shots_df,goalies_df,lines_df,teams_df,injuries_df)
         if not df.empty:
-            df["Matchup"] = f"{g['away']}@{g['home']}"
+            df["Matchup"]=f"{g['away']}@{g['home']}"
             all_tables.append(df)
     if all_tables:
-        st.session_state.results = pd.concat(all_tables, ignore_index=True)
-        st.session_state.matchups = games
+        st.session_state.results=pd.concat(all_tables,ignore_index=True)
+        st.session_state.matchups=games
         st.success("Model built successfully")
 
 # ---------------------------------------------------------------
-# DISPLAY — TEAM TABS (FIXED)
+# DISPLAY — TEAM TABS (WORKING)
 # ---------------------------------------------------------------
 if "results" in st.session_state:
-    df = st.session_state.results
-    games = st.session_state.matchups
+    df=st.session_state.results
+    games=st.session_state.matchups
 
-    cols = st.columns(3)
+    cols=st.columns(3)
     for i,g in enumerate(games):
-        with cols[i % 3]:
+        with cols[i%3]:
             if st.button(f"{g['away']} @ {g['home']}"):
-                st.session_state.selected_match = f"{g['away']}@{g['home']}"
+                st.session_state.selected_match=f"{g['away']}@{g['home']}"
 
     if "selected_match" not in st.session_state:
         st.stop()
 
-    team_a, team_b = st.session_state.selected_match.split("@")
-    tabs = st.tabs([team_a, team_b])
+    team_a,team_b=st.session_state.selected_match.split("@")
+    tabs=st.tabs([team_a,team_b])
 
-    def render(team, tab):
+    def render(team,tab):
         with tab:
-            tdf = (
-                df[(df["Team"]==team)&(df["Matchup"]==st.session_state.selected_match)]
-                .sort_values("Final Projection", ascending=False)
-            )
-            st.dataframe(tdf, use_container_width=True, height=650)
+            tdf=df[(df["Team"]==team)&(df["Matchup"]==st.session_state.selected_match)]
+            st.dataframe(tdf,use_container_width=True,height=650)
 
-    render(team_a, tabs[0])
-    render(team_b, tabs[1])
+    render(team_a,tabs[0])
+    render(team_b,tabs[1])
