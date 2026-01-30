@@ -1,26 +1,15 @@
 # ---------------------------------------------------------------
-# 🏒 Puck Shotz Hockey Analytics — FINAL STABLE VERSION
-# Repo-first • Case-insensitive filenames • Schema-safe
+# 🏒 Puck Shotz Hockey Analytics — Test Mode (Instant Filter + Logos + Injuries + xG)
 # ---------------------------------------------------------------
 import streamlit as st
 import pandas as pd
 import numpy as np
-import os
+import os, requests, html, json
 from scipy.stats import poisson
+import streamlit.components.v1 as components
 
 # ---------------------------------------------------------------
-# Page Config
-# ---------------------------------------------------------------
-st.set_page_config(
-    page_title="Puck Shotz Hockey Analytics (Test)",
-    layout="wide",
-    page_icon="🏒"
-)
-
-st.warning("⚠️ Test / Debug Version")
-
-# ---------------------------------------------------------------
-# Team Abbreviation Normalization
+# Team Abbreviation Normalization (ESPN -> Data)
 # ---------------------------------------------------------------
 TEAM_ABBREV_MAP = {
     "NJ":"NJD","LA":"LAK","SJ":"SJS","TB":"TBL","ARI":"ARI","ANA":"ANA",
@@ -31,292 +20,243 @@ TEAM_ABBREV_MAP = {
     "WSH":"WSH","WPG":"WPG"
 }
 
+st.set_page_config(page_title="Puck Shotz Hockey Analytics (Test)", layout="wide", page_icon="🏒")
+st.warning("Production Version")
+
 # ---------------------------------------------------------------
 # Header
 # ---------------------------------------------------------------
 st.markdown("""
-<div style='text-align:center; background-color:#0A3A67; padding:15px; border-radius:6px;'>
+<div style='text-align:center; background-color:#0A3A67; padding:15px; border-radius:6px; margin-bottom:10px;'>
   <img src='https://raw.githubusercontent.com/Brouz557/Hockey-Prop-Stop/694ae2a448204908099ce2899bd479052d01b518/modern%20hockey%20puck%20l.png' width='220'>
 </div>
 <h1 style='text-align:center;color:#1E5A99;'>Puck Shotz Hockey Analytics</h1>
+<p style='text-align:center;color:#D6D6D6;'>Automatically runs all of today’s NHL matchups with inline logos, instant filters, injuries, and expected goals.</p>
 """, unsafe_allow_html=True)
 
 # ---------------------------------------------------------------
-# Sidebar
+# Sidebar Uploaders
 # ---------------------------------------------------------------
-st.sidebar.header("📂 Optional Uploads (Repo is Source of Truth)")
-skaters_file  = st.sidebar.file_uploader("Skaters", type=["xlsx","csv"])
-shots_file    = st.sidebar.file_uploader("Shot Data", type=["xlsx","csv"])
-
-run_model = st.sidebar.button("🚀 Run Model")
-
-st.session_state.line_test_val = st.sidebar.number_input(
-    "Test Line",
-    min_value=0.5,
-    max_value=10.5,
-    step=0.5,
-    value=2.5
-)
+st.sidebar.header("📂 Upload Data Files (.xlsx or .csv)")
+skaters_file = st.sidebar.file_uploader("Skaters", type=["xlsx","csv"])
+shots_file   = st.sidebar.file_uploader("SHOT DATA", type=["xlsx","csv"])
+goalies_file = st.sidebar.file_uploader("GOALTENDERS", type=["xlsx","csv"])
+lines_file   = st.sidebar.file_uploader("LINE DATA", type=["xlsx","csv"])
+teams_file   = st.sidebar.file_uploader("TEAMS", type=["xlsx","csv"])
+injuries_file= st.sidebar.file_uploader("INJURIES", type=["xlsx","csv"])
 
 # ---------------------------------------------------------------
-# Repo File Discovery (CASE-INSENSITIVE, RECURSIVE)
+# Helper Functions
 # ---------------------------------------------------------------
-def find_repo_file(target_name: str):
-    target_name = target_name.lower()
-    search_roots = [
-        ".",
-        "./data",
-        "/mount/src/hockey-prop-stop",
-        "/mount/src/hockey-prop-stop/data"
-    ]
+def load_file(f):
+    if not f: return pd.DataFrame()
+    try:
+        return pd.read_excel(f) if f.name.lower().endswith(".xlsx") else pd.read_csv(f)
+    except Exception:
+        return pd.DataFrame()
 
-    for base in search_roots:
-        if not os.path.exists(base):
-            continue
-        for root, _, files in os.walk(base):
-            for f in files:
-                if f.lower() == target_name:
-                    return os.path.join(root, f)
-    return None
+def safe_read(path):
+    try:
+        if not os.path.exists(path): return pd.DataFrame()
+        return pd.read_excel(path) if path.lower().endswith(".xlsx") else pd.read_csv(path)
+    except Exception:
+        return pd.DataFrame()
 
-def load_data(upload, repo_path):
-    if upload is not None:
-        try:
-            return pd.read_excel(upload) if upload.name.lower().endswith(".xlsx") else pd.read_csv(upload)
-        except Exception:
-            return pd.DataFrame()
+def load_data(file_uploader, default_path):
+    if file_uploader is not None:
+        return load_file(file_uploader)
+    return safe_read(default_path)
 
-    if repo_path and os.path.exists(repo_path):
-        try:
-            return pd.read_excel(repo_path) if repo_path.lower().endswith(".xlsx") else pd.read_csv(repo_path)
-        except Exception:
-            return pd.DataFrame()
+@st.cache_data(show_spinner=False)
+def load_all(skaters_file, shots_file, goalies_file, lines_file, teams_file, injuries_file):
+    base_paths=[".","data","/mount/src/hockey-prop-stop/data"]
+    def find_file(name):
+        for p in base_paths:
+            fp=os.path.join(p,name)
+            if os.path.exists(fp): return fp
+        return None
+    skaters=load_data(skaters_file, find_file("Skaters.xlsx") or "Skaters.xlsx")
+    shots  =load_data(shots_file,   find_file("SHOT DATA.xlsx") or "SHOT DATA.xlsx")
+    goalies=load_data(goalies_file, find_file("GOALTENDERS.xlsx") or "GOALTENDERS.xlsx")
+    lines  =load_data(lines_file,   find_file("LINE DATA.xlsx") or "LINE DATA.xlsx")
+    teams  =load_data(teams_file,   find_file("TEAMS.xlsx") or "TEAMS.xlsx")
 
-    return pd.DataFrame()
-
-def normalize(df):
-    if not df.empty:
-        df.columns = df.columns.str.lower().str.strip()
-    return df
-
-def find_col(df, keys):
-    return next((c for c in df.columns if any(k in c for k in keys)), None)
-
-# ---------------------------------------------------------------
-# Load Data (Repo First, Upload Override)
-# ---------------------------------------------------------------
-skaters_df = normalize(load_data(
-    skaters_file,
-    find_repo_file("skaters.xlsx")
-))
-
-shots_df = normalize(load_data(
-    shots_file,
-    find_repo_file("shot data.xlsx")
-))
+    injuries=pd.DataFrame()
+    for p in ["injuries.xlsx","Injuries.xlsx","data/injuries.xlsx"]:
+        if os.path.exists(p):
+            injuries=load_file(open(p,"rb"));break
+    if injuries.empty:
+        injuries=load_file(injuries_file)
+    if not injuries.empty:
+        injuries.columns=injuries.columns.str.lower().str.strip()
+        if "player" in injuries.columns:
+            injuries["player"]=injuries["player"].astype(str).str.strip().str.lower()
+    return skaters,shots,goalies,lines,teams,injuries
 
 # ---------------------------------------------------------------
-# Guard
+# Load Data
 # ---------------------------------------------------------------
+skaters_df, shots_df, goalies_df, lines_df, teams_df, injuries_df = load_all(
+    skaters_file, shots_file, goalies_file, lines_file, teams_file, injuries_file)
+
 if skaters_df.empty or shots_df.empty:
-    st.info("📂 Waiting for Skaters.xlsx and SHOT DATA.xlsx to load from repo…")
+    st.warning("⚠️ Missing data. Upload required files.")
     st.stop()
 
-# ---------------------------------------------------------------
-# Auto-Detect Skaters Schema
-# ---------------------------------------------------------------
-sk_name = find_col(skaters_df, ["name","player","skater"])
-sk_team = find_col(skaters_df, ["team"])
-sk_pos  = find_col(skaters_df, ["position","pos"])
+for df in [skaters_df, shots_df, goalies_df, lines_df, teams_df]:
+    if not df.empty:
+        df.columns=df.columns.str.lower().str.strip()
 
-if not sk_name or not sk_team:
-    st.error(f"❌ Skaters schema invalid. Found columns: {list(skaters_df.columns)}")
-    st.stop()
-
-skaters_df = skaters_df.rename(columns={sk_name:"name", sk_team:"team"})
-skaters_df = skaters_df.loc[:, ~skaters_df.columns.duplicated()]
-
-if sk_pos:
-    skaters_df = skaters_df.rename(columns={sk_pos:"position"})
-else:
-    skaters_df["position"] = "F"
-
-# ---------------------------------------------------------------
-# Auto-Detect Shot Schema
-# ---------------------------------------------------------------
-sh_player = find_col(shots_df, ["player","shooter","name"])
-sh_team   = find_col(shots_df, ["team"])
-sh_game   = find_col(shots_df, ["game"])
-sh_sog    = find_col(shots_df, ["sog","shots on goal"])
-
-if not all([sh_player, sh_team, sh_game, sh_sog]):
-    st.error(f"❌ Shot data schema invalid. Found columns: {list(shots_df.columns)}")
-    st.stop()
-
-shots_df = shots_df.rename(columns={
-    sh_player:"player",
-    sh_team:"team",
-    sh_game:"game_id",
-    sh_sog:"sog"
+team_col=next((c for c in skaters_df.columns if "team" in c),None)
+player_col="name"
+shots_df=shots_df.rename(columns={
+    next((c for c in shots_df.columns if "player" in c or "name" in c),"player"):"player"
 })
-
-shots_df = shots_df.loc[:, ~shots_df.columns.duplicated()]
-
-# ---------------------------------------------------------------
-# Normalize Team Abbreviations
-# ---------------------------------------------------------------
-skaters_df["team"] = (
-    skaters_df["team"].astype(str)
-    .map(TEAM_ABBREV_MAP)
-    .fillna(skaters_df["team"])
-)
-
-shots_df["team"] = (
-    shots_df["team"].astype(str)
-    .map(TEAM_ABBREV_MAP)
-    .fillna(shots_df["team"])
-)
+shots_df["player"]=shots_df["player"].astype(str).str.strip()
+game_col=next((c for c in shots_df.columns if "game" in c and "id" in c),None)
 
 # ---------------------------------------------------------------
-# Position Matchup Adjustment (FULLY SAFE)
+# 🔥 POSITION MATCHUP SECTION (ADDED)
 # ---------------------------------------------------------------
 @st.cache_data(show_spinner=False)
-def build_position_matchups(shots, skaters):
-
-    s = shots.copy()
-    k = skaters.copy()
+def build_position_matchups(shots_df, skaters_df, game_col, team_col):
+    if shots_df.empty or skaters_df.empty or not game_col:
+        return {}
+    if "position" not in skaters_df.columns:
+        return {}
 
     def norm(x):
         return str(x).lower().replace(".","").replace(",","").strip()
 
-    s["p"] = s["player"].astype(str).apply(norm)
-    k["p"] = k["name"].astype(str).apply(norm)
+    shots=shots_df.copy()
+    skaters=skaters_df.copy()
 
-    if "position" not in k.columns:
-        k["position"] = "F"
+    shots["p"]=shots["player"].apply(norm)
+    skaters["p"]=skaters["name"].apply(norm)
 
-    s = s.merge(k[["p","position"]], on="p", how="left")
+    merged=shots.merge(
+        skaters[["p","position",team_col]],
+        on="p",how="left"
+    )
 
-    required = {"team","position","sog","game_id"}
-    if not required.issubset(s.columns):
+    if "sog" not in merged.columns:
         return {}
 
-    s = s.dropna(subset=list(required))
+    merged=merged.dropna(subset=["position","sog",game_col,team_col])
 
-    per_game = (
-        s.groupby(["team","position","game_id"])["sog"]
-        .sum()
-        .reset_index()
+    per_game=merged.groupby([team_col,"position",game_col])["sog"].sum().reset_index()
+    avg=per_game.groupby([team_col,"position"])["sog"].mean().reset_index()
+
+    league_avg=avg.groupby("position")["sog"].mean().to_dict()
+    avg["pos_factor"]=avg.apply(
+        lambda r:r["sog"]/league_avg.get(r["position"],r["sog"]),axis=1
     )
+    avg["pos_factor"]=avg["pos_factor"].clip(0.85,1.20)
 
-    avg = (
-        per_game.groupby(["team","position"])["sog"]
-        .mean()
-        .reset_index()
-    )
+    return {(r[team_col],r["position"]):r["pos_factor"] for _,r in avg.iterrows()}
 
-    league_avg = avg.groupby("position")["sog"].mean().to_dict()
-
-    avg["pos_factor"] = avg.apply(
-        lambda r: r["sog"] / league_avg.get(r["position"], r["sog"]),
-        axis=1
-    )
-
-    avg["pos_factor"] = avg["pos_factor"].clip(0.85,1.20)
-
-    return {
-        (r["team"], r["position"]): r["pos_factor"]
-        for _, r in avg.iterrows()
-    }
-
-pos_matchup_adj = build_position_matchups(shots_df, skaters_df)
+pos_matchup_adj = build_position_matchups(
+    shots_df, skaters_df, game_col, team_col
+)
 
 # ---------------------------------------------------------------
-# Model Builder
+# Matchup Pull (ESPN)
 # ---------------------------------------------------------------
-def build_model(team_a, team_b):
+@st.cache_data(ttl=300)
+def get_todays_games():
+    url="https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard"
+    r=requests.get(url,timeout=10)
+    data=r.json()
+    games=[]
+    for e in data.get("events",[]):
+        comps=e.get("competitions",[{}])[0].get("competitors",[])
+        if len(comps)==2:
+            away,home=comps[0],comps[1]
+            games.append({
+                "away":TEAM_ABBREV_MAP.get(away["team"]["abbreviation"]),
+                "home":TEAM_ABBREV_MAP.get(home["team"]["abbreviation"]),
+                "away_logo":away["team"]["logo"],
+                "home_logo":home["team"]["logo"]
+            })
+    return games
 
-    roster = skaters_df[skaters_df["team"].isin([team_a,team_b])]
-    roster = roster[["name","team","position"]].drop_duplicates()
+games=get_todays_games()
+if not games:
+    st.warning("No games found today.")
+    st.stop()
 
-    grouped = {
-        n.lower(): g
-        for n,g in shots_df.groupby(shots_df["player"].str.lower())
-    }
+run_model=st.button("🚀 Run Model (All Games)")
 
-    rows = []
+# ---------------------------------------------------------------
+# Build Model (ORIGINAL + MATCHUP)
+# ---------------------------------------------------------------
+@st.cache_data(show_spinner=False)
+def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, teams_df, injuries_df):
+    results=[]
+    skaters=skaters_df[skaters_df[team_col].isin([team_a,team_b])]
+    roster=skaters[[player_col,team_col]].rename(
+        columns={player_col:"player",team_col:"team"}
+    ).drop_duplicates("player")
 
-    for r in roster.itertuples(index=False):
-        player, team, pos = r.name, r.team, r.position
-        df_p = grouped.get(player.lower())
-        if df_p is None:
-            continue
+    grouped={n.lower():g for n,g in shots_df.groupby(shots_df["player"].str.lower())}
 
-        sog_vals = df_p.groupby("game_id")["sog"].sum().tolist()
-        if len(sog_vals) < 3:
-            continue
+    goalie_adj={}
+    if {"team","shots against","games"}.issubset(goalies_df.columns):
+        g=goalies_df.copy()
+        g["shots against"]=pd.to_numeric(g["shots against"],errors="coerce").fillna(0)
+        g["games"]=pd.to_numeric(g["games"],errors="coerce").fillna(1)
+        g["shots_per_game"]=g["shots against"]/g["games"]
+        g["goalie_factor"]=(g["shots_per_game"]/g["shots_per_game"].mean()).clip(0.7,1.3)
+        goalie_adj=g.groupby("team")["goalie_factor"].mean().to_dict()
 
-        l3,l5,l10 = np.mean(sog_vals[-3:]), np.mean(sog_vals[-5:]), np.mean(sog_vals[-10:])
-        baseline = 0.55*l10 + 0.30*l5 + 0.15*l3
+    for row in roster.itertuples(index=False):
+        player,team=row.player,row.team
+        df_p=grouped.get(player.lower(),pd.DataFrame())
+        if df_p.empty or "sog" not in df_p.columns: continue
 
-        opp = team_b if team == team_a else team_a
-        pos_factor = pos_matchup_adj.get((opp,pos),1.0)
+        sog_vals=df_p.groupby(game_col)["sog"].sum().tolist()
+        if not sog_vals: continue
 
-        lam = baseline * pos_factor
+        l3,l5,l10=np.mean(sog_vals[-3:]),np.mean(sog_vals[-5:]),np.mean(sog_vals[-10:])
+        baseline=0.55*l10+0.3*l5+0.15*l3
 
-        rows.append({
+        opp=team_b if team==team_a else team_a
+        goalie_factor=goalie_adj.get(opp,1.0)
+
+        player_pos=skaters_df.loc[
+            skaters_df[player_col].eq(player),"position"
+        ].iloc[0] if "position" in skaters_df.columns else None
+
+        pos_factor=pos_matchup_adj.get((opp,player_pos),1.0)
+
+        lam=baseline*(1+(goalie_factor-1)*0.2)*pos_factor
+
+        results.append({
             "Player":player,
             "Team":team,
-            "Position":pos,
+            "Pos Matchup":round(pos_factor,2),
             "Final Projection":round(lam,2),
-            "Pos Adj":round(pos_factor,2),
             "Season Avg":round(np.mean(sog_vals),2)
         })
 
-    return pd.DataFrame(rows)
+    return pd.DataFrame(results)
 
 # ---------------------------------------------------------------
-# TEMP MATCHUPS (replace with ESPN later)
-# ---------------------------------------------------------------
-games = [
-    {"away":"BOS","home":"NYR"},
-    {"away":"TOR","home":"MTL"}
-]
-
-# ---------------------------------------------------------------
-# Run Model
+# Run Model + Display
 # ---------------------------------------------------------------
 if run_model:
-    tables = []
-    for g in games:
-        df = build_model(g["away"], g["home"])
+    tables=[]
+    for m in games:
+        df=build_model(
+            m["away"],m["home"],
+            skaters_df,shots_df,goalies_df,
+            lines_df,teams_df,injuries_df
+        )
         if not df.empty:
-            df["Matchup"] = f"{g['away']}@{g['home']}"
+            df["Matchup"]=f'{m["away"]}@{m["home"]}'
             tables.append(df)
 
     if tables:
-        st.session_state.results = pd.concat(tables, ignore_index=True)
-        st.success("✅ Model Built Successfully")
+        st.dataframe(pd.concat(tables,ignore_index=True),use_container_width=True)
     else:
-        st.warning("⚠️ No results generated")
-
-# ---------------------------------------------------------------
-# Display Results
-# ---------------------------------------------------------------
-if "results" in st.session_state:
-    df = st.session_state.results.copy()
-    line = st.session_state.line_test_val
-
-    df["Prob ≥ Line (%)"] = df["Final Projection"].apply(
-        lambda lam: round((1 - poisson.cdf(line-1, mu=max(lam,0.01))) * 100, 1)
-    )
-
-    df = df.sort_values(["Team","Final Projection"], ascending=[True,False])
-    st.dataframe(df, use_container_width=True)
-
-    st.download_button(
-        "💾 Download CSV",
-        df.to_csv(index=False).encode("utf-8"),
-        "puck_shotz_results.csv",
-        "text/csv"
-    )
+        st.warning("⚠️ No valid data generated.")
