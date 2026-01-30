@@ -240,8 +240,7 @@ if clean_acceleration and trend > 0:
     form_boost += min(max_boost, trend * 1.25)
 
 baseline *= form_boost
-
-        form_flag="🟢 Above Baseline" if trend>0.05 else "🔴 Below Baseline" if trend<-0.05 else "⚪ Neutral"
+form_flag="🟢 Above Baseline" if trend>0.05 else "🔴 Below Baseline" if trend<-0.05 else "⚪ Neutral"
 
         line_factor_internal=1.0
         if isinstance(line_adj,pd.DataFrame) and not line_adj.empty:
