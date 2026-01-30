@@ -1,10 +1,9 @@
 # ---------------------------------------------------------------
-# 🏒 Puck Shotz Hockey Analytics — FIXED & STABLE VERSION
+# 🏒 Puck Shotz Hockey Analytics — FULLY FIXED VERSION
 # ---------------------------------------------------------------
 import streamlit as st
 import pandas as pd
 import numpy as np
-import os
 from scipy.stats import poisson
 import streamlit.components.v1 as components
 
@@ -47,10 +46,10 @@ st.markdown("""
 st.sidebar.header("📂 Upload Data Files")
 skaters_file   = st.sidebar.file_uploader("Skaters", type=["xlsx","csv"])
 shots_file     = st.sidebar.file_uploader("Shot Data", type=["xlsx","csv"])
-goalies_file   = st.sidebar.file_uploader("Goalies", type=["xlsx","csv"])
-lines_file     = st.sidebar.file_uploader("Lines", type=["xlsx","csv"])
-teams_file     = st.sidebar.file_uploader("Teams", type=["xlsx","csv"])
-injuries_file  = st.sidebar.file_uploader("Injuries", type=["xlsx","csv"])
+goalies_file   = st.sidebar.file_uploader("Goalies (optional)", type=["xlsx","csv"])
+lines_file     = st.sidebar.file_uploader("Lines (optional)", type=["xlsx","csv"])
+teams_file     = st.sidebar.file_uploader("Teams (optional)", type=["xlsx","csv"])
+injuries_file  = st.sidebar.file_uploader("Injuries (optional)", type=["xlsx","csv"])
 
 run_model = st.sidebar.button("🚀 Run Model")
 
@@ -75,34 +74,72 @@ def load_file(f):
     except Exception:
         return pd.DataFrame()
 
-def normalize_columns(df):
+def normalize(df):
     if not df.empty:
         df.columns = df.columns.str.lower().str.strip()
     return df
 
-# ---------------------------------------------------------------
-# Load Data
-# ---------------------------------------------------------------
-skaters_df  = normalize_columns(load_file(skaters_file))
-shots_df    = normalize_columns(load_file(shots_file))
-goalies_df  = normalize_columns(load_file(goalies_file))
-lines_df    = normalize_columns(load_file(lines_file))
-teams_df    = normalize_columns(load_file(teams_file))
-injuries_df = normalize_columns(load_file(injuries_file))
+def find_col(df, keywords):
+    return next(
+        (c for c in df.columns if any(k in c for k in keywords)),
+        None
+    )
 
 # ---------------------------------------------------------------
-# Required Column Validation
+# Load + Normalize Data
 # ---------------------------------------------------------------
-REQUIRED_SKATERS = {"name","team","position"}
-REQUIRED_SHOTS   = {"player","team","sog","game_id"}
+skaters_df  = normalize(load_file(skaters_file))
+shots_df    = normalize(load_file(shots_file))
+goalies_df  = normalize(load_file(goalies_file))
+lines_df    = normalize(load_file(lines_file))
+teams_df    = normalize(load_file(teams_file))
+injuries_df = normalize(load_file(injuries_file))
 
-if not REQUIRED_SKATERS.issubset(skaters_df.columns):
-    st.error("❌ Skaters file missing required columns")
+# ---------------------------------------------------------------
+# Auto-Detect Skaters Columns (CRITICAL FIX)
+# ---------------------------------------------------------------
+sk_name_col = find_col(skaters_df, ["name","player","skater"])
+sk_team_col = find_col(skaters_df, ["team"])
+sk_pos_col  = find_col(skaters_df, ["position","pos"])
+
+if not sk_name_col or not sk_team_col:
+    st.error(
+        f"❌ Skaters file missing required columns.\n\n"
+        f"Found columns:\n{list(skaters_df.columns)}"
+    )
     st.stop()
 
-if not REQUIRED_SHOTS.issubset(shots_df.columns):
-    st.error("❌ Shot data missing required columns")
+skaters_df = skaters_df.rename(columns={
+    sk_name_col: "name",
+    sk_team_col: "team"
+})
+
+if sk_pos_col:
+    skaters_df = skaters_df.rename(columns={sk_pos_col: "position"})
+else:
+    skaters_df["position"] = "F"   # safe default
+
+# ---------------------------------------------------------------
+# Auto-Detect Shot Data Columns
+# ---------------------------------------------------------------
+shot_player_col = find_col(shots_df, ["player","shooter","name"])
+shot_team_col   = find_col(shots_df, ["team"])
+shot_game_col   = find_col(shots_df, ["game","match"])
+shot_sog_col    = find_col(shots_df, ["sog","shots on goal"])
+
+if not all([shot_player_col, shot_team_col, shot_game_col, shot_sog_col]):
+    st.error(
+        f"❌ Shot data missing required columns.\n\n"
+        f"Found columns:\n{list(shots_df.columns)}"
+    )
     st.stop()
+
+shots_df = shots_df.rename(columns={
+    shot_player_col: "player",
+    shot_team_col: "team",
+    shot_game_col: "game_id",
+    shot_sog_col: "sog"
+})
 
 # ---------------------------------------------------------------
 # Normalize Team Abbreviations
@@ -115,11 +152,12 @@ shots_df["team"]   = shots_df["team"].map(TEAM_ABBREV_MAP).fillna(shots_df["team
 # ---------------------------------------------------------------
 @st.cache_data(show_spinner=False)
 def build_position_matchups(shots, skaters):
-    s = shots.copy()
-    k = skaters.copy()
 
     def norm(x):
-        return str(x).lower().replace(".","").strip()
+        return str(x).lower().replace(".","").replace(",","").strip()
+
+    s = shots.copy()
+    k = skaters.copy()
 
     s["player_norm"] = s["player"].apply(norm)
     k["player_norm"] = k["name"].apply(norm)
@@ -137,6 +175,7 @@ def build_position_matchups(shots, skaters):
     )
 
     avg["pos_factor"] = avg["pos_factor"].clip(0.85,1.20)
+
     return {(r["team"], r["position"]): r["pos_factor"] for _,r in avg.iterrows()}
 
 pos_matchup_adj = build_position_matchups(shots_df, skaters_df)
@@ -146,12 +185,12 @@ pos_matchup_adj = build_position_matchups(shots_df, skaters_df)
 # ---------------------------------------------------------------
 def build_model(team_a, team_b):
 
-    skaters = skaters_df[skaters_df["team"].isin([team_a,team_b])]
-    roster = skaters[["name","team","position"]].drop_duplicates()
+    roster = skaters_df[skaters_df["team"].isin([team_a, team_b])]
+    roster = roster[["name","team","position"]].drop_duplicates()
 
     grouped = {
-        n.lower(): g
-        for n,g in shots_df.groupby(shots_df["player"].str.lower())
+        p.lower(): g
+        for p, g in shots_df.groupby(shots_df["player"].str.lower())
     }
 
     rows = []
@@ -173,7 +212,7 @@ def build_model(team_a, team_b):
 
         baseline = 0.55*l10 + 0.30*l5 + 0.15*l3
         opp = team_b if team == team_a else team_a
-        pos_factor = pos_matchup_adj.get((opp,position),1.0)
+        pos_factor = pos_matchup_adj.get((opp, position), 1.0)
 
         lam = baseline * pos_factor
 
@@ -189,7 +228,7 @@ def build_model(team_a, team_b):
     return pd.DataFrame(rows)
 
 # ---------------------------------------------------------------
-# TEMP GAMES (Replace with ESPN later)
+# TEMP MATCHUPS (replace with ESPN later)
 # ---------------------------------------------------------------
 games = [
     {"away":"BOS","home":"NYR"},
@@ -201,6 +240,7 @@ games = [
 # ---------------------------------------------------------------
 if run_model:
     tables = []
+
     for g in games:
         df = build_model(g["away"], g["home"])
         if not df.empty:
@@ -209,19 +249,19 @@ if run_model:
 
     if tables:
         st.session_state.results = pd.concat(tables, ignore_index=True)
-        st.success("✅ Model Built")
+        st.success("✅ Model Built Successfully")
     else:
-        st.warning("⚠️ No results generated")
+        st.warning("⚠️ No valid results generated")
 
 # ---------------------------------------------------------------
 # Display Results
 # ---------------------------------------------------------------
 if "results" in st.session_state:
     df = st.session_state.results.copy()
-
     line = st.session_state.line_test_val
+
     df["Prob ≥ Line (%)"] = df["Final Projection"].apply(
-        lambda lam: round((1-poisson.cdf(line-1,mu=max(lam,0.01)))*100,1)
+        lambda lam: round((1 - poisson.cdf(line-1, mu=max(lam,0.01))) * 100, 1)
     )
 
     df = df.sort_values(["Team","Final Projection"], ascending=[True,False])
@@ -229,8 +269,8 @@ if "results" in st.session_state:
     st.dataframe(df, use_container_width=True)
 
     st.download_button(
-        "💾 Download CSV",
-        df.to_csv(index=False).encode(),
+        "💾 Download Results (CSV)",
+        df.to_csv(index=False).encode("utf-8"),
         "puck_shotz_results.csv",
         "text/csv"
     )
