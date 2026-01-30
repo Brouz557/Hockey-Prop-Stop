@@ -102,7 +102,21 @@ for df in [skaters_df, shots_df, goalies_df, lines_df, teams_df]:
 
 team_col=next((c for c in skaters_df.columns if "team" in c),None)
 player_col="name"
-shots_df["player"]=shots_df["player"].astype(str).str.strip()
+# ---------------------------------------------------------------
+# Normalize player column in SHOT DATA
+# ---------------------------------------------------------------
+player_shot_col = next(
+    (c for c in shots_df.columns if "player" in c or "name" in c or "shooter" in c),
+    None
+)
+
+if player_shot_col is None:
+    st.error("SHOT DATA file does not contain a recognizable player column.")
+    st.stop()
+
+shots_df = shots_df.rename(columns={player_shot_col: "player"})
+shots_df["player"] = shots_df["player"].astype(str).str.strip()
+
 game_col=next((c for c in shots_df.columns if "game" in c and "id" in c),None)
 
 # ---------------------------------------------------------------
