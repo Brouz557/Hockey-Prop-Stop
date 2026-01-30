@@ -228,19 +228,19 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
         l3, l5, l10 = np.mean(last3), np.mean(last5), np.mean(last10)
         baseline=(0.35*l10)+(0.3*l5)+(0.35*l3)
         trend=(l5-l10)/l10 if l10>0 else 0
-    # -----------------------------
-    # HUNTER MODE (Upswing Capture)
-    # -----------------------------
-    form_boost = 1.0
-    max_boost = 0.25  # 25% cap (recommended)
+        # -----------------------------
+        # HUNTER MODE (Upswing Capture)
+        # -----------------------------
+        form_boost = 1.0
+        max_boost = 0.25  # 25% cap (recommended)
 
-    clean_acceleration = (l3 > l5 > l10)
+       clean_acceleration = (l3 > l5 > l10)
 
-    if clean_acceleration and trend > 0:
-      form_boost += min(max_boost, trend * 1.25)
+        if clean_acceleration and trend > 0:
+          form_boost += min(max_boost, trend * 1.25)
 
-    baseline *= form_boost
-    form_flag="🟢 Above Baseline" if trend>0.05 else "🔴 Below Baseline" if trend<-0.05 else "⚪ Neutral"
+        baseline *= form_boost
+        form_flag="🟢 Above Baseline" if trend>0.05 else "🔴 Below Baseline" if trend<-0.05 else "⚪ Neutral"
 
         line_factor_internal=1.0
         if isinstance(line_adj,pd.DataFrame) and not line_adj.empty:
