@@ -226,7 +226,7 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
 
         last3, last5, last10 = sog_vals[-3:], sog_vals[-5:], sog_vals[-10:]
         l3, l5, l10 = np.mean(last3), np.mean(last5), np.mean(last10)
-        baseline=(0.25*l10)+(0.3*l5)+(0.45*l3)
+        baseline=(0.35*l10)+(0.3*l5)+(0.35*l3)
         trend=(l5-l10)/l10 if l10>0 else 0
         form_flag="🟢 Above Baseline" if trend>0.05 else "🔴 Below Baseline" if trend<-0.05 else "⚪ Neutral"
 
