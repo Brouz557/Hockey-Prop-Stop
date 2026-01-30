@@ -1,5 +1,6 @@
 # ---------------------------------------------------------------
-# 🏒 Puck Shotz Hockey Analytics — FINAL KEYERROR-SAFE VERSION
+# 🏒 Puck Shotz Hockey Analytics — FINAL STABLE VERSION
+# Repo-first • Case-insensitive filenames • Schema-safe
 # ---------------------------------------------------------------
 import streamlit as st
 import pandas as pd
@@ -41,9 +42,9 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ---------------------------------------------------------------
-# Sidebar (Uploads Optional)
+# Sidebar
 # ---------------------------------------------------------------
-st.sidebar.header("📂 Optional Uploads (Repo Loads First)")
+st.sidebar.header("📂 Optional Uploads (Repo is Source of Truth)")
 skaters_file  = st.sidebar.file_uploader("Skaters", type=["xlsx","csv"])
 shots_file    = st.sidebar.file_uploader("Shot Data", type=["xlsx","csv"])
 
@@ -58,32 +59,39 @@ st.session_state.line_test_val = st.sidebar.number_input(
 )
 
 # ---------------------------------------------------------------
-# Repo Utilities
+# Repo File Discovery (CASE-INSENSITIVE, RECURSIVE)
 # ---------------------------------------------------------------
-def find_repo_file(filename):
-    search_paths = [
+def find_repo_file(target_name: str):
+    target_name = target_name.lower()
+    search_roots = [
         ".",
         "./data",
         "/mount/src/hockey-prop-stop",
         "/mount/src/hockey-prop-stop/data"
     ]
-    for p in search_paths:
-        fp = os.path.join(p, filename)
-        if os.path.exists(fp):
-            return fp
+
+    for base in search_roots:
+        if not os.path.exists(base):
+            continue
+        for root, _, files in os.walk(base):
+            for f in files:
+                if f.lower() == target_name:
+                    return os.path.join(root, f)
     return None
 
 def load_data(upload, repo_path):
     if upload is not None:
         try:
-            return pd.read_excel(upload) if upload.name.endswith("xlsx") else pd.read_csv(upload)
+            return pd.read_excel(upload) if upload.name.lower().endswith(".xlsx") else pd.read_csv(upload)
         except Exception:
             return pd.DataFrame()
+
     if repo_path and os.path.exists(repo_path):
         try:
-            return pd.read_excel(repo_path) if repo_path.endswith("xlsx") else pd.read_csv(repo_path)
+            return pd.read_excel(repo_path) if repo_path.lower().endswith(".xlsx") else pd.read_csv(repo_path)
         except Exception:
             return pd.DataFrame()
+
     return pd.DataFrame()
 
 def normalize(df):
@@ -95,34 +103,34 @@ def find_col(df, keys):
     return next((c for c in df.columns if any(k in c for k in keys)), None)
 
 # ---------------------------------------------------------------
-# Load Data (Repo First)
+# Load Data (Repo First, Upload Override)
 # ---------------------------------------------------------------
 skaters_df = normalize(load_data(
     skaters_file,
-    find_repo_file("Skaters.xlsx") or find_repo_file("Skaters.csv")
+    find_repo_file("skaters.xlsx")
 ))
 
 shots_df = normalize(load_data(
     shots_file,
-    find_repo_file("SHOT DATA.xlsx") or find_repo_file("SHOT DATA.csv")
+    find_repo_file("shot data.xlsx")
 ))
 
 # ---------------------------------------------------------------
 # Guard
 # ---------------------------------------------------------------
 if skaters_df.empty or shots_df.empty:
-    st.info("📂 Waiting for Skaters and Shot Data files…")
+    st.info("📂 Waiting for Skaters.xlsx and SHOT DATA.xlsx to load from repo…")
     st.stop()
 
 # ---------------------------------------------------------------
-# Auto-Detect Skaters Columns
+# Auto-Detect Skaters Schema
 # ---------------------------------------------------------------
 sk_name = find_col(skaters_df, ["name","player","skater"])
 sk_team = find_col(skaters_df, ["team"])
 sk_pos  = find_col(skaters_df, ["position","pos"])
 
 if not sk_name or not sk_team:
-    st.error(f"❌ Skaters schema invalid. Found: {list(skaters_df.columns)}")
+    st.error(f"❌ Skaters schema invalid. Found columns: {list(skaters_df.columns)}")
     st.stop()
 
 skaters_df = skaters_df.rename(columns={sk_name:"name", sk_team:"team"})
@@ -131,10 +139,10 @@ skaters_df = skaters_df.loc[:, ~skaters_df.columns.duplicated()]
 if sk_pos:
     skaters_df = skaters_df.rename(columns={sk_pos:"position"})
 else:
-    skaters_df["position"] = "F"  # SAFE DEFAULT
+    skaters_df["position"] = "F"
 
 # ---------------------------------------------------------------
-# Auto-Detect Shot Columns
+# Auto-Detect Shot Schema
 # ---------------------------------------------------------------
 sh_player = find_col(shots_df, ["player","shooter","name"])
 sh_team   = find_col(shots_df, ["team"])
@@ -142,7 +150,7 @@ sh_game   = find_col(shots_df, ["game"])
 sh_sog    = find_col(shots_df, ["sog","shots on goal"])
 
 if not all([sh_player, sh_team, sh_game, sh_sog]):
-    st.error(f"❌ Shot schema invalid. Found: {list(shots_df.columns)}")
+    st.error(f"❌ Shot data schema invalid. Found columns: {list(shots_df.columns)}")
     st.stop()
 
 shots_df = shots_df.rename(columns={
@@ -170,7 +178,7 @@ shots_df["team"] = (
 )
 
 # ---------------------------------------------------------------
-# 🔥 POSITION MATCHUP (KEYERROR-SAFE)
+# Position Matchup Adjustment (FULLY SAFE)
 # ---------------------------------------------------------------
 @st.cache_data(show_spinner=False)
 def build_position_matchups(shots, skaters):
@@ -184,13 +192,11 @@ def build_position_matchups(shots, skaters):
     s["p"] = s["player"].astype(str).apply(norm)
     k["p"] = k["name"].astype(str).apply(norm)
 
-    # Ensure position exists
     if "position" not in k.columns:
         k["position"] = "F"
 
     s = s.merge(k[["p","position"]], on="p", how="left")
 
-    # REQUIRED COLUMNS CHECK
     required = {"team","position","sog","game_id"}
     if not required.issubset(s.columns):
         return {}
@@ -270,7 +276,7 @@ def build_model(team_a, team_b):
     return pd.DataFrame(rows)
 
 # ---------------------------------------------------------------
-# TEMP MATCHUPS (safe default)
+# TEMP MATCHUPS (replace with ESPN later)
 # ---------------------------------------------------------------
 games = [
     {"away":"BOS","home":"NYR"},
