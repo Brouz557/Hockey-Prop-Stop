@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Puck Shotz Hockey Analytics — FINAL STABLE VERSION
+# 🏒 Puck Shotz Hockey Analytics — FINAL KEYERROR-SAFE VERSION
 # ---------------------------------------------------------------
 import streamlit as st
 import pandas as pd
@@ -46,10 +46,6 @@ st.markdown("""
 st.sidebar.header("📂 Optional Uploads (Repo Loads First)")
 skaters_file  = st.sidebar.file_uploader("Skaters", type=["xlsx","csv"])
 shots_file    = st.sidebar.file_uploader("Shot Data", type=["xlsx","csv"])
-goalies_file  = st.sidebar.file_uploader("Goalies", type=["xlsx","csv"])
-lines_file    = st.sidebar.file_uploader("Lines", type=["xlsx","csv"])
-teams_file    = st.sidebar.file_uploader("Teams", type=["xlsx","csv"])
-injuries_file = st.sidebar.file_uploader("Injuries", type=["xlsx","csv"])
 
 run_model = st.sidebar.button("🚀 Run Model")
 
@@ -135,7 +131,7 @@ skaters_df = skaters_df.loc[:, ~skaters_df.columns.duplicated()]
 if sk_pos:
     skaters_df = skaters_df.rename(columns={sk_pos:"position"})
 else:
-    skaters_df["position"] = "F"
+    skaters_df["position"] = "F"  # SAFE DEFAULT
 
 # ---------------------------------------------------------------
 # Auto-Detect Shot Columns
@@ -156,11 +152,10 @@ shots_df = shots_df.rename(columns={
     sh_sog:"sog"
 })
 
-# 🔑 CRITICAL FIX — remove duplicate columns
 shots_df = shots_df.loc[:, ~shots_df.columns.duplicated()]
 
 # ---------------------------------------------------------------
-# Normalize Team Abbreviations (SAFE)
+# Normalize Team Abbreviations
 # ---------------------------------------------------------------
 skaters_df["team"] = (
     skaters_df["team"].astype(str)
@@ -175,34 +170,58 @@ shots_df["team"] = (
 )
 
 # ---------------------------------------------------------------
-# Position Matchup Adjustment
+# 🔥 POSITION MATCHUP (KEYERROR-SAFE)
 # ---------------------------------------------------------------
 @st.cache_data(show_spinner=False)
 def build_position_matchups(shots, skaters):
 
-    def norm(x):
-        return str(x).lower().replace(".","").replace(",","").strip()
-
     s = shots.copy()
     k = skaters.copy()
 
-    s["p"] = s["player"].apply(norm)
-    k["p"] = k["name"].apply(norm)
+    def norm(x):
+        return str(x).lower().replace(".","").replace(",","").strip()
+
+    s["p"] = s["player"].astype(str).apply(norm)
+    k["p"] = k["name"].astype(str).apply(norm)
+
+    # Ensure position exists
+    if "position" not in k.columns:
+        k["position"] = "F"
 
     s = s.merge(k[["p","position"]], on="p", how="left")
-    s = s.dropna(subset=["position","sog","game_id"])
 
-    per_game = s.groupby(["team","position","game_id"])["sog"].sum().reset_index()
-    avg = per_game.groupby(["team","position"])["sog"].mean().reset_index()
+    # REQUIRED COLUMNS CHECK
+    required = {"team","position","sog","game_id"}
+    if not required.issubset(s.columns):
+        return {}
 
-    league = avg.groupby("position")["sog"].mean().to_dict()
+    s = s.dropna(subset=list(required))
+
+    per_game = (
+        s.groupby(["team","position","game_id"])["sog"]
+        .sum()
+        .reset_index()
+    )
+
+    avg = (
+        per_game.groupby(["team","position"])["sog"]
+        .mean()
+        .reset_index()
+    )
+
+    league_avg = avg.groupby("position")["sog"].mean().to_dict()
+
     avg["pos_factor"] = avg.apply(
-        lambda r: r["sog"] / league.get(r["position"], r["sog"]),
+        lambda r: r["sog"] / league_avg.get(r["position"], r["sog"]),
         axis=1
     )
 
     avg["pos_factor"] = avg["pos_factor"].clip(0.85,1.20)
-    return {(r["team"],r["position"]):r["pos_factor"] for _,r in avg.iterrows()}
+
+    return {
+        (r["team"], r["position"]): r["pos_factor"]
+        for _, r in avg.iterrows()
+    }
 
 pos_matchup_adj = build_position_matchups(shots_df, skaters_df)
 
