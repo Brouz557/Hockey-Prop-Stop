@@ -1,12 +1,11 @@
 # ---------------------------------------------------------------
-# 🏒 Puck Shotz Hockey Analytics — STABLE REPO-FIRST VERSION
+# 🏒 Puck Shotz Hockey Analytics — FINAL STABLE VERSION
 # ---------------------------------------------------------------
 import streamlit as st
 import pandas as pd
 import numpy as np
 import os
 from scipy.stats import poisson
-import streamlit.components.v1 as components
 
 # ---------------------------------------------------------------
 # Page Config
@@ -42,9 +41,9 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ---------------------------------------------------------------
-# Sidebar (Uploads OPTIONAL)
+# Sidebar (Uploads Optional)
 # ---------------------------------------------------------------
-st.sidebar.header("📂 Optional File Uploads (Repo loads by default)")
+st.sidebar.header("📂 Optional Uploads (Repo Loads First)")
 skaters_file  = st.sidebar.file_uploader("Skaters", type=["xlsx","csv"])
 shots_file    = st.sidebar.file_uploader("Shot Data", type=["xlsx","csv"])
 goalies_file  = st.sidebar.file_uploader("Goalies", type=["xlsx","csv"])
@@ -63,7 +62,7 @@ st.session_state.line_test_val = st.sidebar.number_input(
 )
 
 # ---------------------------------------------------------------
-# Repo File Utilities  (CRITICAL FIX)
+# Repo Utilities
 # ---------------------------------------------------------------
 def find_repo_file(filename):
     search_paths = [
@@ -78,25 +77,17 @@ def find_repo_file(filename):
             return fp
     return None
 
-def load_data(file_uploader, repo_path):
-    # Uploaded file overrides repo
-    if file_uploader is not None:
+def load_data(upload, repo_path):
+    if upload is not None:
         try:
-            if file_uploader.name.lower().endswith(".xlsx"):
-                return pd.read_excel(file_uploader)
-            return pd.read_csv(file_uploader)
+            return pd.read_excel(upload) if upload.name.endswith("xlsx") else pd.read_csv(upload)
         except Exception:
             return pd.DataFrame()
-
-    # Repo fallback
     if repo_path and os.path.exists(repo_path):
         try:
-            if repo_path.lower().endswith(".xlsx"):
-                return pd.read_excel(repo_path)
-            return pd.read_csv(repo_path)
+            return pd.read_excel(repo_path) if repo_path.endswith("xlsx") else pd.read_csv(repo_path)
         except Exception:
             return pd.DataFrame()
-
     return pd.DataFrame()
 
 def normalize(df):
@@ -120,31 +111,11 @@ shots_df = normalize(load_data(
     find_repo_file("SHOT DATA.xlsx") or find_repo_file("SHOT DATA.csv")
 ))
 
-goalies_df = normalize(load_data(
-    goalies_file,
-    find_repo_file("GOALTENDERS.xlsx") or find_repo_file("GOALTENDERS.csv")
-))
-
-lines_df = normalize(load_data(
-    lines_file,
-    find_repo_file("LINE DATA.xlsx") or find_repo_file("LINE DATA.csv")
-))
-
-teams_df = normalize(load_data(
-    teams_file,
-    find_repo_file("TEAMS.xlsx") or find_repo_file("TEAMS.csv")
-))
-
-injuries_df = normalize(load_data(
-    injuries_file,
-    find_repo_file("INJURIES.xlsx") or find_repo_file("INJURIES.csv")
-))
-
 # ---------------------------------------------------------------
-# Guard: wait for required data
+# Guard
 # ---------------------------------------------------------------
 if skaters_df.empty or shots_df.empty:
-    st.info("📂 Waiting for required data files (Skaters + Shot Data).")
+    st.info("📂 Waiting for Skaters and Shot Data files…")
     st.stop()
 
 # ---------------------------------------------------------------
@@ -155,17 +126,19 @@ sk_team = find_col(skaters_df, ["team"])
 sk_pos  = find_col(skaters_df, ["position","pos"])
 
 if not sk_name or not sk_team:
-    st.error(f"❌ Skaters schema invalid. Columns found: {list(skaters_df.columns)}")
+    st.error(f"❌ Skaters schema invalid. Found: {list(skaters_df.columns)}")
     st.stop()
 
 skaters_df = skaters_df.rename(columns={sk_name:"name", sk_team:"team"})
+skaters_df = skaters_df.loc[:, ~skaters_df.columns.duplicated()]
+
 if sk_pos:
     skaters_df = skaters_df.rename(columns={sk_pos:"position"})
 else:
     skaters_df["position"] = "F"
 
 # ---------------------------------------------------------------
-# Auto-Detect Shot Data Columns
+# Auto-Detect Shot Columns
 # ---------------------------------------------------------------
 sh_player = find_col(shots_df, ["player","shooter","name"])
 sh_team   = find_col(shots_df, ["team"])
@@ -173,7 +146,7 @@ sh_game   = find_col(shots_df, ["game"])
 sh_sog    = find_col(shots_df, ["sog","shots on goal"])
 
 if not all([sh_player, sh_team, sh_game, sh_sog]):
-    st.error(f"❌ Shot data schema invalid. Columns found: {list(shots_df.columns)}")
+    st.error(f"❌ Shot schema invalid. Found: {list(shots_df.columns)}")
     st.stop()
 
 shots_df = shots_df.rename(columns={
@@ -183,11 +156,23 @@ shots_df = shots_df.rename(columns={
     sh_sog:"sog"
 })
 
+# 🔑 CRITICAL FIX — remove duplicate columns
+shots_df = shots_df.loc[:, ~shots_df.columns.duplicated()]
+
 # ---------------------------------------------------------------
-# Normalize Team Abbreviations
+# Normalize Team Abbreviations (SAFE)
 # ---------------------------------------------------------------
-skaters_df["team"] = skaters_df["team"].map(TEAM_ABBREV_MAP).fillna(skaters_df["team"])
-shots_df["team"]   = shots_df["team"].map(TEAM_ABBREV_MAP).fillna(shots_df["team"])
+skaters_df["team"] = (
+    skaters_df["team"].astype(str)
+    .map(TEAM_ABBREV_MAP)
+    .fillna(skaters_df["team"])
+)
+
+shots_df["team"] = (
+    shots_df["team"].astype(str)
+    .map(TEAM_ABBREV_MAP)
+    .fillna(shots_df["team"])
+)
 
 # ---------------------------------------------------------------
 # Position Matchup Adjustment
@@ -212,7 +197,8 @@ def build_position_matchups(shots, skaters):
 
     league = avg.groupby("position")["sog"].mean().to_dict()
     avg["pos_factor"] = avg.apply(
-        lambda r: r["sog"] / league.get(r["position"], r["sog"]), axis=1
+        lambda r: r["sog"] / league.get(r["position"], r["sog"]),
+        axis=1
     )
 
     avg["pos_factor"] = avg["pos_factor"].clip(0.85,1.20)
@@ -289,4 +275,23 @@ if run_model:
     else:
         st.warning("⚠️ No results generated")
 
-# ----------------------------------
+# ---------------------------------------------------------------
+# Display Results
+# ---------------------------------------------------------------
+if "results" in st.session_state:
+    df = st.session_state.results.copy()
+    line = st.session_state.line_test_val
+
+    df["Prob ≥ Line (%)"] = df["Final Projection"].apply(
+        lambda lam: round((1 - poisson.cdf(line-1, mu=max(lam,0.01))) * 100, 1)
+    )
+
+    df = df.sort_values(["Team","Final Projection"], ascending=[True,False])
+    st.dataframe(df, use_container_width=True)
+
+    st.download_button(
+        "💾 Download CSV",
+        df.to_csv(index=False).encode("utf-8"),
+        "puck_shotz_results.csv",
+        "text/csv"
+    )
