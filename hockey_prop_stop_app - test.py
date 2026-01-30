@@ -75,6 +75,7 @@ def load_all(skaters_file, shots_file, goalies_file, lines_file, teams_file, inj
             fp=os.path.join(p,name)
             if os.path.exists(fp): return fp
         return None
+
     skaters=load_data(skaters_file, find_file("Skaters.xlsx") or "Skaters.xlsx")
     shots  =load_data(shots_file,   find_file("SHOT DATA.xlsx") or "SHOT DATA.xlsx")
     goalies=load_data(goalies_file, find_file("GOALTENDERS.xlsx") or "GOALTENDERS.xlsx")
@@ -91,6 +92,7 @@ def load_all(skaters_file, shots_file, goalies_file, lines_file, teams_file, inj
         injuries.columns=injuries.columns.str.lower().str.strip()
         if "player" in injuries.columns:
             injuries["player"]=injuries["player"].astype(str).str.strip().str.lower()
+
     return skaters,shots,goalies,lines,teams,injuries
 
 # ---------------------------------------------------------------
@@ -107,57 +109,63 @@ for df in [skaters_df, shots_df, goalies_df, lines_df, teams_df]:
     if not df.empty:
         df.columns=df.columns.str.lower().str.strip()
 
-team_col=next((c for c in skaters_df.columns if "team" in c),None)
-player_col="name"
-shots_df=shots_df.rename(columns={
+team_col = next((c for c in skaters_df.columns if "team" in c),None)
+player_col = "name"
+
+shots_df = shots_df.rename(columns={
     next((c for c in shots_df.columns if "player" in c or "name" in c),"player"):"player"
 })
 shots_df["player"]=shots_df["player"].astype(str).str.strip()
-game_col=next((c for c in shots_df.columns if "game" in c and "id" in c),None)
+
+game_col = next((c for c in shots_df.columns if "game" in c and "id" in c),None)
 
 # ---------------------------------------------------------------
-# 🔥 POSITION MATCHUP SECTION (ADDED)
+# 🔥 POSITION MATCHUP SECTION (SAFE EVEN WITHOUT GAME ID)
 # ---------------------------------------------------------------
 @st.cache_data(show_spinner=False)
-def build_position_matchups(shots_df, skaters_df, game_col, team_col):
-    if shots_df.empty or skaters_df.empty or not game_col:
+def build_position_matchups(shots_df, skaters_df, team_col):
+
+    if shots_df.empty or skaters_df.empty:
         return {}
-    if "position" not in skaters_df.columns:
+
+    if "position" not in skaters_df.columns or "sog" not in shots_df.columns:
         return {}
 
     def norm(x):
         return str(x).lower().replace(".","").replace(",","").strip()
 
-    shots=shots_df.copy()
-    skaters=skaters_df.copy()
+    shots = shots_df.copy()
+    skaters = skaters_df.copy()
 
-    shots["p"]=shots["player"].apply(norm)
-    skaters["p"]=skaters["name"].apply(norm)
+    shots["p"] = shots["player"].apply(norm)
+    skaters["p"] = skaters["name"].apply(norm)
 
-    merged=shots.merge(
+    merged = shots.merge(
         skaters[["p","position",team_col]],
-        on="p",how="left"
+        on="p",
+        how="left"
     )
 
-    if "sog" not in merged.columns:
-        return {}
+    merged = merged.dropna(subset=["position","sog",team_col])
 
-    merged=merged.dropna(subset=["position","sog",game_col,team_col])
-
-    per_game=merged.groupby([team_col,"position",game_col])["sog"].sum().reset_index()
-    avg=per_game.groupby([team_col,"position"])["sog"].mean().reset_index()
-
-    league_avg=avg.groupby("position")["sog"].mean().to_dict()
-    avg["pos_factor"]=avg.apply(
-        lambda r:r["sog"]/league_avg.get(r["position"],r["sog"]),axis=1
+    avg = (
+        merged.groupby([team_col,"position"])["sog"]
+        .mean()
+        .reset_index()
     )
-    avg["pos_factor"]=avg["pos_factor"].clip(0.85,1.20)
+
+    league_avg = avg.groupby("position")["sog"].mean().to_dict()
+
+    avg["pos_factor"] = avg.apply(
+        lambda r: r["sog"] / league_avg.get(r["position"], r["sog"]),
+        axis=1
+    )
+
+    avg["pos_factor"] = avg["pos_factor"].clip(0.85,1.20)
 
     return {(r[team_col],r["position"]):r["pos_factor"] for _,r in avg.iterrows()}
 
-pos_matchup_adj = build_position_matchups(
-    shots_df, skaters_df, game_col, team_col
-)
+pos_matchup_adj = build_position_matchups(shots_df, skaters_df, team_col)
 
 # ---------------------------------------------------------------
 # Matchup Pull (ESPN)
@@ -188,10 +196,11 @@ if not games:
 run_model=st.button("🚀 Run Model (All Games)")
 
 # ---------------------------------------------------------------
-# Build Model (ORIGINAL + MATCHUP)
+# Build Model (UNCHANGED + MATCHUP)
 # ---------------------------------------------------------------
 @st.cache_data(show_spinner=False)
 def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, teams_df, injuries_df):
+
     results=[]
     skaters=skaters_df[skaters_df[team_col].isin([team_a,team_b])]
     roster=skaters[[player_col,team_col]].rename(
@@ -212,10 +221,12 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
     for row in roster.itertuples(index=False):
         player,team=row.player,row.team
         df_p=grouped.get(player.lower(),pd.DataFrame())
-        if df_p.empty or "sog" not in df_p.columns: continue
+        if df_p.empty or "sog" not in df_p.columns:
+            continue
 
-        sog_vals=df_p.groupby(game_col)["sog"].sum().tolist()
-        if not sog_vals: continue
+        sog_vals=df_p["sog"].tolist()
+        if not sog_vals:
+            continue
 
         l3,l5,l10=np.mean(sog_vals[-3:]),np.mean(sog_vals[-5:]),np.mean(sog_vals[-10:])
         baseline=0.55*l10+0.3*l5+0.15*l3
@@ -223,11 +234,11 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
         opp=team_b if team==team_a else team_a
         goalie_factor=goalie_adj.get(opp,1.0)
 
-        player_pos=skaters_df.loc[
+        player_pos = skaters_df.loc[
             skaters_df[player_col].eq(player),"position"
         ].iloc[0] if "position" in skaters_df.columns else None
 
-        pos_factor=pos_matchup_adj.get((opp,player_pos),1.0)
+        pos_factor = pos_matchup_adj.get((opp,player_pos),1.0)
 
         lam=baseline*(1+(goalie_factor-1)*0.2)*pos_factor
 
@@ -245,7 +256,7 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
 # Run Model + Display
 # ---------------------------------------------------------------
 if run_model:
-    tables=[]
+    all_tables=[]
     for m in games:
         df=build_model(
             m["away"],m["home"],
@@ -254,9 +265,9 @@ if run_model:
         )
         if not df.empty:
             df["Matchup"]=f'{m["away"]}@{m["home"]}'
-            tables.append(df)
+            all_tables.append(df)
 
-    if tables:
-        st.dataframe(pd.concat(tables,ignore_index=True),use_container_width=True)
+    if all_tables:
+        st.dataframe(pd.concat(all_tables,ignore_index=True),use_container_width=True)
     else:
         st.warning("⚠️ No valid data generated.")
