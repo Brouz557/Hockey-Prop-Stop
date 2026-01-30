@@ -237,7 +237,7 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
     clean_acceleration = (l3 > l5 > l10)
 
     if clean_acceleration and trend > 0:
-    form_boost += min(max_boost, trend * 1.25)
+      form_boost += min(max_boost, trend * 1.25)
 
     baseline *= form_boost
     form_flag="🟢 Above Baseline" if trend>0.05 else "🔴 Below Baseline" if trend<-0.05 else "⚪ Neutral"
