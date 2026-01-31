@@ -356,6 +356,51 @@ if "results" in st.session_state:
         "text/csv"
     )
 
-    components.html(f"""
-    <div style='overflow-x:auto;height:650px;'>{html_table}</div>
-    """,height=700,scrolling=True)
+    html_table = df.to_html(index=False, escape=False)
+
+components.html(f"""
+<style>
+table {{
+    width:100%;
+    border-collapse:collapse;
+    font-family:'Source Sans Pro',sans-serif;
+    color:#D6D6D6;
+}}
+th {{
+    background-color:#0A3A67;
+    color:#FFFFFF;
+    padding:6px;
+    text-align:center;
+    position:sticky;
+    top:0;
+    border-bottom:2px solid #1E5A99;
+    z-index:2;
+}}
+td:first-child, th:first-child {{
+    position:sticky;
+    left:0;
+    background-color:#1E5A99;
+    color:#FFFFFF;
+    font-weight:bold;
+    z-index:1;
+}}
+td {{
+    background-color:#0F2743;
+    color:#D6D6D6;
+    padding:4px;
+    text-align:center;
+}}
+tr:nth-child(even) td {{
+    background-color:#142F52;
+}}
+td:nth-child(10),
+td:nth-child(11) {{
+    color:#7FFF00;
+    font-weight:bold;
+}}
+</style>
+
+<div style='overflow-x:auto;height:650px;'>
+    {html_table}
+</div>
+""", height=700, scrolling=True)
