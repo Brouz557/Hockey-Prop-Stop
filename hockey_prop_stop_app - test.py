@@ -202,7 +202,8 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
             consistency_score = round(np.clip(10 - (cv * 10), 1, 10), 1)
             stars = "⭐" * int(consistency_score // 2) if consistency_score > 2 else "🌑"
             consist_display = f"{stars} ({consistency_score})"
-        else: consist_display = "N/A"
+        else:
+            consist_display = "N/A"
 
         baseline=(0.55*l10)+(0.3*l5)+(0.15*l3)
         trend=(l5-l10)/l10 if l10>0 else 0
@@ -212,11 +213,19 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
         if isinstance(line_adj,pd.DataFrame) and not line_adj.empty:
             last_name=str(player).split()[-1].lower()
             m=line_adj[line_adj["line pairings"].str.contains(last_name,case=False,na=False)]
-            if not m.empty: line_factor_internal=np.average(m["line_factor"],weights=m["games"])
+            if not m.empty:
+                line_factor_internal=np.average(m["line_factor"],weights=m["games"])
 
         opp_team=team_b if team==team_a else team_a
         goalie_factor=goalie_adj.get(opp_team,1.0)
-        lam=baseline*(1+(goalie_factor-1.0)*0.2)*line_factor_internal
+        
+        # --- Matchup Heat Rating ---
+        heat_multiplier = (1+(goalie_factor-1.0)*0.2)*line_factor_internal
+        heat_score = round(np.clip(heat_multiplier * 5, 1, 10), 1)
+        heat_flame = "🔥" * int(heat_score // 2) if heat_score > 4 else "🧊"
+        matchup_heat = f"{heat_flame} ({heat_score})"
+
+        lam=baseline*heat_multiplier
         poisson_prob=float(np.clip(1-poisson.cdf(np.floor(lam)-1,mu=max(lam,0.01)),0.0001,0.9999))
         
         injury_html=""
@@ -234,11 +243,18 @@ def build_model(team_a, team_b, skaters_df, shots_df, goalies_df, lines_df, team
         else: exp_goals,shooting_pct=np.nan,np.nan
 
         results.append({
-            "Player":player,"Team":team,"Injury":injury_html,"Consistency (L10)":consist_display,
-            "Trend Score":round(trend,3),"Final Projection":round(lam,2),
-            "Season Avg":round(np.mean(sog_vals),2),"Line Adj":round(line_factor_internal,2),
+            "Player":player,
+            "Team":team,
+            "Injury":injury_html,
+            "Consistency (L10)":consist_display,
+            "Matchup Heat":matchup_heat,
+            "Trend Score":round(trend,3),
+            "Final Projection":round(lam,2),
+            "Season Avg":round(np.mean(sog_vals),2),
+            "Line Adj":round(line_factor_internal,2),
             "Exp Goals (xG)":round(exp_goals,3) if not np.isnan(exp_goals) else "",
-            "Form Indicator":form_flag,"L10 Shots":", ".join(map(str,last10))
+            "Form Indicator":form_flag,
+            "L10 Shots":", ".join(map(str,last10))
         })
     return pd.DataFrame(results)
 
@@ -292,7 +308,7 @@ if "results" in st.session_state:
     df["Playable Odds"]=df["Prob ≥ Line (%)"].apply(get_odds)
 
     # Column Ordering & Display
-    cols_to_show = ["Player", "Team", "Injury", "Consistency (L10)", "Trend", "Final Projection", 
+    cols_to_show = ["Player", "Team", "Injury", "Consistency (L10)", "Matchup Heat", "Trend", "Final Projection", 
                     "Prob ≥ Line (%)", "Playable Odds", "Season Avg", "Exp Goals (xG)", "Form Indicator", "L10 Shots"]
     
     html_table=df[cols_to_show].to_html(index=False,escape=False)
@@ -305,7 +321,8 @@ if "results" in st.session_state:
     td {{ background-color:#0F2743; padding:4px; text-align:center; border-bottom:1px solid #142F52; }}
     tr:nth-child(even) td {{ background-color:#142F52; }}
     td:nth-child(4) {{ color:#FFD700; font-weight:bold; }} /* Consistency Col */
-    td:nth-child(10) {{ color:#7FFF00; font-weight:bold; }} /* xG Col */
+    td:nth-child(5) {{ color:#FF4500; font-weight:bold; }} /* Matchup Heat Col */
+    td:nth-child(11) {{ color:#7FFF00; font-weight:bold; }} /* xG Col */
     </style>
     <div style='overflow-x:auto;height:650px;'>{html_table}</div>
     """, height=700, scrolling=True)
