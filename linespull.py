@@ -7,7 +7,7 @@ import os
 # --------------------------------------------------
 st.set_page_config(page_title="Shot Matchup Exporter", layout="wide")
 st.title("🏒 Shot Matchup Exporter")
-st.caption("Game-by-Game Shot Breakdown (Player + Position)")
+st.caption("Game-by-Game Shot Breakdown (3+ SOG Only)")
 
 # --------------------------------------------------
 # Safe repo loader
@@ -48,7 +48,7 @@ if missing:
     st.stop()
 
 # --------------------------------------------------
-# Clean types
+# Clean / cast types
 # --------------------------------------------------
 shots["player"] = shots["player"].astype(str).str.strip()
 shots["position"] = shots["position"].astype(str).str.strip()
@@ -67,7 +67,7 @@ last_n = st.slider(
 )
 
 # --------------------------------------------------
-# Sort by recency (GAMEID works)
+# Sort by recency (GAMEID proxy)
 # --------------------------------------------------
 shots = shots.sort_values("game_id")
 
@@ -91,22 +91,27 @@ game_player_df = (
     )
 )
 
+# -------------------------
+# 🔒 FILTER: 3+ SHOTS ONLY
+# -------------------------
+game_player_df = game_player_df[game_player_df["shots_in_game"] >= 3]
+
 game_player_df = game_player_df.sort_values(
     ["game_id", "shots_in_game"],
     ascending=[True, False]
 )
 
 # ==================================================
-# LEVEL 2: GAME × OPPONENT × POSITION SUMMARY
+# LEVEL 2: GAME × OPPONENT × POSITION (FROM FILTERED DATA)
 # ==================================================
 game_position_df = (
-    recent
+    game_player_df
     .groupby(
         ["game_id", "opponent", "position"],
         as_index=False
     )
     .agg(
-        total_shots_allowed=("sog", "sum")
+        total_shots_allowed=("shots_in_game", "sum")
     )
 )
 
@@ -119,27 +124,27 @@ game_position_df = game_position_df.sort_values(
 # Display
 # --------------------------------------------------
 tab1, tab2 = st.tabs(
-    ["🎯 Game → Player Breakdown", "🔥 Game → Position Summary"]
+    ["🎯 Game → Player (3+ SOG)", "🔥 Game → Position (3+ SOG Players Only)"]
 )
 
 with tab1:
-    st.subheader("Game-by-Game Player Shot Totals")
+    st.subheader("Game-by-Game Player Shot Totals (≥ 3 SOG)")
     st.dataframe(game_player_df, use_container_width=True)
 
     st.download_button(
         "⬇️ Export Game-Player CSV",
         game_player_df.to_csv(index=False).encode("utf-8"),
-        "game_player_shots.csv",
+        "game_player_shots_3plus.csv",
         "text/csv"
     )
 
 with tab2:
-    st.subheader("Game-by-Game Opponent Shot Allowance (by Position)")
+    st.subheader("Game-by-Game Opponent Shot Allowance by Position (3+ SOG Only)")
     st.dataframe(game_position_df, use_container_width=True)
 
     st.download_button(
         "⬇️ Export Game-Position CSV",
         game_position_df.to_csv(index=False).encode("utf-8"),
-        "game_position_shots.csv",
+        "game_position_shots_3plus.csv",
         "text/csv"
     )
