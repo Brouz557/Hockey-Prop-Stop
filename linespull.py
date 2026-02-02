@@ -3,11 +3,10 @@ import pandas as pd
 import os
 
 st.set_page_config(page_title="Shot Matchup Exporter", layout="wide")
-
-st.title("🏒 Shot Matchup Exporter (Repo Safe)")
+st.title("🏒 Shot Matchup Exporter")
 
 # -------------------------
-# Safe file loading
+# Safe repo loader
 # -------------------------
 def load_repo_file(filename):
     for path in [filename, f"data/{filename}", f"./{filename}"]:
@@ -25,16 +24,32 @@ skaters = load_repo_file("Skaters.xlsx")
 shots.columns = shots.columns.str.lower().str.strip()
 skaters.columns = skaters.columns.str.lower().str.strip()
 
+# -------------------------
+# REQUIRED COLUMN MAPPING
+# -------------------------
+shots = shots.rename(columns={
+    "name": "player",
+    "game id": "game_id",
+    "sog": "sog",
+    "opponent": "opponent"
+})
+
+missing = [c for c in ["player", "game_id", "sog", "opponent"] if c not in shots.columns]
+if missing:
+    st.error(f"❌ Missing required columns: {missing}")
+    st.write("SHOT DATA columns:", list(shots.columns))
+    st.stop()
+
 shots["player"] = shots["player"].astype(str).str.strip()
 skaters["name"] = skaters["name"].astype(str).str.strip()
 
 # -------------------------
 # Controls
 # -------------------------
-last_n = st.slider("Number of recent games per player", 3, 20, 10)
+last_n = st.slider("Last N games per player", 3, 20, 10)
 
 # -------------------------
-# Attach positions
+# Join positions
 # -------------------------
 shots = shots.merge(
     skaters[["name", "position"]],
@@ -56,7 +71,7 @@ else:
 # Keep last N games per player
 # -------------------------
 shots["game_rank"] = shots.groupby("player").cumcount(ascending=False)
-recent = shots[shots["game_rank"] < last_n].copy()
+recent = shots[shots["game_rank"] < last_n]
 
 # -------------------------
 # Build export table
@@ -85,13 +100,11 @@ export_df = export_df[
 # -------------------------
 # Display + Export
 # -------------------------
-st.subheader("📊 Shot Matchups (Last Games)")
 st.dataframe(export_df, use_container_width=True)
 
-csv = export_df.to_csv(index=False).encode("utf-8")
 st.download_button(
     "⬇️ Export CSV",
-    csv,
+    export_df.to_csv(index=False).encode("utf-8"),
     "shot_matchups_last_games.csv",
     "text/csv"
 )
