@@ -1,19 +1,23 @@
 import streamlit as st
 import pandas as pd
+import os
 
 st.set_page_config(page_title="Shot Matchup Exporter", layout="wide")
 
-st.title("🏒 Shot Matchup Exporter (Repo Data)")
-st.caption("Uses SHOT DATA.xlsx + Skaters.xlsx from repo")
+st.title("🏒 Shot Matchup Exporter (Repo Safe)")
 
 # -------------------------
-# Load repo files
+# Safe file loading
 # -------------------------
-shots_path = "/mnt/data/SHOT DATA.xlsx"
-skaters_path = "/mnt/data/Skaters.xlsx"
+def load_repo_file(filename):
+    for path in [filename, f"data/{filename}", f"./{filename}"]:
+        if os.path.exists(path):
+            return pd.read_excel(path)
+    st.error(f"❌ File not found: {filename}")
+    st.stop()
 
-shots = pd.read_excel(shots_path)
-skaters = pd.read_excel(skaters_path)
+shots = load_repo_file("SHOT DATA.xlsx")
+skaters = load_repo_file("Skaters.xlsx")
 
 # -------------------------
 # Normalize columns
@@ -49,7 +53,7 @@ else:
     shots = shots.sort_values("game_id")
 
 # -------------------------
-# Keep last N games PER PLAYER
+# Keep last N games per player
 # -------------------------
 shots["game_rank"] = shots.groupby("player").cumcount(ascending=False)
 recent = shots[shots["game_rank"] < last_n].copy()
@@ -71,18 +75,8 @@ export_df["shots_per_game"] = (
     export_df["total_shots"] / export_df["games"]
 ).round(2)
 
-# -------------------------
-# Final column order
-# -------------------------
 export_df = export_df[
-    [
-        "opponent",
-        "player",
-        "position",
-        "shots_game_ids",
-        "total_shots",
-        "shots_per_game",
-    ]
+    ["opponent", "player", "position", "shots_game_ids", "total_shots", "shots_per_game"]
 ].sort_values(
     ["total_shots", "shots_per_game"],
     ascending=False
