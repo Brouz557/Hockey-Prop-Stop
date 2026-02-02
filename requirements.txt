@@ -14,3 +14,4 @@ plotly
 streamlit-authenticator
 pytz
 requests
+beautifulsoup4
