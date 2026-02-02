@@ -4,31 +4,31 @@ from bs4 import BeautifulSoup
 import pandas as pd
 import time
 
+# --------------------------------------------------
+# Config
+# --------------------------------------------------
 BASE_URL = "https://www.dailyfaceoff.com"
+HEADERS = {"User-Agent": "Mozilla/5.0"}
 
-headers = {
-    "User-Agent": "Mozilla/5.0"
-}
+st.set_page_config(
+    page_title="DailyFaceoff Line Scraper",
+    layout="wide"
+)
 
-st.set_page_config(page_title="DailyFaceoff Line Scraper", layout="wide")
-st.title("🏒 DailyFaceoff Line Combination Scraper")
-
-st.markdown("""
-This app scrapes **all NHL team line combinations and goalie statuses**
-from DailyFaceoff and exports them to CSV.
-""")
+st.title("🏒 DailyFaceoff Line & Goalie Scraper")
+st.caption("Scrapes all NHL teams • Line combinations • Goalie status")
 
 # --------------------------------------------------
 # Scraper Function
 # --------------------------------------------------
 def run_scraper():
-    teams_page = requests.get(f"{BASE_URL}/teams", headers=headers)
+    teams_page = requests.get(f"{BASE_URL}/teams", headers=HEADERS, timeout=20)
     soup = BeautifulSoup(teams_page.text, "html.parser")
 
     team_links = []
     for a in soup.select("a[href^='/teams/']"):
         href = a.get("href")
-        if href.count("/") == 2:
+        if href and href.count("/") == 2:
             team_links.append(BASE_URL + href)
 
     team_links = list(set(team_links))
@@ -41,33 +41,38 @@ def run_scraper():
 
     for i, team_url in enumerate(team_links):
         team_name = team_url.split("/")[-1].replace("-", " ").title()
-        url = team_url + "/line-combinations/"
+        page_url = team_url + "/line-combinations/"
 
-        status.text(f"Scraping {team_name}")
-        r = requests.get(url, headers=headers)
+        status.write(f"Scraping **{team_name}**")
+
+        r = requests.get(page_url, headers=HEADERS, timeout=20)
         soup = BeautifulSoup(r.text, "html.parser")
 
-        # ---------- Forwards & Defense ----------
-        for unit in soup.select(".line-combination"):
-            unit_label = unit.select_one(".line-combination__name")
-            if not unit_label:
+        # --------------------------------------------------
+        # FORWARDS & DEFENSE
+        # --------------------------------------------------
+        for table in soup.select("div[class*='line-combinations__table']"):
+            unit_title = table.select_one("div[class*='line-combinations__title']")
+            if not unit_title:
                 continue
 
-            unit_name = unit_label.text.strip()
-            players = unit.select(".player-name")
+            unit_name = unit_title.text.strip()
 
+            players = table.select("a[href*='/players/']")
             for p in players:
                 rows.append({
                     "team": team_name,
-                    "unit_type": "FWD" if unit_name.startswith("Line") else "DEF",
+                    "unit_type": "FWD" if "Line" in unit_name else "DEF",
                     "unit": unit_name,
                     "player": p.text.strip()
                 })
 
-        # ---------- Goalies ----------
-        for g in soup.select(".goalie"):
-            name = g.select_one(".player-name")
-            status_tag = g.select_one(".goalie-status")
+        # --------------------------------------------------
+        # GOALIES
+        # --------------------------------------------------
+        for g in soup.select("div[class*='goalie']"):
+            name = g.select_one("a[href*='/players/']")
+            status_tag = g.select_one("span")
 
             if name:
                 goalies.append({
@@ -92,14 +97,30 @@ if st.button("▶️ Run DailyFaceoff Scraper"):
     with st.spinner("Scraping DailyFaceoff…"):
         lines_df, goalies_df = run_scraper()
 
+    # --------------------------------------------------
+    # FAIL SAFES
+    # --------------------------------------------------
+    st.write("📊 Line rows scraped:", len(lines_df))
+    st.write("🥅 Goalie rows scraped:", len(goalies_df))
+
+    if lines_df.empty:
+        st.error("❌ No line data scraped. DailyFaceoff structure may have changed.")
+        st.stop()
+
     st.success("✅ Scraping complete!")
 
-    st.subheader("📄 Line Combinations Preview")
-    st.dataframe(lines_df.head(25), use_container_width=True)
+    # --------------------------------------------------
+    # PREVIEWS
+    # --------------------------------------------------
+    st.subheader("📄 Line Combinations (Preview)")
+    st.dataframe(lines_df.head(50), use_container_width=True)
 
-    st.subheader("🥅 Goalies Preview")
-    st.dataframe(goalies_df.head(25), use_container_width=True)
+    st.subheader("🥅 Goalies (Preview)")
+    st.dataframe(goalies_df.head(50), use_container_width=True)
 
+    # --------------------------------------------------
+    # DOWNLOADS
+    # --------------------------------------------------
     st.download_button(
         "⬇️ Download Line Combinations CSV",
         lines_df.to_csv(index=False),
@@ -113,3 +134,4 @@ if st.button("▶️ Run DailyFaceoff Scraper"):
         file_name="dailyfaceoff_goalies.csv",
         mime="text/csv"
     )
+
