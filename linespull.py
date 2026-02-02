@@ -3,25 +3,21 @@ import pandas as pd
 
 st.set_page_config(page_title="Shot Matchup Exporter", layout="wide")
 
-st.title("🏒 Shot Matchup Exporter")
-st.caption("Exports opponent → player → position shot data (Last N Games)")
+st.title("🏒 Shot Matchup Exporter (Repo Data)")
+st.caption("Uses SHOT DATA.xlsx + Skaters.xlsx from repo")
 
 # -------------------------
-# Uploads
+# Load repo files
 # -------------------------
-shots_file = st.file_uploader("Upload SHOT DATA", type=["xlsx","csv"])
-skaters_file = st.file_uploader("Upload SKATERS", type=["xlsx","csv"])
+shots_path = "/mnt/data/SHOT DATA.xlsx"
+skaters_path = "/mnt/data/Skaters.xlsx"
 
-if not shots_file or not skaters_file:
-    st.warning("Please upload both SHOT DATA and SKATERS.")
-    st.stop()
+shots = pd.read_excel(shots_path)
+skaters = pd.read_excel(skaters_path)
 
 # -------------------------
-# Load data
+# Normalize columns
 # -------------------------
-shots = pd.read_excel(shots_file) if shots_file.name.endswith("xlsx") else pd.read_csv(shots_file)
-skaters = pd.read_excel(skaters_file) if skaters_file.name.endswith("xlsx") else pd.read_csv(skaters_file)
-
 shots.columns = shots.columns.str.lower().str.strip()
 skaters.columns = skaters.columns.str.lower().str.strip()
 
@@ -31,7 +27,7 @@ skaters["name"] = skaters["name"].astype(str).str.strip()
 # -------------------------
 # Controls
 # -------------------------
-last_n = st.slider("Number of recent games", 3, 20, 10)
+last_n = st.slider("Number of recent games per player", 3, 20, 10)
 
 # -------------------------
 # Attach positions
@@ -53,7 +49,7 @@ else:
     shots = shots.sort_values("game_id")
 
 # -------------------------
-# Keep last N games per player
+# Keep last N games PER PLAYER
 # -------------------------
 shots["game_rank"] = shots.groupby("player").cumcount(ascending=False)
 recent = shots[shots["game_rank"] < last_n].copy()
@@ -95,7 +91,7 @@ export_df = export_df[
 # -------------------------
 # Display + Export
 # -------------------------
-st.subheader("📊 Shot Matchup Export Table")
+st.subheader("📊 Shot Matchups (Last Games)")
 st.dataframe(export_df, use_container_width=True)
 
 csv = export_df.to_csv(index=False).encode("utf-8")
