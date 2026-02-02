@@ -4,123 +4,95 @@ from bs4 import BeautifulSoup
 import pandas as pd
 import time
 
-BASE_URL = "https://www.dailyfaceoff.com"
+BASE_URL = "https://leftwinglock.com/teams"
 HEADERS = {"User-Agent": "Mozilla/5.0"}
 
-st.set_page_config(page_title="DailyFaceoff Line Scraper", layout="wide")
-st.title("🏒 DailyFaceoff Line & Goalie Scraper")
-st.caption("Forward lines 1–4 • Defensive pairings • Goalie status")
+st.set_page_config(page_title="LeftWingLock Line Scraper", layout="wide")
+st.title("🏒 LeftWingLock Line & Defense Parser (HTML)")
 
-# --------------------------------------------------
-# STEP 1: GET TEAM SLUGS (HTML – this works)
-# --------------------------------------------------
-def get_team_slugs():
-    r = requests.get(f"{BASE_URL}/teams", headers=HEADERS, timeout=20)
+st.markdown("""
+Scrapes projected forward lines & defensive pairings from LeftWingLock.
+Does NOT include goalies.
+""")
+
+def get_team_list():
+    r = requests.get(BASE_URL, headers=HEADERS, timeout=20)
     soup = BeautifulSoup(r.text, "html.parser")
 
-    slugs = set()
-    for a in soup.select("a[href^='/teams/']"):
+    teams = []
+    for a in soup.select("table tr td a"):
         href = a.get("href")
-        if href and href.count("/") == 2:
-            slugs.add(href.replace("/teams/", "").strip("/"))
+        if href and "/teams/" in href:
+            teams.append(href.strip("/"))
+    return sorted(list(set(teams)))
 
-    return sorted(slugs)
-
-# --------------------------------------------------
-# STEP 2: FETCH LINE JSON PER TEAM
-# --------------------------------------------------
-def fetch_team_lines(slug):
-    url = f"{BASE_URL}/api/teams/{slug}/line-combinations"
+def scrape_team_page(slug):
+    url = f"{BASE_URL}/{slug}/"
     r = requests.get(url, headers=HEADERS, timeout=20)
+    soup = BeautifulSoup(r.text, "html.parser")
 
-    if r.status_code != 200:
-        return None
-
-    try:
-        return r.json()
-    except Exception:
-        return None
-
-# --------------------------------------------------
-# STEP 3: PARSE JSON
-# --------------------------------------------------
-def parse_team_data(data):
     lines = []
-    goalies = []
+    defense = []
 
-    team_name = data["team"]["name"]
-
-    for unit in data.get("lines", []):
-        unit_type = unit.get("type", "").upper()      # FWD / DEF / PP / PK
-        unit_name = unit.get("position", "")          # Line 1 / Pairing 1 / PP1
-
-        for p in unit.get("players", []):
+    # ---- Forward Lines ----
+    for line_section in soup.select(".lines table"):
+        cells = [c.get_text(strip=True) for c in line_section.select("td")]
+        # Expected 3 players per forward line
+        if len(cells) >= 3:
             lines.append({
-                "team": team_name,
-                "unit_type": unit_type,
-                "unit": unit_name,
-                "player": p.get("fullName", "")
+                "team": slug,
+                "line_type": "FWD",
+                "line_combo": " ".join(cells[:3]),
+                "player1": cells[0],
+                "player2": cells[1],
+                "player3": cells[2]
             })
 
-    for g in data.get("goalies", []):
-        goalies.append({
-            "team": team_name,
-            "goalie": g.get("player", {}).get("fullName", ""),
-            "status": g.get("status", "")
-        })
+    # ---- Defense Pairings ----
+    for d_section in soup.select(".dcor table"):
+        cells = [c.get_text(strip=True) for c in d_section.select("td")]
+        if len(cells) >= 2:
+            defense.append({
+                "team": slug,
+                "pairing": f"{cells[0]} / {cells[1]}",
+                "d1": cells[0],
+                "d2": cells[1]
+            })
 
-    return lines, goalies
+    return lines, defense
 
-# --------------------------------------------------
-# UI
-# --------------------------------------------------
-if st.button("▶️ Run DailyFaceoff Scraper"):
-    slugs = get_team_slugs()
-
-    all_lines = []
-    all_goalies = []
+if st.button("📡 Fetch All Teams"):
+    slugs = get_team_list()
+    all_lines, all_def = [], []
 
     progress = st.progress(0)
     status = st.empty()
 
     for i, slug in enumerate(slugs):
-        status.write(f"Fetching **{slug}**")
-        data = fetch_team_lines(slug)
-
-        if data:
-            lines, goalies = parse_team_data(data)
-            all_lines.extend(lines)
-            all_goalies.extend(goalies)
-
+        status.write(f"Fetching {slug}")
+        lines, def_pairings = scrape_team_page(slug)
+        all_lines.extend(lines)
+        all_def.extend(def_pairings)
         progress.progress((i + 1) / len(slugs))
         time.sleep(0.5)
 
     lines_df = pd.DataFrame(all_lines)
-    goalies_df = pd.DataFrame(all_goalies)
+    def_df = pd.DataFrame(all_def)
 
-    st.write("📊 Line rows:", len(lines_df))
-    st.write("🥅 Goalie rows:", len(goalies_df))
+    st.write("⛸ Forward Lines rows:", len(lines_df))
+    st.write("🛡 Defense Pairings rows:", len(def_df))
 
-    if lines_df.empty:
-        st.error("❌ No line data returned — API structure may have changed.")
-        st.stop()
-
-    st.success("✅ Scraping complete!")
-
-    st.subheader("Line Combinations (Preview)")
-    st.dataframe(lines_df.head(50), use_container_width=True)
-
-    st.subheader("Goalies (Preview)")
-    st.dataframe(goalies_df.head(50), use_container_width=True)
+    st.dataframe(lines_df.head(40))
+    st.dataframe(def_df.head(40))
 
     st.download_button(
-        "⬇️ Download Line CSV",
+        "⬇️ Download Forward Lines CSV",
         lines_df.to_csv(index=False),
-        file_name="dailyfaceoff_lines.csv"
+        file_name="leftwinglock_lines.csv"
     )
 
     st.download_button(
-        "⬇️ Download Goalie CSV",
-        goalies_df.to_csv(index=False),
-        file_name="dailyfaceoff_goalies.csv"
+        "⬇️ Download Defense Pairings CSV",
+        def_df.to_csv(index=False),
+        file_name="leftwinglock_defense.csv"
     )
