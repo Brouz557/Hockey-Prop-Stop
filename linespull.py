@@ -1,60 +1,68 @@
 import streamlit as st
 import requests
+from bs4 import BeautifulSoup
 import pandas as pd
+import time
 
 BASE_URL = "https://www.dailyfaceoff.com"
-API_TEMPLATE = BASE_URL + "/api/teams/{team}/line-combinations"
+HEADERS = {"User-Agent": "Mozilla/5.0"}
 
-st.set_page_config(page_title="DailyFaceoff JSON Line Scraper", layout="wide")
-st.title("🏒 DailyFaceoff Line & Goalie Scraper (JSON API)")
+st.set_page_config(page_title="DailyFaceoff Line Scraper", layout="wide")
+st.title("🏒 DailyFaceoff Line & Goalie Scraper")
+st.caption("Forward lines 1–4 • Defensive pairings • Goalie status")
 
-st.markdown("""
-Scrapes structured JSON from DailyFaceoff’s internal API for all teams.
-Includes:
-- Forward lines (Line 1–4)
-- Defensive pairings
-- Power play / PK if available
-- Goalies + statuses
-""")
+# --------------------------------------------------
+# STEP 1: GET TEAM SLUGS (HTML – this works)
+# --------------------------------------------------
+def get_team_slugs():
+    r = requests.get(f"{BASE_URL}/teams", headers=HEADERS, timeout=20)
+    soup = BeautifulSoup(r.text, "html.parser")
 
-def fetch_team_slugs():
-    """Get all NHL team slugs from DailyFaceoff teams page JSON."""
-    r = requests.get(BASE_URL + "/teams")
-    soup = r.text
+    slugs = set()
+    for a in soup.select("a[href^='/teams/']"):
+        href = a.get("href")
+        if href and href.count("/") == 2:
+            slugs.add(href.replace("/teams/", "").strip("/"))
 
-    # The team page loads but contains slugs in the API data
-    # Best reliable way: parse via separate JSON endpoint
-    teams_api = requests.get(BASE_URL + "/api/teams").json()
-    return [t["slug"] for t in teams_api]
+    return sorted(slugs)
 
-def fetch_team_data(slug):
-    url = API_TEMPLATE.format(team=slug)
-    r = requests.get(url)
+# --------------------------------------------------
+# STEP 2: FETCH LINE JSON PER TEAM
+# --------------------------------------------------
+def fetch_team_lines(slug):
+    url = f"{BASE_URL}/api/teams/{slug}/line-combinations"
+    r = requests.get(url, headers=HEADERS, timeout=20)
+
     if r.status_code != 200:
         return None
-    return r.json()
 
-def parse_team_json(team_json):
+    try:
+        return r.json()
+    except Exception:
+        return None
+
+# --------------------------------------------------
+# STEP 3: PARSE JSON
+# --------------------------------------------------
+def parse_team_data(data):
     lines = []
     goalies = []
 
-    team_name = team_json["team"]["name"]
+    team_name = data["team"]["name"]
 
-    # Forward & Defensive Units
-    for unit in team_json.get("lines", []):
-        line_number = unit.get("position", "")
-        lineup_type = unit.get("type", "").upper()
+    for unit in data.get("lines", []):
+        unit_type = unit.get("type", "").upper()      # FWD / DEF / PP / PK
+        unit_name = unit.get("position", "")          # Line 1 / Pairing 1 / PP1
 
-        for player in unit.get("players", []):
+        for p in unit.get("players", []):
             lines.append({
                 "team": team_name,
-                "unit_type": lineup_type,
-                "line_number": line_number,
-                "player": player.get("fullName", "")
+                "unit_type": unit_type,
+                "unit": unit_name,
+                "player": p.get("fullName", "")
             })
 
-    # Goalie Info
-    for g in team_json.get("goalies", []):
+    for g in data.get("goalies", []):
         goalies.append({
             "team": team_name,
             "goalie": g.get("player", {}).get("fullName", ""),
@@ -63,8 +71,12 @@ def parse_team_json(team_json):
 
     return lines, goalies
 
-if st.button("📡 Fetch All Teams Line Data"):
-    slugs = fetch_team_slugs()
+# --------------------------------------------------
+# UI
+# --------------------------------------------------
+if st.button("▶️ Run DailyFaceoff Scraper"):
+    slugs = get_team_slugs()
+
     all_lines = []
     all_goalies = []
 
@@ -72,22 +84,43 @@ if st.button("📡 Fetch All Teams Line Data"):
     status = st.empty()
 
     for i, slug in enumerate(slugs):
-        status.write(f"Fetching {slug}…")
-        data = fetch_team_data(slug)
+        status.write(f"Fetching **{slug}**")
+        data = fetch_team_lines(slug)
+
         if data:
-            lines, goalies = parse_team_json(data)
+            lines, goalies = parse_team_data(data)
             all_lines.extend(lines)
             all_goalies.extend(goalies)
-        progress.progress((i+1)/len(slugs))
+
+        progress.progress((i + 1) / len(slugs))
+        time.sleep(0.5)
 
     lines_df = pd.DataFrame(all_lines)
     goalies_df = pd.DataFrame(all_goalies)
 
-    st.write("Lines rows:", len(lines_df))
-    st.write("Goalies rows:", len(goalies_df))
+    st.write("📊 Line rows:", len(lines_df))
+    st.write("🥅 Goalie rows:", len(goalies_df))
 
+    if lines_df.empty:
+        st.error("❌ No line data returned — API structure may have changed.")
+        st.stop()
+
+    st.success("✅ Scraping complete!")
+
+    st.subheader("Line Combinations (Preview)")
     st.dataframe(lines_df.head(50), use_container_width=True)
+
+    st.subheader("Goalies (Preview)")
     st.dataframe(goalies_df.head(50), use_container_width=True)
 
-    st.download_button("⬇️ Download Lines CSV", lines_df.to_csv(index=False), file_name="dailyfaceoff_lines.csv")
-    st.download_button("⬇️ Download Goalies CSV", goalies_df.to_csv(index=False), file_name="dailyfaceoff_goalies.csv")
+    st.download_button(
+        "⬇️ Download Line CSV",
+        lines_df.to_csv(index=False),
+        file_name="dailyfaceoff_lines.csv"
+    )
+
+    st.download_button(
+        "⬇️ Download Goalie CSV",
+        goalies_df.to_csv(index=False),
+        file_name="dailyfaceoff_goalies.csv"
+    )
