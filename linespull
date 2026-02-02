@@ -1,0 +1,81 @@
+import requests
+from bs4 import BeautifulSoup
+import pandas as pd
+import time
+
+BASE_URL = "https://www.dailyfaceoff.com"
+
+headers = {
+    "User-Agent": "Mozilla/5.0"
+}
+
+# --------------------------------------------------
+# Step 1: Get all team URLs
+# --------------------------------------------------
+teams_page = requests.get(f"{BASE_URL}/teams", headers=headers)
+soup = BeautifulSoup(teams_page.text, "html.parser")
+
+team_links = []
+for a in soup.select("a[href^='/teams/']"):
+    href = a.get("href")
+    if href.count("/") == 2:
+        team_links.append(BASE_URL + href)
+
+team_links = list(set(team_links))
+
+# --------------------------------------------------
+# Step 2: Scrape each team
+# --------------------------------------------------
+rows = []
+goalies = []
+
+for team_url in team_links:
+    team_name = team_url.split("/")[-1].replace("-", " ").title()
+    url = team_url + "/line-combinations/"
+
+    print(f"Scraping {team_name}")
+    r = requests.get(url, headers=headers)
+    soup = BeautifulSoup(r.text, "html.parser")
+
+    # ---------- Forwards & Defense ----------
+    for unit in soup.select(".line-combination"):
+        unit_label = unit.select_one(".line-combination__name")
+        if not unit_label:
+            continue
+
+        unit_name = unit_label.text.strip()
+
+        players = unit.select(".player-name")
+        for p in players:
+            rows.append({
+                "team": team_name,
+                "unit_type": "FWD" if unit_name.startswith("Line") else "DEF",
+                "unit": unit_name,
+                "player": p.text.strip()
+            })
+
+    # ---------- Goalies ----------
+    for g in soup.select(".goalie"):
+        name = g.select_one(".player-name")
+        status = g.select_one(".goalie-status")
+
+        if name:
+            goalies.append({
+                "team": team_name,
+                "goalie": name.text.strip(),
+                "status": status.text.strip() if status else "Unknown"
+            })
+
+    time.sleep(1)  # be polite
+
+# --------------------------------------------------
+# Step 3: Create DataFrames
+# --------------------------------------------------
+lines_df = pd.DataFrame(rows)
+goalies_df = pd.DataFrame(goalies)
+
+# Save files
+lines_df.to_csv("dailyfaceoff_lines.csv", index=False)
+goalies_df.to_csv("dailyfaceoff_goalies.csv", index=False)
+
+print("✅ Done. Files saved.")
