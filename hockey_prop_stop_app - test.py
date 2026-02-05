@@ -153,7 +153,7 @@ def build_opponent_sog_profile(shots_df, skaters_df):
     sk["player"] = sk["player"].astype(str).str.lower().str.strip()
 
     shots = shots_df.merge(sk, on="player", how="left")
-    shots = shots.dropna(subset=["position", SOG_COL])
+    shots = shots.dropna(subset=["position", "SOG"])
 
     profiles = {}
 
