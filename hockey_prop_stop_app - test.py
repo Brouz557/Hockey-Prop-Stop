@@ -185,49 +185,6 @@ def build_opponent_sog_profile(shots_df, skaters_df):
 opponent_profiles = build_opponent_sog_profile(shots_df, skaters_df)
 
 # ---------------------------------------------------------------
-# 🔍 DEBUG — VAN VALIDATION
-# ---------------------------------------------------------------
-st.markdown("## 🔍 DEBUG — Vancouver (VAN) 3+ SOG Defensemen")
-
-VAN_DEBUG = (
-    shots_df
-    .groupby(["player", game_col, "opponent"], as_index=False)["sog"]
-    .sum()
-)
-
-VAN_DEBUG = VAN_DEBUG[VAN_DEBUG["opponent"] == "VAN"]
-
-pos_lookup_dbg = (
-    skaters_df[[player_col, pos_col]]
-    .assign(player=lambda x: x[player_col].astype(str).str.lower().str.strip())
-    .rename(columns={pos_col: "position"})
-)
-
-VAN_DEBUG = VAN_DEBUG.merge(pos_lookup_dbg, on="player", how="left")
-
-VAN_DEBUG["position"] = VAN_DEBUG["position"].replace({
-    "LW": "L", "RW": "R", "LD": "D", "RD": "D"
-})
-
-last_20_games = (
-    VAN_DEBUG[[game_col]]
-    .drop_duplicates()
-    .tail(20)[game_col]
-    .tolist()
-)
-
-VAN_DEBUG = VAN_DEBUG[VAN_DEBUG[game_col].isin(last_20_games)]
-VAN_DEBUG = VAN_DEBUG[VAN_DEBUG["sog"] >= 3]
-VAN_DEBUG_D = VAN_DEBUG[VAN_DEBUG["position"] == "D"]
-
-st.write(
-    VAN_DEBUG_D[["player", game_col, "sog"]]
-    .drop_duplicates("player")
-    .sort_values("player")
-)
-st.write("**DEFENSEMEN COUNT:**", VAN_DEBUG_D["player"].nunique())
-
-# ---------------------------------------------------------------
 # Run model
 # ---------------------------------------------------------------
 if st.button("Run Model (All Games)", use_container_width=True):
