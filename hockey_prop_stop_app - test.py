@@ -1,11 +1,10 @@
 # ---------------------------------------------------------------
-# 🏒 Puck Shotz Hockey Analytics — Mobile (STABLE + SAFE ADDITION)
+# 🏒 Puck Shotz Hockey Analytics — Mobile (STABLE + FIXED)
 # ---------------------------------------------------------------
 import streamlit as st
 import pandas as pd
 import numpy as np
 import os, requests
-from scipy.stats import poisson
 import streamlit.components.v1 as components
 
 # ---------------------------------------------------------------
@@ -124,11 +123,21 @@ if not games:
     st.stop()
 
 # ---------------------------------------------------------------
-# 🔒 NEW: Opponent 3+ SOG Profile (SAFE, ADDITIVE)
+# Logo helper (RESTORED)
+# ---------------------------------------------------------------
+def team_logo(team):
+    for g in games:
+        if g["away"] == team:
+            return g["away_logo"]
+        if g["home"] == team:
+            return g["home_logo"]
+    return ""
+
+# ---------------------------------------------------------------
+# Opponent 3+ SOG Profile (SAFE + FIXED)
 # ---------------------------------------------------------------
 @st.cache_data(show_spinner=False)
 def build_opponent_sog_profile(shots_df, skaters_df):
-    # position lookup
     pos_lookup = (
         skaters_df[[player_col, pos_col]]
         .dropna()
@@ -136,14 +145,21 @@ def build_opponent_sog_profile(shots_df, skaters_df):
         .rename(columns={pos_col: "position"})
     )
 
-    # aggregate event-level shots → player-game-opponent
     pg = (
         shots_df
         .groupby(["player", game_col, "opponent"], as_index=False)["sog"]
         .sum()
     )
 
-    pg = pg.merge(pos_lookup[["player","position"]], on="player", how="left")
+    pg = pg.merge(pos_lookup, on="player", how="left")
+
+    # 🔧 POSITION NORMALIZATION (FIX #3)
+    pg["position"] = pg["position"].replace({
+        "LW": "L",
+        "RW": "R",
+        "LD": "D",
+        "RD": "D"
+    })
 
     profiles = {}
 
@@ -218,7 +234,7 @@ if st.button("Run Model (All Games)", use_container_width=True):
     st.success("Model built successfully")
 
 # ---------------------------------------------------------------
-# DISPLAY
+# DISPLAY (FIXED)
 # ---------------------------------------------------------------
 if "base_results" in st.session_state:
     df = st.session_state.base_results
@@ -237,7 +253,11 @@ if "base_results" in st.session_state:
 
     def render(team, tab):
         with tab:
-            tdf = df[(df["Team"] == team) & (df["Matchup"] == st.session_state.selected_match)]
+            tdf = (
+                df[(df["Team"] == team) & (df["Matchup"] == st.session_state.selected_match)]
+                .drop_duplicates("Player")        # 🔧 FIX #2
+                .sort_values("Final Projection", ascending=False)
+            )
 
             for _, r in tdf.iterrows():
                 opp = team_b if team == team_a else team_a
@@ -250,7 +270,11 @@ if "base_results" in st.session_state:
                                 color:#fff;display:flex;justify-content:space-between;">
 
                         <div style="width:65%;">
-                            <b>{r['Player']} ({r['Position']}) – {r['Team']}</b><br>
+                            <div style="display:flex;align-items:center;margin-bottom:6px;">
+                                <img src="{team_logo(team)}"
+                                     style="width:32px;height:32px;margin-right:10px;">
+                                <b>{r['Player']} ({r['Position']}) – {r['Team']}</b>
+                            </div>
                             Final Projection: <b>{r['Final Projection']}</b><br>
                             Season Avg: {r['Season Avg']}<br>
                             L3: {r['L3']}<br>
@@ -267,7 +291,7 @@ if "base_results" in st.session_state:
                         </div>
                     </div>
                     """,
-                    height=280
+                    height=300
                 )
 
     render(team_a, tabs[0])
