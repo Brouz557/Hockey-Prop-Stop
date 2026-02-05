@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Puck Shotz Hockey Analytics — Mobile (STABLE + FIXED)
+# 🏒 Puck Shotz Hockey Analytics — Mobile (FULL + DEBUG)
 # ---------------------------------------------------------------
 import streamlit as st
 import pandas as pd
@@ -70,7 +70,7 @@ for df in [skaters_df, shots_df, goalies_df, lines_df, teams_df]:
     df.columns = df.columns.str.lower().str.strip()
 
 # ---------------------------------------------------------------
-# Column detection (unchanged)
+# Column detection
 # ---------------------------------------------------------------
 team_col = next(c for c in skaters_df.columns if "team" in c)
 player_col = "name" if "name" in skaters_df.columns else skaters_df.columns[0]
@@ -123,7 +123,7 @@ if not games:
     st.stop()
 
 # ---------------------------------------------------------------
-# Logo helper (RESTORED)
+# Logo helper
 # ---------------------------------------------------------------
 def team_logo(team):
     for g in games:
@@ -134,7 +134,7 @@ def team_logo(team):
     return ""
 
 # ---------------------------------------------------------------
-# Opponent 3+ SOG Profile (SAFE + FIXED)
+# Opponent 3+ SOG Profile
 # ---------------------------------------------------------------
 @st.cache_data(show_spinner=False)
 def build_opponent_sog_profile(shots_df, skaters_df):
@@ -153,12 +153,9 @@ def build_opponent_sog_profile(shots_df, skaters_df):
 
     pg = pg.merge(pos_lookup, on="player", how="left")
 
-    # 🔧 POSITION NORMALIZATION (FIX #3)
+    # normalize positions
     pg["position"] = pg["position"].replace({
-        "LW": "L",
-        "RW": "R",
-        "LD": "D",
-        "RD": "D"
+        "LW": "L", "RW": "R", "LD": "D", "RD": "D"
     })
 
     profiles = {}
@@ -188,7 +185,50 @@ def build_opponent_sog_profile(shots_df, skaters_df):
 opponent_profiles = build_opponent_sog_profile(shots_df, skaters_df)
 
 # ---------------------------------------------------------------
-# Run model (UNCHANGED)
+# 🔍 DEBUG — VAN VALIDATION
+# ---------------------------------------------------------------
+st.markdown("## 🔍 DEBUG — Vancouver (VAN) 3+ SOG Defensemen")
+
+VAN_DEBUG = (
+    shots_df
+    .groupby(["player", game_col, "opponent"], as_index=False)["sog"]
+    .sum()
+)
+
+VAN_DEBUG = VAN_DEBUG[VAN_DEBUG["opponent"] == "VAN"]
+
+pos_lookup_dbg = (
+    skaters_df[[player_col, pos_col]]
+    .assign(player=lambda x: x[player_col].astype(str).str.lower().str.strip())
+    .rename(columns={pos_col: "position"})
+)
+
+VAN_DEBUG = VAN_DEBUG.merge(pos_lookup_dbg, on="player", how="left")
+
+VAN_DEBUG["position"] = VAN_DEBUG["position"].replace({
+    "LW": "L", "RW": "R", "LD": "D", "RD": "D"
+})
+
+last_20_games = (
+    VAN_DEBUG[[game_col]]
+    .drop_duplicates()
+    .tail(20)[game_col]
+    .tolist()
+)
+
+VAN_DEBUG = VAN_DEBUG[VAN_DEBUG[game_col].isin(last_20_games)]
+VAN_DEBUG = VAN_DEBUG[VAN_DEBUG["sog"] >= 3]
+VAN_DEBUG_D = VAN_DEBUG[VAN_DEBUG["position"] == "D"]
+
+st.write(
+    VAN_DEBUG_D[["player", game_col, "sog"]]
+    .drop_duplicates("player")
+    .sort_values("player")
+)
+st.write("**DEFENSEMEN COUNT:**", VAN_DEBUG_D["player"].nunique())
+
+# ---------------------------------------------------------------
+# Run model
 # ---------------------------------------------------------------
 if st.button("Run Model (All Games)", use_container_width=True):
     results = []
@@ -234,7 +274,7 @@ if st.button("Run Model (All Games)", use_container_width=True):
     st.success("Model built successfully")
 
 # ---------------------------------------------------------------
-# DISPLAY (FIXED)
+# DISPLAY
 # ---------------------------------------------------------------
 if "base_results" in st.session_state:
     df = st.session_state.base_results
@@ -255,7 +295,7 @@ if "base_results" in st.session_state:
         with tab:
             tdf = (
                 df[(df["Team"] == team) & (df["Matchup"] == st.session_state.selected_match)]
-                .drop_duplicates("Player")        # 🔧 FIX #2
+                .drop_duplicates("Player")
                 .sort_values("Final Projection", ascending=False)
             )
 
