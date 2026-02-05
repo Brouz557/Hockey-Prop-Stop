@@ -25,9 +25,15 @@ def load_repo_file(filename):
 shots = load_repo_file("SHOT DATA.xlsx")
 
 # --------------------------------------------------
+# Load SKATERS (team lookup ONLY)
+# --------------------------------------------------
+skaters = load_repo_file("Skaters.xlsx")
+
+# --------------------------------------------------
 # Normalize headers
 # --------------------------------------------------
 shots.columns = shots.columns.str.lower().str.strip()
+skaters.columns = skaters.columns.str.lower().str.strip()
 
 # --------------------------------------------------
 # LOCKED column mapping (YOUR schema)
@@ -40,6 +46,14 @@ shots = shots.rename(columns={
     "opponent": "opponent"
 })
 
+skaters = skaters.rename(columns={
+    "name": "player",
+    "team": "team"
+})
+
+# --------------------------------------------------
+# Required column check
+# --------------------------------------------------
 required = ["player", "position", "game_id", "sog", "opponent"]
 missing = [c for c in required if c not in shots.columns]
 if missing:
@@ -55,6 +69,22 @@ shots["position"] = shots["position"].astype(str).str.strip()
 shots["opponent"] = shots["opponent"].astype(str).str.strip()
 shots["game_id"] = shots["game_id"].astype(str)
 shots["sog"] = pd.to_numeric(shots["sog"], errors="coerce").fillna(0)
+
+skaters["player"] = skaters["player"].astype(str).str.strip()
+skaters["team"] = skaters["team"].astype(str).str.strip()
+
+# --------------------------------------------------
+# 🔹 ADD TEAM TO SHOTS (NO LOGIC CHANGES)
+# --------------------------------------------------
+player_team = skaters[["player", "team"]].drop_duplicates()
+
+shots = shots.merge(
+    player_team,
+    on="player",
+    how="left"
+)
+
+shots["team"] = shots["team"].fillna("UNK")
 
 # --------------------------------------------------
 # Controls
@@ -78,12 +108,12 @@ shots["game_rank"] = shots.groupby("player").cumcount(ascending=False)
 recent = shots[shots["game_rank"] < last_n].copy()
 
 # ==================================================
-# LEVEL 1: GAME × PLAYER × POSITION
+# LEVEL 1: GAME × PLAYER × POSITION (+ TEAM)
 # ==================================================
 game_player_df = (
     recent
     .groupby(
-        ["game_id", "opponent", "player", "position"],
+        ["game_id", "opponent", "team", "player", "position"],
         as_index=False
     )
     .agg(
@@ -102,12 +132,12 @@ game_player_df = game_player_df.sort_values(
 )
 
 # ==================================================
-# LEVEL 2: GAME × OPPONENT × POSITION (FROM FILTERED DATA)
+# LEVEL 2: GAME × OPPONENT × POSITION (+ TEAM)
 # ==================================================
 game_position_df = (
     game_player_df
     .groupby(
-        ["game_id", "opponent", "position"],
+        ["game_id", "opponent", "team", "position"],
         as_index=False
     )
     .agg(
