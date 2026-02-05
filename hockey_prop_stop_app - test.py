@@ -77,10 +77,12 @@ if skaters_df.empty or shots_df.empty:
 for df in [skaters_df, shots_df, goalies_df, lines_df, teams_df]:
     df.columns = df.columns.str.lower().str.strip()
 
+# ---------------------------------------------------------------
+# Column detection
+# ---------------------------------------------------------------
 team_col = next(c for c in skaters_df.columns if "team" in c)
 player_col = "name" if "name" in skaters_df.columns else skaters_df.columns[0]
 
-# 🔹 POSITION COLUMN (SAFE DETECTION)
 pos_col = next(
     (c for c in skaters_df.columns if c in ["position", "pos", "primary position"]),
     None
@@ -89,6 +91,8 @@ pos_col = next(
 shots_player_col = next(c for c in shots_df.columns if "player" in c or "name" in c)
 shots_df = shots_df.rename(columns={shots_player_col: "player"})
 shots_df["player"] = shots_df["player"].astype(str).str.strip()
+shots_df["opponent"] = shots_df["opponent"].astype(str).str.strip().str.upper()
+
 game_col = next(c for c in shots_df.columns if "game" in c)
 
 # ---------------------------------------------------------------
@@ -132,6 +136,54 @@ line_test = st.number_input(
 st.session_state.line_test_val = line_test
 
 # ---------------------------------------------------------------
+# Opponent defensive profile (LEAGUE-WIDE VS OPPONENT)
+# ---------------------------------------------------------------
+@st.cache_data(show_spinner=False)
+def build_opponent_sog_profile(shots_df, skaters_df):
+    if pos_col is None or "opponent" not in shots_df.columns:
+        return {}
+
+    shots = shots_df.copy()
+    shots["player"] = shots["player"].str.lower().str.strip()
+
+    sk = skaters_df[[player_col, team_col, pos_col]].copy()
+    sk.columns = ["player", "team", "position"]
+    sk["player"] = sk["player"].str.lower().str.strip()
+
+    shots = shots.merge(sk, on="player", how="left")
+
+    profiles = {}
+
+    for opp in shots["opponent"].dropna().unique():
+        vs = shots[shots["opponent"] == opp]
+
+        recent_games = (
+            vs[[game_col]]
+            .drop_duplicates()
+            .tail(20)[game_col]
+            .tolist()
+        )
+
+        recent = vs[vs[game_col].isin(recent_games)]
+
+        per_game = (
+            recent.groupby(["player", "position", game_col], as_index=False)["sog"]
+            .sum()
+        )
+
+        per_game = per_game[per_game["sog"] >= 3]
+
+        profiles[opp] = (
+            per_game.groupby("position")["player"]
+            .nunique()
+            .to_dict()
+        )
+
+    return profiles
+
+opponent_profiles = build_opponent_sog_profile(shots_df, skaters_df)
+
+# ---------------------------------------------------------------
 # Run model
 # ---------------------------------------------------------------
 if st.button("Run Model (All Games)", use_container_width=True):
@@ -141,17 +193,6 @@ if st.button("Run Model (All Games)", use_container_width=True):
         team_a, team_b = g["away"], g["home"]
         roster = skaters_df[skaters_df[team_col].isin([team_a, team_b])]
         grouped = {n.lower(): d for n, d in shots_df.groupby(shots_df["player"].str.lower())}
-
-        line_adj = pd.DataFrame()
-        if not lines_df.empty and {"line pairings","team","games","sog against"}.issubset(lines_df.columns):
-            l = lines_df.copy()
-            l["games"] = pd.to_numeric(l["games"], errors="coerce").fillna(0)
-            l["sog against"] = pd.to_numeric(l["sog against"], errors="coerce").fillna(0)
-            l = l.groupby(["line pairings","team"], as_index=False).agg({"games":"sum","sog against":"sum"})
-            l["sog_against_per_game"] = np.where(l["games"]>0, l["sog against"]/l["games"], np.nan)
-            league_avg = l.groupby("team")["sog_against_per_game"].mean().mean()
-            l["line_factor"] = (league_avg / l["sog_against_per_game"]).clip(0.7,1.3)
-            line_adj = l
 
         for _, r in roster.iterrows():
             player = str(r[player_col])
@@ -166,28 +207,9 @@ if st.button("Run Model (All Games)", use_container_width=True):
             if len(sog_vals) < 3:
                 continue
 
-            if "goal" in df_p.columns:
-                agg = df_p.groupby(game_col).agg({"sog":"sum","goal":"sum"})
-                total_shots = agg["sog"].sum()
-                total_goals = agg["goal"].sum()
-                shooting_pct = (total_goals / total_shots) if total_shots > 0 else np.nan
-            else:
-                shooting_pct = np.nan
-
             l3, l5, l10 = np.mean(sog_vals[-3:]), np.mean(sog_vals[-5:]), np.mean(sog_vals[-10:])
             baseline = 0.55*l10 + 0.3*l5 + 0.15*l3
-
-            trend = (l5 - l10) / l10 if l10 > 0 else 0
-            form = "Above Baseline" if trend > 0.05 else "Below Baseline" if trend < -0.05 else "Neutral"
-
-            line_factor = 1.0
-            if not line_adj.empty:
-                last = player.split()[-1].lower()
-                m = line_adj[line_adj["line pairings"].str.contains(last, case=False, na=False)]
-                if not m.empty:
-                    line_factor = np.average(m["line_factor"], weights=m["games"])
-
-            lam = baseline * line_factor
+            lam = baseline
 
             results.append({
                 "Player": player,
@@ -195,48 +217,25 @@ if st.button("Run Model (All Games)", use_container_width=True):
                 "Team": team,
                 "Matchup": f"{team_a}@{team_b}",
                 "Final Projection": round(lam,2),
-                "Line Adj": round(line_factor,2),
-                "Form": form,
                 "Season Avg": round(np.mean(sog_vals),2),
-                "Shooting %": round(shooting_pct*100,2) if not np.isnan(shooting_pct) else "",
                 "L3": ", ".join(map(str, sog_vals[-3:])),
                 "L5": ", ".join(map(str, sog_vals[-5:])),
                 "L10": ", ".join(map(str, sog_vals[-10:])),
             })
 
     st.session_state.base_results = pd.DataFrame(results)
-    st.success("Model built and cached")
-
-# ---------------------------------------------------------------
-# Apply line test
-# ---------------------------------------------------------------
-def apply_line_test(df, line):
-    df = df.copy()
-    probs, odds = [], []
-
-    for lam in df["Final Projection"]:
-        p = 1 - poisson.cdf(line - 1, mu=max(lam, 0.01))
-        p = np.clip(p, 0.0001, 0.9999)
-        probs.append(round(p*100,1))
-        o = -100*(p/(1-p)) if p>=0.5 else 100*((1-p)/p)
-        odds.append(f"{'+' if o>0 else ''}{int(round(o))}")
-
-    df["Prob ≥ Line (%)"] = probs
-    df["Playable Odds"] = odds
-    return df
+    st.success("Model built")
 
 # ---------------------------------------------------------------
 # DISPLAY
 # ---------------------------------------------------------------
 if "base_results" in st.session_state:
-    df = apply_line_test(st.session_state.base_results, st.session_state.line_test_val)
+    df = st.session_state.base_results
 
     if "selected_match" not in st.session_state:
         st.session_state.selected_match = f"{games[0]['away']}@{games[0]['home']}"
 
-    st.markdown("## Matchups")
     cols = st.columns(3)
-
     for i, g in enumerate(games):
         with cols[i % 3]:
             if st.button(f"{g['away']} @ {g['home']}", use_container_width=True):
@@ -255,34 +254,37 @@ if "base_results" in st.session_state:
 
     def render(team, tab):
         with tab:
-            tdf = (
-                df[(df["Team"]==team)&(df["Matchup"]==st.session_state.selected_match)]
-                .drop_duplicates("Player")
-                .sort_values("Final Projection", ascending=False)
-            )
+            tdf = df[(df["Team"] == team) & (df["Matchup"] == st.session_state.selected_match)]
 
             for _, r in tdf.iterrows():
+                opp = team_b if team == team_a else team_a
+                prof = opponent_profiles.get(opp, {})
+
                 components.html(
                     f"""
                     <div style="background:#0F2743;border:1px solid #1E5A99;
-                                border-radius:16px;padding:16px;margin-bottom:16px;color:#fff;">
-                        <div style="display:flex;align-items:center;margin-bottom:6px;">
-                            <img src="{team_logo(team)}" style="width:32px;height:32px;margin-right:10px;">
-                            <b>{r['Player']}{f" ({r['Position']})" if r['Position'] else ""} – {r['Team']}</b>
+                                border-radius:16px;padding:16px;margin-bottom:16px;
+                                color:#fff;display:flex;justify-content:space-between;">
+
+                        <div style="width:65%;">
+                            <b>{r['Player']} ({r['Position']})</b><br>
+                            Final Projection: <b>{r['Final Projection']}</b><br>
+                            Season Avg: {r['Season Avg']}<br>
+                            L3: {r['L3']}<br>
+                            L5: {r['L5']}<br>
+                            L10: {r['L10']}
                         </div>
-                        <div>Final Projection: <b>{r['Final Projection']}</b></div>
-                        <div>Line Adj: <b>{r['Line Adj']}</b></div>
-                        <div>Form: <b>{r['Form']}</b></div>
-                        <div>Prob ≥ Line: <b>{r['Prob ≥ Line (%)']}%</b></div>
-                        <div>Playable Odds: <b>{r['Playable Odds']}</b></div>
-                        <div>Season Avg: {r['Season Avg']}</div>
-                        <div>Shooting %: <b>{r['Shooting %']}%</b></div>
-                        <div>L3: {r['L3']}</div>
-                        <div>L5: {r['L5']}</div>
-                        <div>L10: {r['L10']}</div>
+
+                        <div style="width:30%;border-left:1px solid #1E5A99;padding-left:10px;">
+                            <b>VS {opp}</b><br>
+                            D – {prof.get("D",0)}<br>
+                            R – {prof.get("R",0)}<br>
+                            L – {prof.get("L",0)}<br>
+                            C – {prof.get("C",0)}
+                        </div>
                     </div>
                     """,
-                    height=340
+                    height=280
                 )
 
     render(team_a, tabs[0])
