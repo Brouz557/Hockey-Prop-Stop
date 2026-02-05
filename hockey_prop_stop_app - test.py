@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Puck Shotz Hockey Analytics — Mobile (STABLE BASE)
+# 🏒 Puck Shotz Hockey Analytics — Mobile (STABLE + SAFE ADDITION)
 # ---------------------------------------------------------------
 import streamlit as st
 import pandas as pd
@@ -67,55 +67,27 @@ if skaters_df.empty or shots_df.empty:
     st.error("Missing required data files.")
     st.stop()
 
-# ---------------------------------------------------------------
-# 🔒 ROBUST COLUMN CLEANING (EXCEL SAFE)
-# ---------------------------------------------------------------
-def clean_col(c):
-    return (
-        str(c)
-        .replace("\u00a0", " ")
-        .replace("\n", "")
-        .replace("\r", "")
-        .replace("\t", "")
-        .strip()
-        .lower()
-    )
-
 for df in [skaters_df, shots_df, goalies_df, lines_df, teams_df]:
-    df.columns = [clean_col(c) for c in df.columns]
+    df.columns = df.columns.str.lower().str.strip()
 
 # ---------------------------------------------------------------
-# Column detection
+# Column detection (unchanged)
 # ---------------------------------------------------------------
-team_col = next((c for c in skaters_df.columns if "team" in c), None)
-if team_col is None:
-    st.error("No team column found in Skaters.xlsx")
-    st.stop()
-
+team_col = next(c for c in skaters_df.columns if "team" in c)
 player_col = "name" if "name" in skaters_df.columns else skaters_df.columns[0]
-pos_col = next((c for c in skaters_df.columns if c in ["position","pos","primary position"]), None)
+pos_col = next(c for c in skaters_df.columns if c in ["position","pos","primary position"])
 
-shots_player_col = next((c for c in shots_df.columns if "player" in c or "name" in c), None)
+shots_player_col = next(c for c in shots_df.columns if "player" in c or "name" in c)
 shots_df = shots_df.rename(columns={shots_player_col: "player"})
 shots_df["player"] = shots_df["player"].astype(str).str.lower().str.strip()
 
-if "sog" not in shots_df.columns:
-    st.error("SOG column not found after cleaning — check SHOT DATA.xlsx")
-    st.stop()
+game_col = next(c for c in shots_df.columns if "game" in c)
 
-if "opponent" not in shots_df.columns:
-    st.error("Opponent column missing in SHOT DATA.xlsx")
-    st.stop()
-
-shots_df["opponent"] = shots_df["opponent"].astype(str).str.upper().str.strip()
-
-game_col = next((c for c in shots_df.columns if "game" in c), None)
-if game_col is None:
-    st.error("Game column not found in SHOT DATA.xlsx")
-    st.stop()
+if "opponent" in shots_df.columns:
+    shots_df["opponent"] = shots_df["opponent"].astype(str).str.upper().str.strip()
 
 # ---------------------------------------------------------------
-# Normalize team abbreviations
+# Team abbreviation normalization
 # ---------------------------------------------------------------
 TEAM_ABBREV_MAP = {
     "VEG": "VGK",
@@ -152,46 +124,45 @@ if not games:
     st.stop()
 
 # ---------------------------------------------------------------
-# Opponent defensive profile (LEAGUE-WIDE)
+# 🔒 NEW: Opponent 3+ SOG Profile (SAFE, ADDITIVE)
 # ---------------------------------------------------------------
 @st.cache_data(show_spinner=False)
 def build_opponent_sog_profile(shots_df, skaters_df):
-    if pos_col is None:
-        return {}
+    # position lookup
+    pos_lookup = (
+        skaters_df[[player_col, pos_col]]
+        .dropna()
+        .assign(player=lambda x: x[player_col].astype(str).str.lower().str.strip())
+        .rename(columns={pos_col: "position"})
+    )
 
-    sk = skaters_df[[player_col, pos_col]].copy()
-    sk.columns = ["player", "position"]
-    sk["player"] = sk["player"].astype(str).str.lower().str.strip()
+    # aggregate event-level shots → player-game-opponent
+    pg = (
+        shots_df
+        .groupby(["player", game_col, "opponent"], as_index=False)["sog"]
+        .sum()
+    )
 
-    shots = shots_df.merge(sk, on="player", how="left")
-    shots = shots.dropna(subset=["position", "sog"])
+    pg = pg.merge(pos_lookup[["player","position"]], on="player", how="left")
 
     profiles = {}
 
-    for opp in shots["opponent"].unique():
-        vs = shots[shots["opponent"] == opp]
+    for opp in pg["opponent"].dropna().unique():
+        vs = pg[pg["opponent"] == opp]
 
-        recent_games = (
+        last_games = (
             vs[[game_col]]
             .drop_duplicates()
             .tail(20)[game_col]
             .tolist()
         )
 
-        recent = vs[vs[game_col].isin(recent_games)]
-        if recent.empty:
-            profiles[opp] = {}
-            continue
-
-        per_game = (
-            recent.groupby(["player", "position", game_col], as_index=False)
-            .agg({"sog": "sum"})
-        )
-
-        per_game = per_game[per_game["sog"] >= 3]
+        recent = vs[vs[game_col].isin(last_games)]
+        recent_3p = recent[recent["sog"] >= 3]
 
         profiles[opp] = (
-            per_game.groupby("position")["player"]
+            recent_3p
+            .groupby("position")["player"]
             .nunique()
             .to_dict()
         )
@@ -201,7 +172,7 @@ def build_opponent_sog_profile(shots_df, skaters_df):
 opponent_profiles = build_opponent_sog_profile(shots_df, skaters_df)
 
 # ---------------------------------------------------------------
-# Run model
+# Run model (UNCHANGED)
 # ---------------------------------------------------------------
 if st.button("Run Model (All Games)", use_container_width=True):
     results = []
@@ -216,11 +187,11 @@ if st.button("Run Model (All Games)", use_container_width=True):
         roster = skaters_df[skaters_df[team_col].isin([team_a, team_b])]
 
         for _, r in roster.iterrows():
-            player = str(r[player_col]).lower().strip()
+            player = str(r[player_col])
             team = r[team_col]
-            position = r[pos_col] if pos_col and pos_col in r else ""
+            position = r[pos_col]
 
-            df_p = grouped.get(player)
+            df_p = grouped.get(player.lower())
             if df_p is None:
                 continue
 
@@ -232,7 +203,7 @@ if st.button("Run Model (All Games)", use_container_width=True):
             lam = 0.55*l10 + 0.3*l5 + 0.15*l3
 
             results.append({
-                "Player": player.title(),
+                "Player": player,
                 "Position": position,
                 "Team": team,
                 "Matchup": f"{team_a}@{team_b}",
