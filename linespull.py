@@ -25,7 +25,7 @@ def load_repo_file(filename):
 shots = load_repo_file("SHOT DATA.xlsx")
 
 # --------------------------------------------------
-# Load SKATERS (team lookup ONLY)
+# Load SKATERS (team lookup only)
 # --------------------------------------------------
 skaters = load_repo_file("Skaters.xlsx")
 
@@ -36,7 +36,7 @@ shots.columns = shots.columns.str.lower().str.strip()
 skaters.columns = skaters.columns.str.lower().str.strip()
 
 # --------------------------------------------------
-# LOCKED column mapping (YOUR schema)
+# LOCKED column mapping (SHOT DATA)
 # --------------------------------------------------
 shots = shots.rename(columns={
     "name": "player",
@@ -46,14 +46,6 @@ shots = shots.rename(columns={
     "opponent": "opponent"
 })
 
-skaters = skaters.rename(columns={
-    "name": "player",
-    "team": "team"
-})
-
-# --------------------------------------------------
-# Required column check
-# --------------------------------------------------
 required = ["player", "position", "game_id", "sog", "opponent"]
 missing = [c for c in required if c not in shots.columns]
 if missing:
@@ -62,7 +54,7 @@ if missing:
     st.stop()
 
 # --------------------------------------------------
-# Clean / cast types
+# Clean / cast SHOT DATA
 # --------------------------------------------------
 shots["player"] = shots["player"].astype(str).str.strip()
 shots["position"] = shots["position"].astype(str).str.strip()
@@ -70,19 +62,39 @@ shots["opponent"] = shots["opponent"].astype(str).str.strip()
 shots["game_id"] = shots["game_id"].astype(str)
 shots["sog"] = pd.to_numeric(shots["sog"], errors="coerce").fillna(0)
 
+# --------------------------------------------------
+# 🔒 SAFE TEAM EXTRACTION FROM SKATERS
+# --------------------------------------------------
+player_col = "name" if "name" in skaters.columns else None
+team_col = next((c for c in skaters.columns if "team" in c), None)
+
+if not player_col or not team_col:
+    st.error("❌ Could not identify player/team columns in Skaters.xlsx")
+    st.write("Skaters columns:", list(skaters.columns))
+    st.stop()
+
+skaters = skaters.rename(columns={
+    player_col: "player",
+    team_col: "team"
+})
+
 skaters["player"] = skaters["player"].astype(str).str.strip()
 skaters["team"] = skaters["team"].astype(str).str.strip()
 
-# --------------------------------------------------
-# 🔹 ADD TEAM TO SHOTS (NO LOGIC CHANGES)
-# --------------------------------------------------
 player_team = skaters[["player", "team"]].drop_duplicates()
 
+# --------------------------------------------------
+# 🔗 MERGE TEAM INTO SHOTS (GUARANTEED SAFE)
+# --------------------------------------------------
 shots = shots.merge(
     player_team,
     on="player",
     how="left"
 )
+
+if "team" not in shots.columns:
+    st.error("❌ Team column failed to merge into shots.")
+    st.stop()
 
 shots["team"] = shots["team"].fillna("UNK")
 
