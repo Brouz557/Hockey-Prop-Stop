@@ -5,6 +5,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import os, requests
+from scipy.stats import poisson
 import streamlit.components.v1 as components
 
 # ---------------------------------------------------------------
@@ -66,13 +67,31 @@ if skaters_df.empty or shots_df.empty:
     st.error("Missing required data files.")
     st.stop()
 
+# ---------------------------------------------------------------
+# 🔒 ROBUST COLUMN CLEANING (EXCEL SAFE)
+# ---------------------------------------------------------------
+def clean_col(c):
+    return (
+        str(c)
+        .replace("\u00a0", " ")
+        .replace("\n", "")
+        .replace("\r", "")
+        .replace("\t", "")
+        .strip()
+        .lower()
+    )
+
 for df in [skaters_df, shots_df, goalies_df, lines_df, teams_df]:
-    df.columns = df.columns.str.strip().str.lower()
+    df.columns = [clean_col(c) for c in df.columns]
 
 # ---------------------------------------------------------------
 # Column detection
 # ---------------------------------------------------------------
 team_col = next((c for c in skaters_df.columns if "team" in c), None)
+if team_col is None:
+    st.error("No team column found in Skaters.xlsx")
+    st.stop()
+
 player_col = "name" if "name" in skaters_df.columns else skaters_df.columns[0]
 pos_col = next((c for c in skaters_df.columns if c in ["position","pos","primary position"]), None)
 
@@ -80,27 +99,19 @@ shots_player_col = next((c for c in shots_df.columns if "player" in c or "name" 
 shots_df = shots_df.rename(columns={shots_player_col: "player"})
 shots_df["player"] = shots_df["player"].astype(str).str.lower().str.strip()
 
-game_col = next((c for c in shots_df.columns if "game" in c), None)
-
-# ---------------------------------------------------------------
-# 🔒 ROBUST SOG COLUMN DETECTION (ROOT FIX)
-# ---------------------------------------------------------------
-SOG_COL = next(
-    (c for c in shots_df.columns if c.replace(" ", "") == "sog" or "sog" in c),
-    None
-)
-
-if SOG_COL is None:
-    st.error("Could not detect SOG column in SHOT DATA.xlsx")
+if "sog" not in shots_df.columns:
+    st.error("SOG column not found after cleaning — check SHOT DATA.xlsx")
     st.stop()
 
-# ---------------------------------------------------------------
-# Opponent column
-# ---------------------------------------------------------------
-if "opponent" in shots_df.columns:
-    shots_df["opponent"] = shots_df["opponent"].astype(str).str.upper().str.strip()
-else:
+if "opponent" not in shots_df.columns:
     st.error("Opponent column missing in SHOT DATA.xlsx")
+    st.stop()
+
+shots_df["opponent"] = shots_df["opponent"].astype(str).str.upper().str.strip()
+
+game_col = next((c for c in shots_df.columns if "game" in c), None)
+if game_col is None:
+    st.error("Game column not found in SHOT DATA.xlsx")
     st.stop()
 
 # ---------------------------------------------------------------
@@ -145,7 +156,7 @@ if not games:
 # ---------------------------------------------------------------
 @st.cache_data(show_spinner=False)
 def build_opponent_sog_profile(shots_df, skaters_df):
-    if pos_col is None or game_col is None:
+    if pos_col is None:
         return {}
 
     sk = skaters_df[[player_col, pos_col]].copy()
@@ -153,7 +164,7 @@ def build_opponent_sog_profile(shots_df, skaters_df):
     sk["player"] = sk["player"].astype(str).str.lower().str.strip()
 
     shots = shots_df.merge(sk, on="player", how="left")
-    shots = shots.dropna(subset=["position", "SOG"])
+    shots = shots.dropna(subset=["position", "sog"])
 
     profiles = {}
 
@@ -173,12 +184,11 @@ def build_opponent_sog_profile(shots_df, skaters_df):
             continue
 
         per_game = (
-            recent
-            .groupby(["player", "position", game_col], as_index=False)
-            .agg({SOG_COL: "sum"})
+            recent.groupby(["player", "position", game_col], as_index=False)
+            .agg({"sog": "sum"})
         )
 
-        per_game = per_game[per_game[SOG_COL] >= 3]
+        per_game = per_game[per_game["sog"] >= 3]
 
         profiles[opp] = (
             per_game.groupby("position")["player"]
@@ -214,7 +224,7 @@ if st.button("Run Model (All Games)", use_container_width=True):
             if df_p is None:
                 continue
 
-            sog_vals = df_p.groupby(game_col)[SOG_COL].sum().tolist()
+            sog_vals = df_p.groupby(game_col)["sog"].sum().tolist()
             if len(sog_vals) < 3:
                 continue
 
