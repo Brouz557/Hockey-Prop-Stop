@@ -74,6 +74,10 @@ for df in [skaters_df, shots_df, goalies_df, lines_df, teams_df]:
 # Column detection (SAFE)
 # ---------------------------------------------------------------
 team_col = next((c for c in skaters_df.columns if "team" in c), None)
+if team_col is None:
+    st.error("No team column found in Skaters.xlsx")
+    st.stop()
+
 player_col = "name" if "name" in skaters_df.columns else skaters_df.columns[0]
 pos_col = next((c for c in skaters_df.columns if c in ["position","pos","primary position"]), None)
 
@@ -85,6 +89,20 @@ if "opponent" in shots_df.columns:
     shots_df["opponent"] = shots_df["opponent"].astype(str).str.upper().str.strip()
 
 game_col = next((c for c in shots_df.columns if "game" in c), None)
+
+# ---------------------------------------------------------------
+# Normalize opponent abbreviations (IMPORTANT)
+# ---------------------------------------------------------------
+TEAM_ABBREV_MAP = {
+    "VEG": "VGK",
+    "NJ": "NJD",
+    "LA": "LAK",
+    "SJ": "SJS",
+    "TB": "TBL"
+}
+
+if "opponent" in shots_df.columns:
+    shots_df["opponent"] = shots_df["opponent"].replace(TEAM_ABBREV_MAP)
 
 # ---------------------------------------------------------------
 # ESPN Matchups
@@ -99,8 +117,8 @@ def get_games():
         if len(comps) == 2:
             a, h = comps
             games.append({
-                "away": a["team"]["abbreviation"],
-                "home": h["team"]["abbreviation"],
+                "away": TEAM_ABBREV_MAP.get(a["team"]["abbreviation"], a["team"]["abbreviation"]),
+                "home": TEAM_ABBREV_MAP.get(h["team"]["abbreviation"], h["team"]["abbreviation"]),
                 "away_logo": a["team"]["logo"],
                 "home_logo": h["team"]["logo"]
             })
@@ -161,7 +179,7 @@ def build_opponent_sog_profile(shots_df, skaters_df):
 opponent_profiles = build_opponent_sog_profile(shots_df, skaters_df)
 
 # ---------------------------------------------------------------
-# Run model (UNCHANGED CORE LOGIC)
+# Run model
 # ---------------------------------------------------------------
 if st.button("Run Model (All Games)", use_container_width=True):
     results = []
@@ -169,7 +187,12 @@ if st.button("Run Model (All Games)", use_container_width=True):
     for g in games:
         team_a, team_b = g["away"], g["home"]
         roster = skaters_df[skaters_df[team_col].isin([team_a, team_b])]
-        grouped = {n: d for n, d in shots_df.groupby("player")}
+
+        # 🔧 FIXED grouped dict
+        grouped = {
+            str(n).lower().strip(): d
+            for n, d in shots_df.groupby("player")
+        }
 
         for _, r in roster.iterrows():
             player = str(r[player_col])
@@ -233,7 +256,7 @@ if "base_results" in st.session_state:
             tdf = df[(df["Team"] == team) & (df["Matchup"] == st.session_state.selected_match)]
 
             for _, r in tdf.iterrows():
-                opp = team_b if team == team_a else team_a
+                opp = TEAM_ABBREV_MAP.get(team_b if team == team_a else team_a)
                 prof = opponent_profiles.get(opp, {})
 
                 components.html(
@@ -265,3 +288,4 @@ if "base_results" in st.session_state:
 
     render(team_a, tabs[0])
     render(team_b, tabs[1])
+
