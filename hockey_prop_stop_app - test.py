@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Puck Shotz Hockey Analytics — Mobile (CACHED + FULL PARITY)
+# 🏒 Puck Shotz Hockey Analytics — Mobile (STABLE BASE)
 # ---------------------------------------------------------------
 import streamlit as st
 import pandas as pd
@@ -32,17 +32,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ---------------------------------------------------------------
-# Team Abbreviation Normalization
-# ---------------------------------------------------------------
-TEAM_ABBREV_MAP = {
-    "NJ": "NJD",
-    "LA": "LAK",
-    "SJ": "SJS",
-    "TB": "TBL"
-}
-
-# ---------------------------------------------------------------
-# Auto-load data
+# Helpers
 # ---------------------------------------------------------------
 def safe_read(path):
     try:
@@ -59,6 +49,9 @@ def find_file(name):
             return fp
     return None
 
+# ---------------------------------------------------------------
+# Load data
+# ---------------------------------------------------------------
 @st.cache_data(show_spinner=False)
 def load_all():
     return (
@@ -78,22 +71,20 @@ for df in [skaters_df, shots_df, goalies_df, lines_df, teams_df]:
     df.columns = df.columns.str.lower().str.strip()
 
 # ---------------------------------------------------------------
-# Column detection
+# Column detection (SAFE)
 # ---------------------------------------------------------------
-team_col = next(c for c in skaters_df.columns if "team" in c)
+team_col = next((c for c in skaters_df.columns if "team" in c), None)
 player_col = "name" if "name" in skaters_df.columns else skaters_df.columns[0]
+pos_col = next((c for c in skaters_df.columns if c in ["position","pos","primary position"]), None)
 
-pos_col = next(
-    (c for c in skaters_df.columns if c in ["position", "pos", "primary position"]),
-    None
-)
-
-shots_player_col = next(c for c in shots_df.columns if "player" in c or "name" in c)
+shots_player_col = next((c for c in shots_df.columns if "player" in c or "name" in c), None)
 shots_df = shots_df.rename(columns={shots_player_col: "player"})
-shots_df["player"] = shots_df["player"].astype(str).str.strip()
-shots_df["opponent"] = shots_df["opponent"].astype(str).str.strip().str.upper()
+shots_df["player"] = shots_df["player"].astype(str).str.strip().str.lower()
 
-game_col = next(c for c in shots_df.columns if "game" in c)
+if "opponent" in shots_df.columns:
+    shots_df["opponent"] = shots_df["opponent"].astype(str).str.upper().str.strip()
+
+game_col = next((c for c in shots_df.columns if "game" in c), None)
 
 # ---------------------------------------------------------------
 # ESPN Matchups
@@ -103,14 +94,13 @@ def get_games():
     url = "https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard"
     data = requests.get(url, timeout=10).json()
     games = []
-
     for e in data.get("events", []):
         comps = e.get("competitions", [{}])[0].get("competitors", [])
         if len(comps) == 2:
             a, h = comps
             games.append({
-                "away": TEAM_ABBREV_MAP.get(a["team"]["abbreviation"], a["team"]["abbreviation"]),
-                "home": TEAM_ABBREV_MAP.get(h["team"]["abbreviation"], h["team"]["abbreviation"]),
+                "away": a["team"]["abbreviation"],
+                "home": h["team"]["abbreviation"],
                 "away_logo": a["team"]["logo"],
                 "home_logo": h["team"]["logo"]
             })
@@ -122,35 +112,19 @@ if not games:
     st.stop()
 
 # ---------------------------------------------------------------
-# Line Test
-# ---------------------------------------------------------------
-st.session_state.setdefault("line_test_val", 3.5)
-
-line_test = st.number_input(
-    "Line to Test",
-    min_value=0.0,
-    max_value=10.0,
-    step=0.5,
-    value=st.session_state.line_test_val
-)
-st.session_state.line_test_val = line_test
-
-# ---------------------------------------------------------------
-# Opponent defensive profile (LEAGUE-WIDE VS OPPONENT)
+# Opponent defensive profile (LEAGUE-WIDE)
 # ---------------------------------------------------------------
 @st.cache_data(show_spinner=False)
 def build_opponent_sog_profile(shots_df, skaters_df):
-    if pos_col is None or "opponent" not in shots_df.columns:
+    if pos_col is None or game_col is None or "opponent" not in shots_df.columns:
         return {}
 
-    shots = shots_df.copy()
-    shots["player"] = shots["player"].str.lower().str.strip()
+    sk = skaters_df[[player_col, pos_col]].copy()
+    sk.columns = ["player", "position"]
+    sk["player"] = sk["player"].astype(str).str.lower().str.strip()
 
-    sk = skaters_df[[player_col, team_col, pos_col]].copy()
-    sk.columns = ["player", "team", "position"]
-    sk["player"] = sk["player"].str.lower().str.strip()
-
-    shots = shots.merge(sk, on="player", how="left")
+    shots = shots_df.merge(sk, on="player", how="left")
+    shots = shots.dropna(subset=["position", "sog"])
 
     profiles = {}
 
@@ -165,10 +139,13 @@ def build_opponent_sog_profile(shots_df, skaters_df):
         )
 
         recent = vs[vs[game_col].isin(recent_games)]
+        if recent.empty:
+            profiles[opp] = {}
+            continue
 
         per_game = (
-            recent.groupby(["player", "position", game_col], as_index=False)["sog"]
-            .sum()
+            recent.groupby(["player", "position", game_col], as_index=False)
+            .agg({"sog": "sum"})
         )
 
         per_game = per_game[per_game["sog"] >= 3]
@@ -184,7 +161,7 @@ def build_opponent_sog_profile(shots_df, skaters_df):
 opponent_profiles = build_opponent_sog_profile(shots_df, skaters_df)
 
 # ---------------------------------------------------------------
-# Run model
+# Run model (UNCHANGED CORE LOGIC)
 # ---------------------------------------------------------------
 if st.button("Run Model (All Games)", use_container_width=True):
     results = []
@@ -192,7 +169,7 @@ if st.button("Run Model (All Games)", use_container_width=True):
     for g in games:
         team_a, team_b = g["away"], g["home"]
         roster = skaters_df[skaters_df[team_col].isin([team_a, team_b])]
-        grouped = {n.lower(): d for n, d in shots_df.groupby(shots_df["player"].str.lower())}
+        grouped = {n: d for n, d in shots_df.groupby("player")}
 
         for _, r in roster.iterrows():
             player = str(r[player_col])
@@ -208,8 +185,7 @@ if st.button("Run Model (All Games)", use_container_width=True):
                 continue
 
             l3, l5, l10 = np.mean(sog_vals[-3:]), np.mean(sog_vals[-5:]), np.mean(sog_vals[-10:])
-            baseline = 0.55*l10 + 0.3*l5 + 0.15*l3
-            lam = baseline
+            lam = 0.55*l10 + 0.3*l5 + 0.15*l3
 
             results.append({
                 "Player": player,
@@ -224,7 +200,7 @@ if st.button("Run Model (All Games)", use_container_width=True):
             })
 
     st.session_state.base_results = pd.DataFrame(results)
-    st.success("Model built")
+    st.success("Model built successfully")
 
 # ---------------------------------------------------------------
 # DISPLAY
@@ -267,7 +243,7 @@ if "base_results" in st.session_state:
                                 color:#fff;display:flex;justify-content:space-between;">
 
                         <div style="width:65%;">
-                            <b>{r['Player']} ({r['Position']})</b><br>
+                            <b>{r['Player']} ({r['Position']}) – {r['Team']}</b><br>
                             Final Projection: <b>{r['Final Projection']}</b><br>
                             Season Avg: {r['Season Avg']}<br>
                             L3: {r['L3']}<br>
