@@ -71,7 +71,7 @@ for df in [skaters_df, shots_df, goalies_df, lines_df, teams_df]:
     df.columns = df.columns.str.lower().str.strip()
 
 # ---------------------------------------------------------------
-# Column detection (SAFE)
+# Column detection
 # ---------------------------------------------------------------
 team_col = next((c for c in skaters_df.columns if "team" in c), None)
 if team_col is None:
@@ -91,7 +91,7 @@ if "opponent" in shots_df.columns:
 game_col = next((c for c in shots_df.columns if "game" in c), None)
 
 # ---------------------------------------------------------------
-# Normalize opponent abbreviations (IMPORTANT)
+# Normalize opponent abbreviations
 # ---------------------------------------------------------------
 TEAM_ABBREV_MAP = {
     "VEG": "VGK",
@@ -130,7 +130,7 @@ if not games:
     st.stop()
 
 # ---------------------------------------------------------------
-# Opponent defensive profile (LEAGUE-WIDE)
+# Opponent defensive profile (LEAGUE-WIDE) ✅ FINAL FIX
 # ---------------------------------------------------------------
 @st.cache_data(show_spinner=False)
 def build_opponent_sog_profile(shots_df, skaters_df):
@@ -142,7 +142,9 @@ def build_opponent_sog_profile(shots_df, skaters_df):
     sk["player"] = sk["player"].astype(str).str.lower().str.strip()
 
     shots = shots_df.merge(sk, on="player", how="left")
-    shots = shots.dropna(subset=["position", SOG_COL])
+
+    # 🔒 USE "sog" DIRECTLY — NO GLOBALS IN CACHED FN
+    shots = shots.dropna(subset=["position", "sog"])
 
     profiles = {}
 
@@ -188,7 +190,6 @@ if st.button("Run Model (All Games)", use_container_width=True):
         team_a, team_b = g["away"], g["home"]
         roster = skaters_df[skaters_df[team_col].isin([team_a, team_b])]
 
-        # 🔧 FIXED grouped dict
         grouped = {
             str(n).lower().strip(): d
             for n, d in shots_df.groupby("player")
@@ -243,14 +244,6 @@ if "base_results" in st.session_state:
     team_a, team_b = st.session_state.selected_match.split("@")
     tabs = st.tabs([team_a, team_b])
 
-    def team_logo(team):
-        for g in games:
-            if g["away"] == team:
-                return g["away_logo"]
-            if g["home"] == team:
-                return g["home_logo"]
-        return ""
-
     def render(team, tab):
         with tab:
             tdf = df[(df["Team"] == team) & (df["Matchup"] == st.session_state.selected_match)]
@@ -288,4 +281,3 @@ if "base_results" in st.session_state:
 
     render(team_a, tabs[0])
     render(team_b, tabs[1])
-
