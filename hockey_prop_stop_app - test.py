@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Puck Shotz Hockey Analytics — Mobile (STABLE BASELINE)
+# 🏒 Puck Shotz Hockey Analytics — Mobile (ORIGINAL STABLE)
 # ---------------------------------------------------------------
 import streamlit as st
 import pandas as pd
@@ -75,16 +75,15 @@ for df in [skaters_df, shots_df, goalies_df, lines_df, teams_df]:
 # ---------------------------------------------------------------
 team_col = next(c for c in skaters_df.columns if "team" in c)
 player_col = "name" if "name" in skaters_df.columns else skaters_df.columns[0]
-pos_col = next((c for c in skaters_df.columns if c in ["position","pos","primary position"]), None)
 
 shots_player_col = next(c for c in shots_df.columns if "player" in c or "name" in c)
 shots_df = shots_df.rename(columns={shots_player_col: "player"})
-shots_df["player"] = shots_df["player"].astype(str).str.strip().str.lower()
+shots_df["player"] = shots_df["player"].astype(str).str.strip()
 
 game_col = next(c for c in shots_df.columns if "game" in c)
 
 # ---------------------------------------------------------------
-# ESPN Matchups
+# ESPN Matchups (ORIGINAL)
 # ---------------------------------------------------------------
 TEAM_ABBREV_MAP = {
     "NJ": "NJD",
@@ -130,7 +129,7 @@ line_test = st.number_input(
 st.session_state.line_test_val = line_test
 
 # ---------------------------------------------------------------
-# Run model
+# Run model (ORIGINAL)
 # ---------------------------------------------------------------
 if st.button("Run Model (All Games)", use_container_width=True):
     results = []
@@ -143,9 +142,8 @@ if st.button("Run Model (All Games)", use_container_width=True):
         for _, r in roster.iterrows():
             player = str(r[player_col])
             team = r[team_col]
-            position = r[pos_col] if pos_col else ""
 
-            df_p = grouped.get(player.lower())
+            df_p = grouped.get(player)
             if df_p is None or "sog" not in df_p.columns:
                 continue
 
@@ -158,7 +156,6 @@ if st.button("Run Model (All Games)", use_container_width=True):
 
             results.append({
                 "Player": player,
-                "Position": position,
                 "Team": team,
                 "Matchup": f"{team_a}@{team_b}",
                 "Final Projection": round(baseline,2),
@@ -172,7 +169,7 @@ if st.button("Run Model (All Games)", use_container_width=True):
     st.success("Model built successfully")
 
 # ---------------------------------------------------------------
-# DISPLAY
+# DISPLAY (ORIGINAL)
 # ---------------------------------------------------------------
 if "base_results" in st.session_state:
     df = st.session_state.base_results
@@ -213,7 +210,7 @@ if "base_results" in st.session_state:
                                 border-radius:16px;padding:16px;margin-bottom:16px;color:#fff;">
                         <div style="display:flex;align-items:center;margin-bottom:6px;">
                             <img src="{team_logo(team)}" style="width:32px;height:32px;margin-right:10px;">
-                            <b>{r['Player']} ({r['Position']}) – {r['Team']}</b>
+                            <b>{r['Player']} – {r['Team']}</b>
                         </div>
                         <div>Final Projection: <b>{r['Final Projection']}</b></div>
                         <div>Season Avg: {r['Season Avg']}</div>
