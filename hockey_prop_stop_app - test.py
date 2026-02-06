@@ -1,41 +1,44 @@
 # ---------------------------------------------------------------
-# 🏒 Puck Shotz — Opponent Line × Position SOG (STRICT + DEBUG)
+# 🏒 Puck Shotz Hockey Analytics — Mobile (STABLE BASELINE)
 # ---------------------------------------------------------------
 import streamlit as st
 import pandas as pd
 import numpy as np
-import os
+import os, requests
+from scipy.stats import poisson
+import streamlit.components.v1 as components
 
 # ---------------------------------------------------------------
 # Page config
 # ---------------------------------------------------------------
 st.set_page_config(
-    page_title="Puck Shotz — Opponent Pressure (STRICT)",
+    page_title="Puck Shotz Hockey Analytics (Mobile)",
     layout="wide",
     page_icon="🏒"
 )
 
-st.title("Opponent Line × Position SOG Pressure (STRICT)")
-
 # ---------------------------------------------------------------
-# Normalization
+# Header
 # ---------------------------------------------------------------
-POSITION_MAP = {"LW": "L", "RW": "R", "C": "C", "D": "D"}
-
-TEAM_ABBREV_MAP = {
-    "LA": "LAK",
-    "TB": "TBL",
-    "NY": "NYR",
-    "NJ": "NJD",
-    "SJ": "SJS"
-}
+st.markdown("""
+<div style='text-align:center; background-color:#0A3A67;
+            padding:14px; border-radius:8px; margin-bottom:12px;'>
+  <img src='https://raw.githubusercontent.com/Brouz557/Hockey-Prop-Stop/694ae2a448204908099ce2899bd479052d01b518/modern%20hockey%20puck%20l.png'
+       width='200'>
+</div>
+<h3 style='text-align:center;color:#1E5A99;margin-top:0;'>
+    Puck Shotz Hockey Analytics
+</h3>
+""", unsafe_allow_html=True)
 
 # ---------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------
 def safe_read(path):
     try:
-        return pd.read_excel(path) if path and os.path.exists(path) else pd.DataFrame()
+        if not path or not os.path.exists(path):
+            return pd.DataFrame()
+        return pd.read_excel(path) if path.lower().endswith(".xlsx") else pd.read_csv(path)
     except Exception:
         return pd.DataFrame()
 
@@ -49,183 +52,178 @@ def find_file(name):
 # ---------------------------------------------------------------
 # Load data
 # ---------------------------------------------------------------
-skaters_df = safe_read(find_file("Skaters.xlsx"))
-shots_df   = safe_read(find_file("SHOT DATA.xlsx"))
-lines_df   = safe_read(find_file("LINE DATA.xlsx"))
+@st.cache_data(show_spinner=False)
+def load_all():
+    return (
+        safe_read(find_file("Skaters.xlsx")),
+        safe_read(find_file("SHOT DATA.xlsx")),
+        safe_read(find_file("GOALTENDERS.xlsx")),
+        safe_read(find_file("LINE DATA.xlsx")),
+        safe_read(find_file("TEAMS.xlsx")),
+    )
 
-if skaters_df.empty or shots_df.empty or lines_df.empty:
+skaters_df, shots_df, goalies_df, lines_df, teams_df = load_all()
+if skaters_df.empty or shots_df.empty:
     st.error("Missing required data files.")
     st.stop()
 
-for df in [skaters_df, shots_df, lines_df]:
+for df in [skaters_df, shots_df, goalies_df, lines_df, teams_df]:
     df.columns = df.columns.str.lower().str.strip()
 
 # ---------------------------------------------------------------
 # Column detection
 # ---------------------------------------------------------------
+team_col = next(c for c in skaters_df.columns if "team" in c)
 player_col = "name" if "name" in skaters_df.columns else skaters_df.columns[0]
-team_col   = next(c for c in skaters_df.columns if "team" in c)
-pos_col    = next(c for c in skaters_df.columns if c in ["position","pos","primary position"])
-game_col   = next(c for c in shots_df.columns if "game" in c)
+pos_col = next((c for c in skaters_df.columns if c in ["position","pos","primary position"]), None)
 
 shots_player_col = next(c for c in shots_df.columns if "player" in c or "name" in c)
 shots_df = shots_df.rename(columns={shots_player_col: "player"})
+shots_df["player"] = shots_df["player"].astype(str).str.strip().str.lower()
+
+game_col = next(c for c in shots_df.columns if "game" in c)
 
 # ---------------------------------------------------------------
-# Normalize SHOT DATA
+# ESPN Matchups
 # ---------------------------------------------------------------
-shots_df["player"] = shots_df["player"].str.lower().str.strip()
-shots_df["opponent"] = (
-    shots_df["opponent"]
-    .astype(str)
-    .str.upper()
-    .replace(TEAM_ABBREV_MAP)
+TEAM_ABBREV_MAP = {
+    "NJ": "NJD",
+    "LA": "LAK",
+    "SJ": "SJS",
+    "TB": "TBL"
+}
+
+@st.cache_data(ttl=300)
+def get_games():
+    url = "https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard"
+    data = requests.get(url, timeout=10).json()
+    games = []
+
+    for e in data.get("events", []):
+        comps = e.get("competitions", [{}])[0].get("competitors", [])
+        if len(comps) == 2:
+            a, h = comps
+            games.append({
+                "away": TEAM_ABBREV_MAP.get(a["team"]["abbreviation"], a["team"]["abbreviation"]),
+                "home": TEAM_ABBREV_MAP.get(h["team"]["abbreviation"], h["team"]["abbreviation"]),
+                "away_logo": a["team"]["logo"],
+                "home_logo": h["team"]["logo"]
+            })
+    return games
+
+games = get_games()
+if not games:
+    st.warning("No games found today.")
+    st.stop()
+
+# ---------------------------------------------------------------
+# Line test
+# ---------------------------------------------------------------
+st.session_state.setdefault("line_test_val", 3.5)
+line_test = st.number_input(
+    "Line to Test",
+    min_value=0.0,
+    max_value=10.0,
+    step=0.5,
+    value=st.session_state.line_test_val
 )
+st.session_state.line_test_val = line_test
 
 # ---------------------------------------------------------------
-# Normalize SKATERS
+# Run model
 # ---------------------------------------------------------------
-skaters_df["player"] = skaters_df[player_col].str.lower().str.strip()
-skaters_df["position"] = (
-    skaters_df[pos_col]
-    .astype(str)
-    .str.upper()
-    .map(POSITION_MAP)
-)
-skaters_df["player_last"] = skaters_df[player_col].str.lower().str.split().str[-1]
+if st.button("Run Model (All Games)", use_container_width=True):
+    results = []
 
-# ---------------------------------------------------------------
-# Build typical line map (ICE TIME proxy via games)
-# ---------------------------------------------------------------
-lines_df["games"] = pd.to_numeric(lines_df["games"], errors="coerce").fillna(0)
+    for g in games:
+        team_a, team_b = g["away"], g["home"]
+        roster = skaters_df[skaters_df[team_col].isin([team_a, team_b])]
+        grouped = {n: d for n, d in shots_df.groupby("player")}
 
-line_usage = (
-    lines_df
-    .groupby(["team", "line pairings"], as_index=False)
-    .agg({"games": "sum"})
-)
+        for _, r in roster.iterrows():
+            player = str(r[player_col])
+            team = r[team_col]
+            position = r[pos_col] if pos_col else ""
 
-line_usage["line"] = (
-    line_usage
-    .groupby("team")["games"]
-    .rank(method="first", ascending=False)
-    .astype(int)
-)
+            df_p = grouped.get(player.lower())
+            if df_p is None or "sog" not in df_p.columns:
+                continue
 
-rows = []
-for _, r in line_usage.iterrows():
-    for name in str(r["line pairings"]).lower().split():
-        rows.append({
-            "team": r["team"],
-            "player_last": name,
-            "line": r["line"]
-        })
+            sog_vals = df_p.groupby(game_col)["sog"].sum().tolist()
+            if len(sog_vals) < 3:
+                continue
 
-player_line_map = (
-    pd.DataFrame(rows)
-    .drop_duplicates(["team", "player_last"])
-)
+            l3, l5, l10 = np.mean(sog_vals[-3:]), np.mean(sog_vals[-5:]), np.mean(sog_vals[-10:])
+            baseline = 0.55*l10 + 0.3*l5 + 0.15*l3
+
+            results.append({
+                "Player": player,
+                "Position": position,
+                "Team": team,
+                "Matchup": f"{team_a}@{team_b}",
+                "Final Projection": round(baseline,2),
+                "Season Avg": round(np.mean(sog_vals),2),
+                "L3": ", ".join(map(str, sog_vals[-3:])),
+                "L5": ", ".join(map(str, sog_vals[-5:])),
+                "L10": ", ".join(map(str, sog_vals[-10:])),
+            })
+
+    st.session_state.base_results = pd.DataFrame(results)
+    st.success("Model built successfully")
 
 # ---------------------------------------------------------------
-# Build PLAYER–GAME SOG vs OPPONENT
+# DISPLAY
 # ---------------------------------------------------------------
-player_game = (
-    shots_df
-    .groupby(["player", game_col, "opponent"], as_index=False)["sog"]
-    .sum()
-)
+if "base_results" in st.session_state:
+    df = st.session_state.base_results
 
-player_game["hit_3p"] = player_game["sog"] >= 3
+    if "selected_match" not in st.session_state:
+        st.session_state.selected_match = f"{games[0]['away']}@{games[0]['home']}"
 
-# ---------------------------------------------------------------
-# Enrich with ROLE (STRICT)
-# ---------------------------------------------------------------
-player_game = (
-    player_game
-    .merge(
-        skaters_df[["player", team_col, "position", "player_last"]],
-        on="player",
-        how="left"
-    )
-    .merge(
-        player_line_map,
-        on=["team", "player_last"],
-        how="left"
-    )
-)
+    st.markdown("## Matchups")
+    cols = st.columns(3)
+    for i, g in enumerate(games):
+        with cols[i % 3]:
+            if st.button(f"{g['away']} @ {g['home']}", use_container_width=True):
+                st.session_state.selected_match = f"{g['away']}@{g['home']}"
 
-# STRICT: drop unresolved roles
-player_game = player_game.dropna(subset=["position", "line"])
-player_game["line"] = player_game["line"].astype(int)
+    team_a, team_b = st.session_state.selected_match.split("@")
+    tabs = st.tabs([team_a, team_b])
 
-# ---------------------------------------------------------------
-# Build opponent profile (LAST 10 GAMES)
-# ---------------------------------------------------------------
-profiles = {}
+    def team_logo(team):
+        for g in games:
+            if g["away"] == team:
+                return g["away_logo"]
+            if g["home"] == team:
+                return g["home_logo"]
+        return ""
 
-for opp in sorted(player_game["opponent"].unique()):
+    def render(team, tab):
+        with tab:
+            tdf = (
+                df[(df["Team"] == team) & (df["Matchup"] == st.session_state.selected_match)]
+                .drop_duplicates("Player")
+                .sort_values("Final Projection", ascending=False)
+            )
 
-    last_games = (
-        player_game[player_game["opponent"] == opp]
-        [[game_col]]
-        .drop_duplicates()
-        .sort_values(game_col)
-        .tail(10)[game_col]
-        .tolist()
-    )
+            for _, r in tdf.iterrows():
+                components.html(
+                    f"""
+                    <div style="background:#0F2743;border:1px solid #1E5A99;
+                                border-radius:16px;padding:16px;margin-bottom:16px;color:#fff;">
+                        <div style="display:flex;align-items:center;margin-bottom:6px;">
+                            <img src="{team_logo(team)}" style="width:32px;height:32px;margin-right:10px;">
+                            <b>{r['Player']} ({r['Position']}) – {r['Team']}</b>
+                        </div>
+                        <div>Final Projection: <b>{r['Final Projection']}</b></div>
+                        <div>Season Avg: {r['Season Avg']}</div>
+                        <div>L3: {r['L3']}</div>
+                        <div>L5: {r['L5']}</div>
+                        <div>L10: {r['L10']}</div>
+                    </div>
+                    """,
+                    height=300
+                )
 
-    sub = player_game[
-        (player_game["opponent"] == opp) &
-        (player_game[game_col].isin(last_games)) &
-        (player_game["hit_3p"])
-    ]
-
-    profiles[opp] = (
-        sub
-        .groupby(["line", "position"])["player"]
-        .nunique()
-        .to_dict()
-    )
-
-# ---------------------------------------------------------------
-# UI — MAIN PANEL
-# ---------------------------------------------------------------
-st.markdown("## Opponent Line × Position (Last 10 Games)")
-
-opp = st.selectbox("Select Opponent", sorted(profiles.keys()))
-prof = profiles.get(opp, {})
-
-def render_panel():
-    rows = []
-    for p in ["C","L","R","D"]:
-        max_line = 3 if p == "D" else 4
-        for l in range(1, max_line + 1):
-            rows.append(f"L{l}{p}: {prof.get((l,p),0)}")
-    return "<br>".join(rows)
-
-st.markdown(f"### VS {opp}")
-st.markdown(render_panel(), unsafe_allow_html=True)
-
-# ---------------------------------------------------------------
-# 🔍 STRICT DEBUG — coverage inspection
-# ---------------------------------------------------------------
-st.markdown("---")
-st.markdown("## 🔍 DEBUG — Player Coverage (STRICT)")
-
-debug_opp = st.selectbox(
-    "Debug Opponent",
-    sorted(player_game["opponent"].unique()),
-    key="debug_opp"
-)
-
-debug_df = player_game[
-    (player_game["opponent"] == debug_opp)
-][[
-    "player", "team", "position", "line", game_col, "sog", "hit_3p"
-]].sort_values(game_col, ascending=False)
-
-st.write(f"Rows before strict drop: {len(debug_df)}")
-st.write(f"Rows with line assigned: {debug_df['line'].notna().sum()}")
-st.write(f"Rows with ≥3 SOG: {(debug_df['hit_3p']).sum()}")
-
-st.dataframe(debug_df.head(50))
+    render(team_a, tabs[0])
+    render(team_b, tabs[1])
