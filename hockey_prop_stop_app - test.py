@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Puck Shotz Hockey Analytics — Mobile (POSITION × LINE)
+# 🏒 Puck Shotz Hockey Analytics — Mobile (ICE-TIME LINE MODEL)
 # ---------------------------------------------------------------
 import streamlit as st
 import pandas as pd
@@ -34,7 +34,10 @@ st.markdown("""
 # Normalization maps
 # ---------------------------------------------------------------
 POSITION_MAP = {"LW": "L", "RW": "R", "C": "C", "D": "D"}
-TEAM_ABBREV_MAP = {"LA": "LAK", "TB": "TBL", "NY": "NYR", "NJ": "NJD", "SJ": "SJS"}
+TEAM_ABBREV_MAP = {
+    "LA": "LAK", "TB": "TBL", "NY": "NYR",
+    "NJ": "NJD", "SJ": "SJS"
+}
 
 # ---------------------------------------------------------------
 # Helpers
@@ -105,7 +108,7 @@ skaters_df["player_last"] = (
 )
 
 # ---------------------------------------------------------------
-# Build typical line numbers from LINE DATA
+# Build typical line numbers by ICE TIME (usage)
 # ---------------------------------------------------------------
 @st.cache_data(show_spinner=False)
 def build_player_line_map(lines_df):
@@ -113,9 +116,9 @@ def build_player_line_map(lines_df):
     l["games"] = pd.to_numeric(l["games"], errors="coerce").fillna(0)
 
     l = (
-        l.groupby(["team","line pairings"], as_index=False)
-        .agg({"games":"sum"})
-        .rename(columns={"games":"usage"})
+        l.groupby(["team", "line pairings"], as_index=False)
+        .agg({"games": "sum"})
+        .rename(columns={"games": "usage"})
     )
 
     l["line"] = (
@@ -135,7 +138,7 @@ def build_player_line_map(lines_df):
 
     return (
         pd.DataFrame(rows)
-        .drop_duplicates(["team","player_last"])
+        .drop_duplicates(["team", "player_last"])
     )
 
 player_line_map = build_player_line_map(lines_df)
@@ -146,7 +149,7 @@ player_line_map = build_player_line_map(lines_df)
 @st.cache_data(show_spinner=False)
 def build_opponent_role_profile(shots_df, skaters_df, player_line_map):
 
-    # sum SOG per player-game
+    # SOG per player per game
     pg = (
         shots_df
         .groupby(["player", game_col, "opponent"], as_index=False)["sog"]
@@ -154,22 +157,17 @@ def build_opponent_role_profile(shots_df, skaters_df, player_line_map):
     )
     pg["hit_3p"] = pg["sog"] >= 3
 
-    # add skater info
     sk = skaters_df[[player_col, team_col, pos_col, "player_last"]].copy()
     sk.columns = ["player", "team", "position", "player_last"]
-    sk["player"] = sk["player"].astype(str).str.lower().str.strip()
-    sk["position"] = (
-        sk["position"]
-        .astype(str)
-        .str.upper()
-        .map(POSITION_MAP)
-    )
+    sk["player"] = sk["player"].str.lower().str.strip()
+    sk["position"] = sk["position"].str.upper().map(POSITION_MAP)
 
     pg = pg.merge(sk, on="player", how="left")
-    pg = pg.merge(player_line_map, on=["team","player_last"], how="left")
+    pg = pg.merge(player_line_map, on=["team", "player_last"], how="left")
 
-    pg["line"] = pg["line"].fillna(0).astype(int)
-    pg = pg[pg["position"].isin(["C","L","R","D"])]
+    # ❗ EXCLUDE unresolved lines
+    pg = pg.dropna(subset=["line"])
+    pg["line"] = pg["line"].astype(int)
 
     profiles = {}
 
@@ -190,7 +188,7 @@ def build_opponent_role_profile(shots_df, skaters_df, player_line_map):
         ]
 
         profiles[opp] = (
-            sub.groupby(["position","line"])["player"]
+            sub.groupby(["position", "line"])["player"]
             .nunique()
             .to_dict()
         )
@@ -234,11 +232,11 @@ def team_logo(team):
     return ""
 
 # ---------------------------------------------------------------
-# Run model (unchanged)
+# Run model (UNCHANGED CORE)
 # ---------------------------------------------------------------
 if st.button("Run Model (All Games)", use_container_width=True):
     results = []
-    grouped = {n:d for n,d in shots_df.groupby("player")}
+    grouped = {n: d for n, d in shots_df.groupby("player")}
 
     for g in games:
         team_a, team_b = g["away"], g["home"]
@@ -267,9 +265,9 @@ if st.button("Run Model (All Games)", use_container_width=True):
                 "Matchup": f"{team_a}@{team_b}",
                 "Final Projection": round(lam,2),
                 "Season Avg": round(np.mean(sog_vals),2),
-                "L3": ", ".join(map(str,sog_vals[-3:])),
-                "L5": ", ".join(map(str,sog_vals[-5:])),
-                "L10": ", ".join(map(str,sog_vals[-10:])),
+                "L3": ", ".join(map(str, sog_vals[-3:])),
+                "L5": ", ".join(map(str, sog_vals[-5:])),
+                "L10": ", ".join(map(str, sog_vals[-10:])),
             })
 
     st.session_state.base_results = pd.DataFrame(results)
@@ -283,8 +281,8 @@ if "base_results" in st.session_state:
     st.session_state.setdefault("selected_match", f"{games[0]['away']}@{games[0]['home']}")
 
     cols = st.columns(3)
-    for i,g in enumerate(games):
-        with cols[i%3]:
+    for i, g in enumerate(games):
+        with cols[i % 3]:
             if st.button(f"{g['away']} @ {g['home']}", use_container_width=True):
                 st.session_state.selected_match = f"{g['away']}@{g['home']}"
 
@@ -305,9 +303,11 @@ if "base_results" in st.session_state:
 
                 def render_rows():
                     rows = []
-                    for (p,l),v in sorted(prof.items()):
-                        rows.append(f"{p}{l}: {v}")
-                    return "<br>".join(rows) if rows else "—"
+                    for p in ["C", "L", "R", "D"]:
+                        max_line = 3 if p == "D" else 4
+                        for l in range(1, max_line + 1):
+                            rows.append(f"{p}{l}: {prof.get((p, l), 0)}")
+                    return "<br>".join(rows)
 
                 components.html(
                     f"""
@@ -332,7 +332,7 @@ if "base_results" in st.session_state:
                         </div>
                     </div>
                     """,
-                    height=380
+                    height=420
                 )
 
     render(team_a, tabs[0])
