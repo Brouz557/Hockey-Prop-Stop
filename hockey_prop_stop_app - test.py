@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Puck Shotz Hockey Analytics — Mobile (RESTORED + SAFE)
+# 🏒 Puck Shotz Hockey Analytics — Mobile (FULLY RESTORED)
 # ---------------------------------------------------------------
 import streamlit as st
 import pandas as pd
@@ -93,14 +93,11 @@ skaters_df["player_last"] = (
 )
 
 # ---------------------------------------------------------------
-# Build typical line roles (safe)
+# Build typical line roles (usage-based)
 # ---------------------------------------------------------------
 @st.cache_data(show_spinner=False)
 def build_player_line_roles(lines_df):
-    if lines_df.empty:
-        return pd.DataFrame()
-
-    req = {"line pairings", "team", "games"}
+    req = {"line pairings","team","games"}
     if not req.issubset(lines_df.columns):
         return pd.DataFrame()
 
@@ -108,7 +105,7 @@ def build_player_line_roles(lines_df):
     l["games"] = pd.to_numeric(l["games"], errors="coerce").fillna(0)
 
     l = (
-        l.groupby(["team", "line pairings"], as_index=False)
+        l.groupby(["team","line pairings"], as_index=False)
         .agg({"games":"sum"})
         .rename(columns={"games":"line_usage"})
     )
@@ -121,27 +118,27 @@ def build_player_line_roles(lines_df):
 
     rows = []
     for _, r in l.iterrows():
-        for p in str(r["line pairings"]).lower().split():
+        for ln in str(r["line pairings"]).lower().split():
             rows.append({
                 "team": r["team"],
-                "player_last": p,
+                "player_last": ln,
                 "line_rank": r["line_rank"],
                 "line_usage": r["line_usage"]
             })
 
-    pl = pd.DataFrame(rows)
-    if pl.empty:
-        return pd.DataFrame()
+    df = pd.DataFrame(rows)
+    if df.empty:
+        return df
 
     return (
-        pl.sort_values("line_usage", ascending=False)
-        .drop_duplicates(["team","player_last"])
+        df.sort_values("line_usage", ascending=False)
+          .drop_duplicates(["team","player_last"])
     )
 
 player_line_roles = build_player_line_roles(lines_df)
 
 # ---------------------------------------------------------------
-# Opponent × Position × Line profile (SAFE)
+# Opponent × Position × Line (3+ SOG, last 20 games)
 # ---------------------------------------------------------------
 @st.cache_data(show_spinner=False)
 def build_opponent_role_profile(shots_df, skaters_df, player_line_roles):
@@ -160,8 +157,8 @@ def build_opponent_role_profile(shots_df, skaters_df, player_line_roles):
     )
 
     pg["position"] = pg[pos_col].replace({
-        "LW":"L","RW":"R","LD":"D","RD":"D"
-    })
+        "lw":"L","rw":"R","ld":"D","rd":"D"
+    }).str.upper()
 
     pg = pg.merge(
         player_line_roles,
@@ -174,10 +171,10 @@ def build_opponent_role_profile(shots_df, skaters_df, player_line_roles):
     profiles = {}
     for opp in pg["opponent"].dropna().unique():
         vs = pg[pg["opponent"] == opp]
-        last_games = (
+        recent_games = (
             vs[[game_col]].drop_duplicates().tail(20)[game_col].tolist()
         )
-        recent = vs[vs[game_col].isin(last_games)]
+        recent = vs[vs[game_col].isin(recent_games)]
 
         profiles[opp] = (
             recent
@@ -226,11 +223,29 @@ def team_logo(team):
     return ""
 
 # ---------------------------------------------------------------
-# RUN MODEL (baseline only)
+# Run model (baseline + line adj)
 # ---------------------------------------------------------------
 if st.button("Run Model (All Games)", use_container_width=True):
     results = []
-    grouped = {n: d for n,d in shots_df.groupby("player")}
+
+    # Line Adj
+    line_adj = pd.DataFrame()
+    if {"line pairings","team","games","sog against"}.issubset(lines_df.columns):
+        l = lines_df.copy()
+        l["games"] = pd.to_numeric(l["games"], errors="coerce").fillna(0)
+        l["sog against"] = pd.to_numeric(l["sog against"], errors="coerce").fillna(0)
+
+        l = (
+            l.groupby(["line pairings","team"], as_index=False)
+            .agg({"games":"sum","sog against":"sum"})
+        )
+
+        l["sog_against_pg"] = l["sog against"] / l["games"].replace(0,np.nan)
+        league_avg = l["sog_against_pg"].mean()
+        l["line_factor"] = (league_avg / l["sog_against_pg"]).clip(0.7,1.3)
+        line_adj = l
+
+    grouped = {n:d for n,d in shots_df.groupby("player")}
 
     for g in games:
         team_a, team_b = g["away"], g["home"]
@@ -250,7 +265,16 @@ if st.button("Run Model (All Games)", use_container_width=True):
                 continue
 
             l3,l5,l10 = np.mean(sog_vals[-3:]),np.mean(sog_vals[-5:]),np.mean(sog_vals[-10:])
-            lam = 0.55*l10 + 0.3*l5 + 0.15*l3
+            baseline = 0.55*l10 + 0.3*l5 + 0.15*l3
+
+            line_factor = 1.0
+            if not line_adj.empty:
+                last = player.split()[-1].lower()
+                m = line_adj[line_adj["line pairings"].str.contains(last, case=False, na=False)]
+                if not m.empty:
+                    line_factor = np.average(m["line_factor"], weights=m["games"])
+
+            lam = baseline * line_factor
 
             results.append({
                 "Player": player,
@@ -258,6 +282,7 @@ if st.button("Run Model (All Games)", use_container_width=True):
                 "Team": team,
                 "Matchup": f"{team_a}@{team_b}",
                 "Final Projection": round(lam,2),
+                "Line Adj": round(line_factor,2),
                 "Season Avg": round(np.mean(sog_vals),2),
                 "L3": ", ".join(map(str,sog_vals[-3:])),
                 "L5": ", ".join(map(str,sog_vals[-5:])),
@@ -268,10 +293,11 @@ if st.button("Run Model (All Games)", use_container_width=True):
     st.success("Model built")
 
 # ---------------------------------------------------------------
-# DISPLAY CARDS (RESTORED)
+# DISPLAY CARDS
 # ---------------------------------------------------------------
 if "base_results" in st.session_state:
     df = st.session_state.base_results
+
     if "selected_match" not in st.session_state:
         st.session_state.selected_match = f"{games[0]['away']}@{games[0]['home']}"
 
@@ -296,7 +322,12 @@ if "base_results" in st.session_state:
                 opp = team_b if team==team_a else team_a
                 prof = opponent_role_profiles.get(opp, {})
 
-                def rp(p,l): return prof.get((p,l),0)
+                def render_lines(pos):
+                    rows = []
+                    for (p,l) in sorted(prof.keys()):
+                        if p == pos:
+                            rows.append(f"{pos}{l} {prof.get((p,l),0)}")
+                    return " · ".join(rows) if rows else f"{pos} –"
 
                 components.html(
                     f"""
@@ -310,6 +341,7 @@ if "base_results" in st.session_state:
                                 <b>{r['Player']} ({r['Position']}) – {r['Team']}</b>
                             </div>
                             Final Projection: <b>{r['Final Projection']}</b><br>
+                            Line Adj: <b>{r['Line Adj']}</b><br>
                             Season Avg: {r['Season Avg']}<br>
                             L3: {r['L3']}<br>
                             L5: {r['L5']}<br>
@@ -317,14 +349,14 @@ if "base_results" in st.session_state:
                         </div>
                         <div style="width:30%;border-left:1px solid #1E5A99;padding-left:10px;">
                             <b>VS {opp}</b><br>
-                            D1 {rp("D",1)} · D2 {rp("D",2)}<br>
-                            R1 {rp("R",1)} · R2 {rp("R",2)}<br>
-                            L1 {rp("L",1)} · L2 {rp("L",2)}<br>
-                            C1 {rp("C",1)} · C2 {rp("C",2)}
+                            {render_lines("D")}<br>
+                            {render_lines("R")}<br>
+                            {render_lines("L")}<br>
+                            {render_lines("C")}
                         </div>
                     </div>
                     """,
-                    height=320
+                    height=340
                 )
 
     render(team_a, tabs[0])
