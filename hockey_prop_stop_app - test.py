@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Puck Shotz Hockey Analytics — Mobile (FULL FINAL)
+# 🏒 Puck Shotz Hockey Analytics — Mobile (FULL WORKING)
 # ---------------------------------------------------------------
 import streamlit as st
 import pandas as pd
@@ -82,123 +82,6 @@ game_col = next(c for c in shots_df.columns if "game" in c)
 shots_df["opponent"] = shots_df["opponent"].astype(str).str.upper().str.strip()
 
 # ---------------------------------------------------------------
-# Player last names
-# ---------------------------------------------------------------
-skaters_df["player_last"] = (
-    skaters_df[player_col]
-    .astype(str)
-    .str.lower()
-    .str.split()
-    .str[-1]
-)
-
-# ---------------------------------------------------------------
-# Build line roles (usage-based)
-# ---------------------------------------------------------------
-@st.cache_data(show_spinner=False)
-def build_player_line_roles(lines_df):
-    req = {"line pairings","team","games"}
-    if not req.issubset(lines_df.columns):
-        return pd.DataFrame()
-
-    l = lines_df.copy()
-    l["games"] = pd.to_numeric(l["games"], errors="coerce").fillna(0)
-
-    l = (
-        l.groupby(["team","line pairings"], as_index=False)
-        .agg({"games":"sum"})
-        .rename(columns={"games":"line_usage"})
-    )
-
-    l["line_rank"] = (
-        l.groupby("team")["line_usage"]
-        .rank(method="first", ascending=False)
-        .astype(int)
-    )
-
-    rows = []
-    for _, r in l.iterrows():
-        for ln in str(r["line pairings"]).lower().split():
-            rows.append({
-                "team": r["team"],
-                "player_last": ln,
-                "line_rank": r["line_rank"],
-                "line_usage": r["line_usage"]
-            })
-
-    return (
-        pd.DataFrame(rows)
-        .sort_values("line_usage", ascending=False)
-        .drop_duplicates(["team","player_last"])
-    )
-
-player_line_roles = build_player_line_roles(lines_df)
-
-# ---------------------------------------------------------------
-# Opponent × Position × Line (CORRECT GAME LOGIC)
-# ---------------------------------------------------------------
-@st.cache_data(show_spinner=False)
-def build_opponent_role_profile(shots_df, skaters_df, player_line_roles):
-
-    # last 20 games PER opponent (from raw shots)
-    opp_games = (
-        shots_df[["opponent", game_col]]
-        .drop_duplicates()
-        .sort_values(game_col)
-        .groupby("opponent")
-        .tail(20)
-    )
-
-    # SOG per player per game
-    pg = (
-        shots_df
-        .groupby(["player", game_col, "opponent"], as_index=False)["sog"]
-        .sum()
-    )
-    pg["hit_3p"] = (pg["sog"] >= 3).astype(int)
-
-    # restrict to last 20 opponent games
-    pg = pg.merge(
-        opp_games,
-        on=["opponent", game_col],
-        how="inner"
-    )
-
-    # add skater info
-    pg = pg.merge(
-        skaters_df[[player_col, team_col, pos_col, "player_last"]],
-        left_on="player",
-        right_on=player_col,
-        how="left"
-    )
-
-    pg["position"] = pg[pos_col].astype(str).str.upper()
-    pg = pg[pg["position"].isin(["C","LW","RW","D"])]
-
-    # add line rank
-    pg = pg.merge(
-        player_line_roles,
-        on=["team","player_last"],
-        how="left"
-    )
-    pg["line_rank"] = pg["line_rank"].fillna(0).astype(int)
-
-    profiles = {}
-    for opp in pg["opponent"].unique():
-        sub = pg[(pg["opponent"] == opp) & (pg["hit_3p"] == 1)]
-        profiles[opp] = (
-            sub.groupby(["position","line_rank"])["player"]
-            .nunique()
-            .to_dict()
-        )
-
-    return profiles
-
-opponent_role_profiles = build_opponent_role_profile(
-    shots_df, skaters_df, player_line_roles
-)
-
-# ---------------------------------------------------------------
 # ESPN Matchups
 # ---------------------------------------------------------------
 @st.cache_data(ttl=300)
@@ -232,7 +115,70 @@ def team_logo(team):
     return ""
 
 # ---------------------------------------------------------------
-# Run model
+# Build opponent SOG profile (CORRECT FOR ATTEMPT DATA)
+# ---------------------------------------------------------------
+@st.cache_data(show_spinner=False)
+def build_opponent_sog_profile(shots_df, skaters_df):
+    """
+    For each opponent:
+    - Take last 20 games (by game_id)
+    - Sum SOG per player per game
+    - Count players who hit 3+ SOG at least once
+    - Group by position
+    """
+
+    # 1️⃣ Aggregate attempts → SOG per player per game
+    pg = (
+        shots_df
+        .groupby(["player", game_col, "opponent"], as_index=False)["sog"]
+        .sum()
+    )
+
+    # 2️⃣ Mark 3+ SOG games
+    pg["hit_3p"] = pg["sog"] >= 3
+
+    # 3️⃣ Attach positions
+    sk = skaters_df[[player_col, pos_col]].copy()
+    sk.columns = ["player", "position"]
+    sk["player"] = sk["player"].astype(str).str.lower().str.strip()
+    sk["position"] = sk["position"].astype(str).str.upper()
+
+    pg = pg.merge(sk, on="player", how="left")
+    pg = pg[pg["position"].isin(["C","LW","RW","D"])]
+
+    profiles = {}
+
+    # 4️⃣ Loop opponents
+    for opp in pg["opponent"].dropna().unique():
+
+        # last 20 games this opponent played
+        last_games = (
+            pg[pg["opponent"] == opp]
+            [[game_col]]
+            .drop_duplicates()
+            .sort_values(game_col)
+            .tail(20)[game_col]
+            .tolist()
+        )
+
+        sub = pg[
+            (pg["opponent"] == opp) &
+            (pg[game_col].isin(last_games)) &
+            (pg["hit_3p"])
+        ]
+
+        profiles[opp] = (
+            sub.groupby("position")["player"]
+            .nunique()
+            .to_dict()
+        )
+
+    return profiles
+
+opponent_profiles = build_opponent_sog_profile(shots_df, skaters_df)
+
+# ---------------------------------------------------------------
+# Run model (your original logic preserved)
 # ---------------------------------------------------------------
 if st.button("Run Model (All Games)", use_container_width=True):
     results = []
@@ -256,7 +202,10 @@ if st.button("Run Model (All Games)", use_container_width=True):
             if len(sog_vals) < 3:
                 continue
 
-            l3,l5,l10 = np.mean(sog_vals[-3:]),np.mean(sog_vals[-5:]),np.mean(sog_vals[-10:])
+            l3 = np.mean(sog_vals[-3:])
+            l5 = np.mean(sog_vals[-5:])
+            l10 = np.mean(sog_vals[-10:])
+
             lam = 0.55*l10 + 0.3*l5 + 0.15*l3
 
             results.append({
@@ -302,14 +251,7 @@ if "base_results" in st.session_state:
 
             for _, r in tdf.iterrows():
                 opp = team_b if team==team_a else team_a
-                prof = opponent_role_profiles.get(opp, {})
-
-                def render_pos(pos):
-                    rows = []
-                    for (p,l),v in prof.items():
-                        if p == pos:
-                            rows.append(f"{pos}{l}: {v}")
-                    return " · ".join(rows) if rows else f"{pos} –"
+                prof = opponent_profiles.get(opp, {})
 
                 components.html(
                     f"""
@@ -330,14 +272,14 @@ if "base_results" in st.session_state:
                         </div>
                         <div style="width:30%;border-left:1px solid #1E5A99;padding-left:10px;">
                             <b>VS {opp}</b><br>
-                            {render_pos("D")}<br>
-                            {render_pos("RW")}<br>
-                            {render_pos("LW")}<br>
-                            {render_pos("C")}
+                            D – {prof.get("D",0)}<br>
+                            RW – {prof.get("RW",0)}<br>
+                            LW – {prof.get("LW",0)}<br>
+                            C – {prof.get("C",0)}
                         </div>
                     </div>
                     """,
-                    height=360
+                    height=340
                 )
 
     render(team_a, tabs[0])
