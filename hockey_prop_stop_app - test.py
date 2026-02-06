@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Puck Shotz Hockey Analytics — Mobile (STABLE + FIXED)
+# 🏒 Puck Shotz Hockey Analytics — Mobile (FINAL STABLE)
 # ---------------------------------------------------------------
 import streamlit as st
 import pandas as pd
@@ -138,7 +138,7 @@ def build_player_line_roles(lines_df):
 player_line_roles = build_player_line_roles(lines_df)
 
 # ---------------------------------------------------------------
-# Opponent × Position × Line (3+ SOG, last 20 games)
+# Opponent × Position × Line (3+ SOG at least once, last 20 games)
 # ---------------------------------------------------------------
 @st.cache_data(show_spinner=False)
 def build_opponent_role_profile(shots_df, skaters_df, player_line_roles):
@@ -147,7 +147,8 @@ def build_opponent_role_profile(shots_df, skaters_df, player_line_roles):
         .groupby(["player", game_col, "opponent"], as_index=False)["sog"]
         .sum()
     )
-    pg = pg[pg["sog"] >= 3]
+
+    pg["hit_3p"] = (pg["sog"] >= 3).astype(int)
 
     pg = pg.merge(
         skaters_df[[player_col, team_col, pos_col, "player_last"]],
@@ -156,14 +157,11 @@ def build_opponent_role_profile(shots_df, skaters_df, player_line_roles):
         how="left"
     )
 
-    # 🔑 FIX: force string dtype BEFORE .str usage
     pg["position"] = (
         pg[pos_col]
         .astype(str)
         .str.upper()
     )
-
-    # Keep only valid positions
     pg = pg[pg["position"].isin(["C","LW","RW","D"])]
 
     pg = pg.merge(
@@ -171,16 +169,18 @@ def build_opponent_role_profile(shots_df, skaters_df, player_line_roles):
         on=["team","player_last"],
         how="left"
     )
-
     pg["line_rank"] = pg["line_rank"].fillna(0).astype(int)
 
     profiles = {}
     for opp in pg["opponent"].dropna().unique():
         vs = pg[pg["opponent"] == opp]
+
         recent_games = (
             vs[[game_col]].drop_duplicates().tail(20)[game_col].tolist()
         )
+
         recent = vs[vs[game_col].isin(recent_games)]
+        recent = recent[recent["hit_3p"] == 1]
 
         profiles[opp] = (
             recent
