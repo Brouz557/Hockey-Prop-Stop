@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Puck Shotz — Opponent Line × Position Engine (FINAL)
+# 🏒 Puck Shotz — Opponent Line × Position SOG (STRICT + DEBUG)
 # ---------------------------------------------------------------
 import streamlit as st
 import pandas as pd
@@ -10,22 +10,17 @@ import os
 # Page config
 # ---------------------------------------------------------------
 st.set_page_config(
-    page_title="Puck Shotz — Opponent Pressure",
+    page_title="Puck Shotz — Opponent Pressure (STRICT)",
     layout="wide",
     page_icon="🏒"
 )
 
-st.title("Opponent Line × Position SOG Pressure")
+st.title("Opponent Line × Position SOG Pressure (STRICT)")
 
 # ---------------------------------------------------------------
 # Normalization
 # ---------------------------------------------------------------
-POSITION_MAP = {
-    "LW": "L",
-    "RW": "R",
-    "C": "C",
-    "D": "D"
-}
+POSITION_MAP = {"LW": "L", "RW": "R", "C": "C", "D": "D"}
 
 TEAM_ABBREV_MAP = {
     "LA": "LAK",
@@ -143,7 +138,7 @@ player_game = (
 player_game["hit_3p"] = player_game["sog"] >= 3
 
 # ---------------------------------------------------------------
-# Enrich with ROLE
+# Enrich with ROLE (STRICT)
 # ---------------------------------------------------------------
 player_game = (
     player_game
@@ -159,7 +154,7 @@ player_game = (
     )
 )
 
-# Drop unresolved roles
+# STRICT: drop unresolved roles
 player_game = player_game.dropna(subset=["position", "line"])
 player_game["line"] = player_game["line"].astype(int)
 
@@ -193,8 +188,10 @@ for opp in sorted(player_game["opponent"].unique()):
     )
 
 # ---------------------------------------------------------------
-# UI — VALIDATION PANEL
+# UI — MAIN PANEL
 # ---------------------------------------------------------------
+st.markdown("## Opponent Line × Position (Last 10 Games)")
+
 opp = st.selectbox("Select Opponent", sorted(profiles.keys()))
 prof = profiles.get(opp, {})
 
@@ -203,9 +200,32 @@ def render_panel():
     for p in ["C","L","R","D"]:
         max_line = 3 if p == "D" else 4
         for l in range(1, max_line + 1):
-            rows.append(f"L{l}{p}: {prof.get((l,p), 0)}")
+            rows.append(f"L{l}{p}: {prof.get((l,p),0)}")
     return "<br>".join(rows)
 
 st.markdown(f"### VS {opp}")
-
 st.markdown(render_panel(), unsafe_allow_html=True)
+
+# ---------------------------------------------------------------
+# 🔍 STRICT DEBUG — coverage inspection
+# ---------------------------------------------------------------
+st.markdown("---")
+st.markdown("## 🔍 DEBUG — Player Coverage (STRICT)")
+
+debug_opp = st.selectbox(
+    "Debug Opponent",
+    sorted(player_game["opponent"].unique()),
+    key="debug_opp"
+)
+
+debug_df = player_game[
+    (player_game["opponent"] == debug_opp)
+][[
+    "player", "team", "position", "line", game_col, "sog", "hit_3p"
+]].sort_values(game_col, ascending=False)
+
+st.write(f"Rows before strict drop: {len(debug_df)}")
+st.write(f"Rows with line assigned: {debug_df['line'].notna().sum()}")
+st.write(f"Rows with ≥3 SOG: {(debug_df['hit_3p']).sum()}")
+
+st.dataframe(debug_df.head(50))
