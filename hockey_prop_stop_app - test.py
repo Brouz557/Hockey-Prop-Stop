@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Puck Shotz Hockey Analytics — Mobile (FULLY RESTORED)
+# 🏒 Puck Shotz Hockey Analytics — Mobile (STABLE + FIXED)
 # ---------------------------------------------------------------
 import streamlit as st
 import pandas as pd
@@ -156,9 +156,15 @@ def build_opponent_role_profile(shots_df, skaters_df, player_line_roles):
         how="left"
     )
 
-    pg["position"] = pg[pos_col].replace({
-        "lw":"L","rw":"R","ld":"D","rd":"D"
-    }).str.upper()
+    # 🔑 FIX: force string dtype BEFORE .str usage
+    pg["position"] = (
+        pg[pos_col]
+        .astype(str)
+        .str.upper()
+    )
+
+    # Keep only valid positions
+    pg = pg[pg["position"].isin(["C","LW","RW","D"])]
 
     pg = pg.merge(
         player_line_roles,
@@ -350,13 +356,13 @@ if "base_results" in st.session_state:
                         <div style="width:30%;border-left:1px solid #1E5A99;padding-left:10px;">
                             <b>VS {opp}</b><br>
                             {render_lines("D")}<br>
-                            {render_lines("R")}<br>
-                            {render_lines("L")}<br>
+                            {render_lines("RW")}<br>
+                            {render_lines("LW")}<br>
                             {render_lines("C")}
                         </div>
                     </div>
                     """,
-                    height=340
+                    height=360
                 )
 
     render(team_a, tabs[0])
