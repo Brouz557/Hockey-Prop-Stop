@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Puck Shotz Hockey Analytics — Mobile (OPERABLE BASELINE)
+# 🏒 Puck Shotz Hockey Analytics — Mobile (RESTORED + SAFE)
 # ---------------------------------------------------------------
 import streamlit as st
 import pandas as pd
@@ -82,19 +82,7 @@ game_col = next(c for c in shots_df.columns if "game" in c)
 shots_df["opponent"] = shots_df["opponent"].astype(str).str.upper().str.strip()
 
 # ---------------------------------------------------------------
-# Team normalization
-# ---------------------------------------------------------------
-TEAM_ABBREV_MAP = {
-    "VEG": "VGK",
-    "NJ": "NJD",
-    "LA": "LAK",
-    "SJ": "SJS",
-    "TB": "TBL"
-}
-shots_df["opponent"] = shots_df["opponent"].replace(TEAM_ABBREV_MAP)
-
-# ---------------------------------------------------------------
-# Build player last names
+# Player last names
 # ---------------------------------------------------------------
 skaters_df["player_last"] = (
     skaters_df[player_col]
@@ -105,7 +93,7 @@ skaters_df["player_last"] = (
 )
 
 # ---------------------------------------------------------------
-# Build typical line roles (SAFE VERSION)
+# Build typical line roles (safe)
 # ---------------------------------------------------------------
 @st.cache_data(show_spinner=False)
 def build_player_line_roles(lines_df):
@@ -121,8 +109,8 @@ def build_player_line_roles(lines_df):
 
     l = (
         l.groupby(["team", "line pairings"], as_index=False)
-        .agg({"games": "sum"})
-        .rename(columns={"games": "line_usage"})
+        .agg({"games":"sum"})
+        .rename(columns={"games":"line_usage"})
     )
 
     l["line_rank"] = (
@@ -145,18 +133,15 @@ def build_player_line_roles(lines_df):
     if pl.empty:
         return pd.DataFrame()
 
-    # keep dominant line only
-    pl = (
+    return (
         pl.sort_values("line_usage", ascending=False)
-        .drop_duplicates(["team", "player_last"])
+        .drop_duplicates(["team","player_last"])
     )
-
-    return pl
 
 player_line_roles = build_player_line_roles(lines_df)
 
 # ---------------------------------------------------------------
-# Build opponent × position × line profile (STRICT)
+# Opponent × Position × Line profile (SAFE)
 # ---------------------------------------------------------------
 @st.cache_data(show_spinner=False)
 def build_opponent_role_profile(shots_df, skaters_df, player_line_roles):
@@ -165,7 +150,6 @@ def build_opponent_role_profile(shots_df, skaters_df, player_line_roles):
         .groupby(["player", game_col, "opponent"], as_index=False)["sog"]
         .sum()
     )
-
     pg = pg[pg["sog"] >= 3]
 
     pg = pg.merge(
@@ -176,37 +160,31 @@ def build_opponent_role_profile(shots_df, skaters_df, player_line_roles):
     )
 
     pg["position"] = pg[pos_col].replace({
-        "LW": "L", "RW": "R", "LD": "D", "RD": "D"
+        "LW":"L","RW":"R","LD":"D","RD":"D"
     })
 
     pg = pg.merge(
         player_line_roles,
-        on=["team", "player_last"],
+        on=["team","player_last"],
         how="left"
     )
 
-    profiles = {}
+    pg["line_rank"] = pg["line_rank"].fillna(0).astype(int)
 
+    profiles = {}
     for opp in pg["opponent"].dropna().unique():
         vs = pg[pg["opponent"] == opp]
-
         last_games = (
-            vs[[game_col]]
-            .drop_duplicates()
-            .tail(20)[game_col]
-            .tolist()
+            vs[[game_col]].drop_duplicates().tail(20)[game_col].tolist()
         )
-
         recent = vs[vs[game_col].isin(last_games)]
 
-        summary = (
+        profiles[opp] = (
             recent
-            .groupby(["position", "line_rank"])["player"]
+            .groupby(["position","line_rank"])["player"]
             .nunique()
             .to_dict()
         )
-
-        profiles[opp] = summary
 
     return profiles
 
@@ -227,8 +205,8 @@ def get_games():
         if len(comps) == 2:
             a, h = comps
             games.append({
-                "away": TEAM_ABBREV_MAP.get(a["team"]["abbreviation"], a["team"]["abbreviation"]),
-                "home": TEAM_ABBREV_MAP.get(h["team"]["abbreviation"], h["team"]["abbreviation"]),
+                "away": a["team"]["abbreviation"],
+                "home": h["team"]["abbreviation"],
                 "away_logo": a["team"]["logo"],
                 "home_logo": h["team"]["logo"]
             })
@@ -248,43 +226,106 @@ def team_logo(team):
     return ""
 
 # ---------------------------------------------------------------
-# DISPLAY (CONTEXT ONLY)
+# RUN MODEL (baseline only)
 # ---------------------------------------------------------------
-st.markdown("## Matchups")
-cols = st.columns(3)
+if st.button("Run Model (All Games)", use_container_width=True):
+    results = []
+    grouped = {n: d for n,d in shots_df.groupby("player")}
 
-if "selected_match" not in st.session_state:
-    st.session_state.selected_match = f"{games[0]['away']}@{games[0]['home']}"
+    for g in games:
+        team_a, team_b = g["away"], g["home"]
+        roster = skaters_df[skaters_df[team_col].isin([team_a, team_b])]
 
-for i, g in enumerate(games):
-    with cols[i % 3]:
-        if st.button(f"{g['away']} @ {g['home']}", use_container_width=True):
-            st.session_state.selected_match = f"{g['away']}@{g['home']}"
+        for _, r in roster.iterrows():
+            player = str(r[player_col])
+            team = r[team_col]
+            pos = r[pos_col]
 
-team_a, team_b = st.session_state.selected_match.split("@")
-tabs = st.tabs([team_a, team_b])
+            df_p = grouped.get(player.lower())
+            if df_p is None:
+                continue
 
-def render(team, tab):
-    with tab:
-        opp = team_b if team == team_a else team_a
-        prof = opponent_role_profiles.get(opp, {})
+            sog_vals = df_p.groupby(game_col)["sog"].sum().tolist()
+            if len(sog_vals) < 3:
+                continue
 
-        def rp(pos, line):
-            return prof.get((pos, line), 0)
+            l3,l5,l10 = np.mean(sog_vals[-3:]),np.mean(sog_vals[-5:]),np.mean(sog_vals[-10:])
+            lam = 0.55*l10 + 0.3*l5 + 0.15*l3
 
-        components.html(
-            f"""
-            <div style="background:#0F2743;border:1px solid #1E5A99;
-                        border-radius:16px;padding:16px;color:#fff;">
-                <b>VS {opp}</b><br>
-                D1 – {rp("D",1)} &nbsp; D2 – {rp("D",2)}<br>
-                R1 – {rp("R",1)} &nbsp; R2 – {rp("R",2)}<br>
-                L1 – {rp("L",1)} &nbsp; L2 – {rp("L",2)}<br>
-                C1 – {rp("C",1)} &nbsp; C2 – {rp("C",2)}
-            </div>
-            """,
-            height=220
-        )
+            results.append({
+                "Player": player,
+                "Position": pos,
+                "Team": team,
+                "Matchup": f"{team_a}@{team_b}",
+                "Final Projection": round(lam,2),
+                "Season Avg": round(np.mean(sog_vals),2),
+                "L3": ", ".join(map(str,sog_vals[-3:])),
+                "L5": ", ".join(map(str,sog_vals[-5:])),
+                "L10": ", ".join(map(str,sog_vals[-10:])),
+            })
 
-render(team_a, tabs[0])
-render(team_b, tabs[1])
+    st.session_state.base_results = pd.DataFrame(results)
+    st.success("Model built")
+
+# ---------------------------------------------------------------
+# DISPLAY CARDS (RESTORED)
+# ---------------------------------------------------------------
+if "base_results" in st.session_state:
+    df = st.session_state.base_results
+    if "selected_match" not in st.session_state:
+        st.session_state.selected_match = f"{games[0]['away']}@{games[0]['home']}"
+
+    cols = st.columns(3)
+    for i,g in enumerate(games):
+        with cols[i%3]:
+            if st.button(f"{g['away']} @ {g['home']}", use_container_width=True):
+                st.session_state.selected_match = f"{g['away']}@{g['home']}"
+
+    team_a, team_b = st.session_state.selected_match.split("@")
+    tabs = st.tabs([team_a, team_b])
+
+    def render(team, tab):
+        with tab:
+            tdf = (
+                df[(df["Team"]==team)&(df["Matchup"]==st.session_state.selected_match)]
+                .drop_duplicates("Player")
+                .sort_values("Final Projection", ascending=False)
+            )
+
+            for _, r in tdf.iterrows():
+                opp = team_b if team==team_a else team_a
+                prof = opponent_role_profiles.get(opp, {})
+
+                def rp(p,l): return prof.get((p,l),0)
+
+                components.html(
+                    f"""
+                    <div style="background:#0F2743;border:1px solid #1E5A99;
+                                border-radius:16px;padding:16px;margin-bottom:16px;
+                                color:#fff;display:flex;justify-content:space-between;">
+                        <div style="width:65%;">
+                            <div style="display:flex;align-items:center;margin-bottom:6px;">
+                                <img src="{team_logo(team)}"
+                                     style="width:32px;height:32px;margin-right:10px;">
+                                <b>{r['Player']} ({r['Position']}) – {r['Team']}</b>
+                            </div>
+                            Final Projection: <b>{r['Final Projection']}</b><br>
+                            Season Avg: {r['Season Avg']}<br>
+                            L3: {r['L3']}<br>
+                            L5: {r['L5']}<br>
+                            L10: {r['L10']}
+                        </div>
+                        <div style="width:30%;border-left:1px solid #1E5A99;padding-left:10px;">
+                            <b>VS {opp}</b><br>
+                            D1 {rp("D",1)} · D2 {rp("D",2)}<br>
+                            R1 {rp("R",1)} · R2 {rp("R",2)}<br>
+                            L1 {rp("L",1)} · L2 {rp("L",2)}<br>
+                            C1 {rp("C",1)} · C2 {rp("C",2)}
+                        </div>
+                    </div>
+                    """,
+                    height=320
+                )
+
+    render(team_a, tabs[0])
+    render(team_b, tabs[1])
