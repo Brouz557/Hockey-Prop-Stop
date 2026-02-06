@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Puck Shotz Hockey Analytics — Mobile (FULL WORKING)
+# 🏒 Puck Shotz Hockey Analytics — Mobile (POSITION × LINE)
 # ---------------------------------------------------------------
 import streamlit as st
 import pandas as pd
@@ -29,6 +29,12 @@ st.markdown("""
     Puck Shotz Hockey Analytics
 </h3>
 """, unsafe_allow_html=True)
+
+# ---------------------------------------------------------------
+# Normalization maps
+# ---------------------------------------------------------------
+POSITION_MAP = {"LW": "L", "RW": "R", "C": "C", "D": "D"}
+TEAM_ABBREV_MAP = {"LA": "LAK", "TB": "TBL", "NY": "NYR", "NJ": "NJD", "SJ": "SJS"}
 
 # ---------------------------------------------------------------
 # Helpers
@@ -79,79 +85,95 @@ shots_df = shots_df.rename(columns={shots_player_col: "player"})
 shots_df["player"] = shots_df["player"].astype(str).str.lower().str.strip()
 
 game_col = next(c for c in shots_df.columns if "game" in c)
-shots_df["opponent"] = shots_df["opponent"].astype(str).str.upper().str.strip()
+
+shots_df["opponent"] = (
+    shots_df["opponent"]
+    .astype(str)
+    .str.upper()
+    .replace(TEAM_ABBREV_MAP)
+)
 
 # ---------------------------------------------------------------
-# ESPN Matchups
+# Player last names
 # ---------------------------------------------------------------
-@st.cache_data(ttl=300)
-def get_games():
-    url = "https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard"
-    data = requests.get(url, timeout=10).json()
-    games = []
-    for e in data.get("events", []):
-        comps = e.get("competitions", [{}])[0].get("competitors", [])
-        if len(comps) == 2:
-            a, h = comps
-            games.append({
-                "away": a["team"]["abbreviation"],
-                "home": h["team"]["abbreviation"],
-                "away_logo": a["team"]["logo"],
-                "home_logo": h["team"]["logo"]
-            })
-    return games
-
-games = get_games()
-if not games:
-    st.warning("No games found today.")
-    st.stop()
-
-def team_logo(team):
-    for g in games:
-        if g["away"] == team:
-            return g["away_logo"]
-        if g["home"] == team:
-            return g["home_logo"]
-    return ""
+skaters_df["player_last"] = (
+    skaters_df[player_col]
+    .astype(str)
+    .str.lower()
+    .str.split()
+    .str[-1]
+)
 
 # ---------------------------------------------------------------
-# Build opponent SOG profile (CORRECT FOR ATTEMPT DATA)
+# Build typical line numbers from LINE DATA
 # ---------------------------------------------------------------
 @st.cache_data(show_spinner=False)
-def build_opponent_sog_profile(shots_df, skaters_df):
-    """
-    For each opponent:
-    - Take last 20 games (by game_id)
-    - Sum SOG per player per game
-    - Count players who hit 3+ SOG at least once
-    - Group by position
-    """
+def build_player_line_map(lines_df):
+    l = lines_df.copy()
+    l["games"] = pd.to_numeric(l["games"], errors="coerce").fillna(0)
 
-    # 1️⃣ Aggregate attempts → SOG per player per game
+    l = (
+        l.groupby(["team","line pairings"], as_index=False)
+        .agg({"games":"sum"})
+        .rename(columns={"games":"usage"})
+    )
+
+    l["line"] = (
+        l.groupby("team")["usage"]
+        .rank(method="first", ascending=False)
+        .astype(int)
+    )
+
+    rows = []
+    for _, r in l.iterrows():
+        for name in str(r["line pairings"]).lower().split():
+            rows.append({
+                "team": r["team"],
+                "player_last": name,
+                "line": r["line"]
+            })
+
+    return (
+        pd.DataFrame(rows)
+        .drop_duplicates(["team","player_last"])
+    )
+
+player_line_map = build_player_line_map(lines_df)
+
+# ---------------------------------------------------------------
+# Build opponent POSITION × LINE profile
+# ---------------------------------------------------------------
+@st.cache_data(show_spinner=False)
+def build_opponent_role_profile(shots_df, skaters_df, player_line_map):
+
+    # sum SOG per player-game
     pg = (
         shots_df
         .groupby(["player", game_col, "opponent"], as_index=False)["sog"]
         .sum()
     )
-
-    # 2️⃣ Mark 3+ SOG games
     pg["hit_3p"] = pg["sog"] >= 3
 
-    # 3️⃣ Attach positions
-    sk = skaters_df[[player_col, pos_col]].copy()
-    sk.columns = ["player", "position"]
+    # add skater info
+    sk = skaters_df[[player_col, team_col, pos_col, "player_last"]].copy()
+    sk.columns = ["player", "team", "position", "player_last"]
     sk["player"] = sk["player"].astype(str).str.lower().str.strip()
-    sk["position"] = sk["position"].astype(str).str.upper()
+    sk["position"] = (
+        sk["position"]
+        .astype(str)
+        .str.upper()
+        .map(POSITION_MAP)
+    )
 
     pg = pg.merge(sk, on="player", how="left")
-    pg = pg[pg["position"].isin(["C","LW","RW","D"])]
+    pg = pg.merge(player_line_map, on=["team","player_last"], how="left")
+
+    pg["line"] = pg["line"].fillna(0).astype(int)
+    pg = pg[pg["position"].isin(["C","L","R","D"])]
 
     profiles = {}
 
-    # 4️⃣ Loop opponents
-    for opp in pg["opponent"].dropna().unique():
-
-        # last 20 games this opponent played
+    for opp in pg["opponent"].unique():
         last_games = (
             pg[pg["opponent"] == opp]
             [[game_col]]
@@ -168,21 +190,54 @@ def build_opponent_sog_profile(shots_df, skaters_df):
         ]
 
         profiles[opp] = (
-            sub.groupby("position")["player"]
+            sub.groupby(["position","line"])["player"]
             .nunique()
             .to_dict()
         )
 
     return profiles
 
-opponent_profiles = build_opponent_sog_profile(shots_df, skaters_df)
+opponent_role_profiles = build_opponent_role_profile(
+    shots_df, skaters_df, player_line_map
+)
 
 # ---------------------------------------------------------------
-# Run model (your original logic preserved)
+# ESPN Matchups
+# ---------------------------------------------------------------
+@st.cache_data(ttl=300)
+def get_games():
+    url = "https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard"
+    data = requests.get(url, timeout=10).json()
+    games = []
+    for e in data.get("events", []):
+        comps = e.get("competitions", [{}])[0].get("competitors", [])
+        if len(comps) == 2:
+            a, h = comps
+            games.append({
+                "away": TEAM_ABBREV_MAP.get(a["team"]["abbreviation"], a["team"]["abbreviation"]),
+                "home": TEAM_ABBREV_MAP.get(h["team"]["abbreviation"], h["team"]["abbreviation"]),
+                "away_logo": a["team"]["logo"],
+                "home_logo": h["team"]["logo"]
+            })
+    return games
+
+games = get_games()
+if not games:
+    st.stop()
+
+def team_logo(team):
+    for g in games:
+        if g["away"] == team:
+            return g["away_logo"]
+        if g["home"] == team:
+            return g["home_logo"]
+    return ""
+
+# ---------------------------------------------------------------
+# Run model (unchanged)
 # ---------------------------------------------------------------
 if st.button("Run Model (All Games)", use_container_width=True):
     results = []
-
     grouped = {n:d for n,d in shots_df.groupby("player")}
 
     for g in games:
@@ -192,7 +247,7 @@ if st.button("Run Model (All Games)", use_container_width=True):
         for _, r in roster.iterrows():
             player = str(r[player_col])
             team = r[team_col]
-            pos = r[pos_col]
+            pos = POSITION_MAP.get(str(r[pos_col]).upper(), "")
 
             df_p = grouped.get(player.lower())
             if df_p is None:
@@ -202,10 +257,7 @@ if st.button("Run Model (All Games)", use_container_width=True):
             if len(sog_vals) < 3:
                 continue
 
-            l3 = np.mean(sog_vals[-3:])
-            l5 = np.mean(sog_vals[-5:])
-            l10 = np.mean(sog_vals[-10:])
-
+            l3, l5, l10 = np.mean(sog_vals[-3:]), np.mean(sog_vals[-5:]), np.mean(sog_vals[-10:])
             lam = 0.55*l10 + 0.3*l5 + 0.15*l3
 
             results.append({
@@ -228,9 +280,7 @@ if st.button("Run Model (All Games)", use_container_width=True):
 # ---------------------------------------------------------------
 if "base_results" in st.session_state:
     df = st.session_state.base_results
-
-    if "selected_match" not in st.session_state:
-        st.session_state.selected_match = f"{games[0]['away']}@{games[0]['home']}"
+    st.session_state.setdefault("selected_match", f"{games[0]['away']}@{games[0]['home']}")
 
     cols = st.columns(3)
     for i,g in enumerate(games):
@@ -244,14 +294,20 @@ if "base_results" in st.session_state:
     def render(team, tab):
         with tab:
             tdf = (
-                df[(df["Team"]==team)&(df["Matchup"]==st.session_state.selected_match)]
+                df[(df["Team"] == team) & (df["Matchup"] == st.session_state.selected_match)]
                 .drop_duplicates("Player")
                 .sort_values("Final Projection", ascending=False)
             )
 
             for _, r in tdf.iterrows():
-                opp = team_b if team==team_a else team_a
-                prof = opponent_profiles.get(opp, {})
+                opp = team_b if team == team_a else team_a
+                prof = opponent_role_profiles.get(opp, {})
+
+                def render_rows():
+                    rows = []
+                    for (p,l),v in sorted(prof.items()):
+                        rows.append(f"{p}{l}: {v}")
+                    return "<br>".join(rows) if rows else "—"
 
                 components.html(
                     f"""
@@ -272,14 +328,11 @@ if "base_results" in st.session_state:
                         </div>
                         <div style="width:30%;border-left:1px solid #1E5A99;padding-left:10px;">
                             <b>VS {opp}</b><br>
-                            D – {prof.get("D",0)}<br>
-                            RW – {prof.get("RW",0)}<br>
-                            LW – {prof.get("LW",0)}<br>
-                            C – {prof.get("C",0)}
+                            {render_rows()}
                         </div>
                     </div>
                     """,
-                    height=340
+                    height=380
                 )
 
     render(team_a, tabs[0])
