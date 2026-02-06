@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# 🏒 Puck Shotz Hockey Analytics — Mobile (FULL + DEBUG)
+# 🏒 Puck Shotz Hockey Analytics — Mobile (FINAL + LINE ADJ)
 # ---------------------------------------------------------------
 import streamlit as st
 import pandas as pd
@@ -153,7 +153,6 @@ def build_opponent_sog_profile(shots_df, skaters_df):
 
     pg = pg.merge(pos_lookup, on="player", how="left")
 
-    # normalize positions
     pg["position"] = pg["position"].replace({
         "LW": "L", "RW": "R", "LD": "D", "RD": "D"
     })
@@ -185,10 +184,33 @@ def build_opponent_sog_profile(shots_df, skaters_df):
 opponent_profiles = build_opponent_sog_profile(shots_df, skaters_df)
 
 # ---------------------------------------------------------------
-# Run model
+# Run model (WITH LINE ADJ RESTORED)
 # ---------------------------------------------------------------
 if st.button("Run Model (All Games)", use_container_width=True):
     results = []
+
+    # ---- BUILD LINE ADJ ----
+    line_adj = pd.DataFrame()
+
+    if not lines_df.empty and {"line pairings","team","games","sog against"}.issubset(lines_df.columns):
+        l = lines_df.copy()
+        l["games"] = pd.to_numeric(l["games"], errors="coerce").fillna(0)
+        l["sog against"] = pd.to_numeric(l["sog against"], errors="coerce").fillna(0)
+
+        l = l.groupby(["line pairings","team"], as_index=False).agg({
+            "games":"sum",
+            "sog against":"sum"
+        })
+
+        l["sog_against_per_game"] = np.where(
+            l["games"] > 0,
+            l["sog against"] / l["games"],
+            np.nan
+        )
+
+        league_avg = l["sog_against_per_game"].mean()
+        l["line_factor"] = (league_avg / l["sog_against_per_game"]).clip(0.7, 1.3)
+        line_adj = l
 
     grouped = {
         str(n).lower().strip(): d
@@ -213,7 +235,16 @@ if st.button("Run Model (All Games)", use_container_width=True):
                 continue
 
             l3, l5, l10 = np.mean(sog_vals[-3:]), np.mean(sog_vals[-5:]), np.mean(sog_vals[-10:])
-            lam = 0.55*l10 + 0.3*l5 + 0.15*l3
+            baseline = 0.55*l10 + 0.3*l5 + 0.15*l3
+
+            line_factor = 1.0
+            if not line_adj.empty:
+                last = player.split()[-1].lower()
+                m = line_adj[line_adj["line pairings"].str.contains(last, case=False, na=False)]
+                if not m.empty:
+                    line_factor = np.average(m["line_factor"], weights=m["games"])
+
+            lam = baseline * line_factor
 
             results.append({
                 "Player": player,
@@ -221,6 +252,7 @@ if st.button("Run Model (All Games)", use_container_width=True):
                 "Team": team,
                 "Matchup": f"{team_a}@{team_b}",
                 "Final Projection": round(lam,2),
+                "Line Adj": round(line_factor,2),
                 "Season Avg": round(np.mean(sog_vals),2),
                 "L3": ", ".join(map(str, sog_vals[-3:])),
                 "L5": ", ".join(map(str, sog_vals[-5:])),
@@ -273,6 +305,7 @@ if "base_results" in st.session_state:
                                 <b>{r['Player']} ({r['Position']}) – {r['Team']}</b>
                             </div>
                             Final Projection: <b>{r['Final Projection']}</b><br>
+                            Line Adj: <b>{r['Line Adj']}</b><br>
                             Season Avg: {r['Season Avg']}<br>
                             L3: {r['L3']}<br>
                             L5: {r['L5']}<br>
@@ -288,7 +321,7 @@ if "base_results" in st.session_state:
                         </div>
                     </div>
                     """,
-                    height=300
+                    height=320
                 )
 
     render(team_a, tabs[0])
