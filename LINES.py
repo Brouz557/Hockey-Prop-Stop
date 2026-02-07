@@ -3,9 +3,9 @@ import pandas as pd
 import requests
 from datetime import date, timedelta, datetime
 
-# ----------------------------------------------------
-# App Config
-# ----------------------------------------------------
+# ====================================================
+# STREAMLIT CONFIG
+# ====================================================
 st.set_page_config(
     page_title="NST Current Lines Builder",
     page_icon="🏒",
@@ -14,49 +14,52 @@ st.set_page_config(
 
 st.title("🏒 Natural Stat Trick – Current Lines Builder")
 st.caption(
-    "Determines current lines using each team’s most recent completed game "
-    "(Natural Stat Trick game CSVs)"
+    "Determines current NHL line combinations using each team’s "
+    "most recent completed game (NST GAME → LINES CSV)."
 )
 
-# ----------------------------------------------------
-# Constants
-# ----------------------------------------------------
+# ====================================================
+# CONSTANTS
+# ====================================================
 SEASON = "20252026"
 OUTPUT_FILE = "CURRENT_LINES.xlsx"
 
-# ----------------------------------------------------
-# Sidebar Controls
-# ----------------------------------------------------
-st.sidebar.header("⚙️ Settings")
+# ====================================================
+# SIDEBAR CONTROLS
+# ====================================================
+st.sidebar.header("⚙️ Controls")
 
 days_back = st.sidebar.selectbox(
-    "How many days back to search for games",
+    "Search window (days back)",
     [1, 2, 3, 4, 5, 7],
     index=2,
-    help="Fallback window if some teams haven’t played recently"
+    help="How far back to look for each team’s most recent game"
 )
 
 run_button = st.sidebar.button("🚀 Build Current Lines")
 
-# ----------------------------------------------------
-# Helper: Discover recent completed games (ESPN scoreboard)
-# ----------------------------------------------------
+# ====================================================
+# GAME DISCOVERY (ESPN SCOREBOARD)
+# ====================================================
 @st.cache_data(ttl=300)
 def get_recent_completed_games(days_back: int):
     games = []
 
     for i in range(days_back):
-        d = date.today() - timedelta(days=i + 1)
+        game_date = date.today() - timedelta(days=i + 1)
         url = (
             "https://site.api.espn.com/apis/site/v2/sports/"
-            f"hockey/nhl/scoreboard?dates={d:%Y%m%d}"
+            f"hockey/nhl/scoreboard?dates={game_date:%Y%m%d}"
         )
 
-        r = requests.get(url, timeout=10)
-        if r.status_code != 200:
+        try:
+            r = requests.get(url, timeout=10)
+            r.raise_for_status()
+        except Exception:
             continue
 
         data = r.json()
+
         for event in data.get("events", []):
             comp = event.get("competitions", [{}])[0]
             status = comp.get("status", {}).get("type", {})
@@ -71,7 +74,7 @@ def get_recent_completed_games(days_back: int):
 
             games.append({
                 "game_id": event["id"],
-                "date": d,
+                "date": game_date,
                 "teams": teams
             })
 
@@ -94,29 +97,29 @@ def map_latest_game_per_team(games):
 
     return latest
 
-# ----------------------------------------------------
-# Helper: Load NST Game CSV
-# ----------------------------------------------------
-def load_nst_game_csv(game_id: str):
+# ====================================================
+# NST GAME → LINES CSV LOADER  (CRITICAL)
+# ====================================================
+def load_nst_game_lines_csv(game_id: str):
     url = (
         "https://www.naturalstattrick.com/game.php"
         f"?season={SEASON}"
         f"&game={game_id}"
-        "&view=limited"
+        "&view=lines"
         "&csv=y"
     )
     return pd.read_csv(url)
 
-# ----------------------------------------------------
-# Main Pipeline
-# ----------------------------------------------------
+# ====================================================
+# MAIN PIPELINE
+# ====================================================
 if run_button:
-    st.info("🔍 Finding most recent completed games…")
+    st.info("🔍 Discovering most recent completed games…")
 
     games = get_recent_completed_games(days_back)
 
     if not games:
-        st.error("No completed games found in selected window.")
+        st.error("No completed games found.")
         st.stop()
 
     team_to_game = map_latest_game_per_team(games)
@@ -124,15 +127,14 @@ if run_button:
     st.success(f"Found recent games for {len(team_to_game)} teams")
 
     rows = []
-
     progress = st.progress(0)
     total = len(team_to_game)
 
-    for i, (team, game_id) in enumerate(team_to_game.items(), start=1):
-        progress.progress(i / total)
+    for idx, (team, game_id) in enumerate(team_to_game.items(), start=1):
+        progress.progress(idx / total)
 
         try:
-            df = load_nst_game_csv(game_id)
+            df = load_nst_game_lines_csv(game_id)
         except Exception:
             continue
 
@@ -142,14 +144,10 @@ if run_button:
         if "team" not in df.columns:
             continue
 
-        # ------------------------------------------------
-        # 🔑 CRITICAL FIX: detect NST line columns
-        # NST uses f1/f2/f3 and d1/d2 (not "player1")
-        # ------------------------------------------------
+        # NST line columns are f1/f2/f3 (forwards) and d1/d2 (defense)
         player_cols = [
             c for c in df.columns
-            if c.startswith(("player", "f", "d"))
-            and df[c].dtype == object
+            if c.startswith(("f", "d")) and df[c].dtype == object
         ]
 
         if not player_cols:
@@ -183,10 +181,10 @@ if run_button:
 
     raw = pd.DataFrame(rows)
 
-    # ------------------------------------------------
-    # Aggregate final CURRENT_LINES table
-    # ------------------------------------------------
-    out = (
+    # ====================================================
+    # AGGREGATE FINAL CURRENT_LINES TABLE
+    # ====================================================
+    current_lines = (
         raw
         .groupby(["team", "line pairings"], as_index=False)
         .agg(
@@ -196,16 +194,16 @@ if run_button:
         .sort_values(["team", "toi"], ascending=[True, False])
     )
 
-    out.to_excel(OUTPUT_FILE, index=False)
+    current_lines.to_excel(OUTPUT_FILE, index=False)
 
-    # ------------------------------------------------
-    # Display Results
-    # ------------------------------------------------
+    # ====================================================
+    # DISPLAY OUTPUT
+    # ====================================================
     st.success(f"✅ {OUTPUT_FILE} created successfully")
     st.caption(f"Last updated: {datetime.now():%Y-%m-%d %H:%M}")
 
     st.subheader("📊 Current Lines (Most Recent Game Usage)")
-    st.dataframe(out, use_container_width=True)
+    st.dataframe(current_lines, use_container_width=True)
 
     st.subheader("🔎 Debug: Team → Source Game")
     debug = (
@@ -215,11 +213,12 @@ if run_button:
     )
     st.dataframe(debug, use_container_width=True)
 
-# ----------------------------------------------------
-# Footer
-# ----------------------------------------------------
+# ====================================================
+# FOOTER
+# ====================================================
 st.markdown("---")
 st.caption(
     "Current lines based on actual on-ice usage · "
-    "Natural Stat Trick game CSVs · deterministic & reproducible"
+    "Natural Stat Trick GAME → LINES CSV · fully deterministic"
 )
+
