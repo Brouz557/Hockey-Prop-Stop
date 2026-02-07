@@ -13,7 +13,10 @@ st.set_page_config(
 )
 
 st.title("🏒 Natural Stat Trick – Current Lines Builder")
-st.caption("Uses each team’s most recent completed game to determine current line usage")
+st.caption(
+    "Determines current lines using each team’s most recent completed game "
+    "(Natural Stat Trick game CSVs)"
+)
 
 # ----------------------------------------------------
 # Constants
@@ -28,15 +31,15 @@ st.sidebar.header("⚙️ Settings")
 
 days_back = st.sidebar.selectbox(
     "How many days back to search for games",
-    [1, 2, 3, 4, 5],
+    [1, 2, 3, 4, 5, 7],
     index=2,
-    help="Fallback window if teams haven’t played recently"
+    help="Fallback window if some teams haven’t played recently"
 )
 
 run_button = st.sidebar.button("🚀 Build Current Lines")
 
 # ----------------------------------------------------
-# Helper: NHL Game Discovery (Scoreboard API)
+# Helper: Discover recent completed games (ESPN scoreboard)
 # ----------------------------------------------------
 @st.cache_data(ttl=300)
 def get_recent_completed_games(days_back: int):
@@ -133,21 +136,32 @@ if run_button:
         except Exception:
             continue
 
+        # Normalize column names
         df.columns = df.columns.str.lower().str.strip()
 
         if "team" not in df.columns:
             continue
 
-        player_cols = [c for c in df.columns if c.startswith("player")]
+        # ------------------------------------------------
+        # 🔑 CRITICAL FIX: detect NST line columns
+        # NST uses f1/f2/f3 and d1/d2 (not "player1")
+        # ------------------------------------------------
+        player_cols = [
+            c for c in df.columns
+            if c.startswith(("player", "f", "d"))
+            and df[c].dtype == object
+        ]
+
         if not player_cols:
             continue
 
         def build_line(row):
-            return " ".join(
-                row[c].split()[-1].lower()
-                for c in player_cols
-                if pd.notna(row[c])
-            )
+            names = []
+            for c in player_cols:
+                val = row[c]
+                if pd.notna(val) and isinstance(val, str):
+                    names.append(val.split()[-1].lower())
+            return " ".join(names)
 
         df["line pairings"] = df.apply(build_line, axis=1)
 
@@ -185,7 +199,7 @@ if run_button:
     out.to_excel(OUTPUT_FILE, index=False)
 
     # ------------------------------------------------
-    # Display
+    # Display Results
     # ------------------------------------------------
     st.success(f"✅ {OUTPUT_FILE} created successfully")
     st.caption(f"Last updated: {datetime.now():%Y-%m-%d %H:%M}")
@@ -205,4 +219,7 @@ if run_button:
 # Footer
 # ----------------------------------------------------
 st.markdown("---")
-st.caption("Current lines based on actual on-ice usage · Powered by Natural Stat Trick game CSVs")
+st.caption(
+    "Current lines based on actual on-ice usage · "
+    "Natural Stat Trick game CSVs · deterministic & reproducible"
+)
