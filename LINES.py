@@ -14,8 +14,8 @@ st.set_page_config(
 
 st.title("🏒 Natural Stat Trick – Current Lines Builder")
 st.caption(
-    "Determines current NHL line combinations using each team’s "
-    "most recent completed game (NST GAME → LINES CSV)."
+    "Builds current forward lines and defense pairs using each team’s "
+    "most recent completed game (NST Forward Lines + Defense Lines reports)."
 )
 
 # ====================================================
@@ -23,6 +23,7 @@ st.caption(
 # ====================================================
 SEASON = "20252026"
 OUTPUT_FILE = "CURRENT_LINES.xlsx"
+STRENGTH = "5v5"
 
 # ====================================================
 # SIDEBAR CONTROLS
@@ -98,14 +99,27 @@ def map_latest_game_per_team(games):
     return latest
 
 # ====================================================
-# NST GAME → LINES CSV LOADER  (CRITICAL)
+# NST CSV LOADERS (CORRECT REPORTS)
 # ====================================================
-def load_nst_game_lines_csv(game_id: str):
+def load_forward_lines(game_id: str):
     url = (
         "https://www.naturalstattrick.com/game.php"
         f"?season={SEASON}"
         f"&game={game_id}"
-        "&view=lines"
+        "&report=forwardlines"
+        f"&strength={STRENGTH}"
+        "&csv=y"
+    )
+    return pd.read_csv(url)
+
+
+def load_defense_lines(game_id: str):
+    url = (
+        "https://www.naturalstattrick.com/game.php"
+        f"?season={SEASON}"
+        f"&game={game_id}"
+        "&report=defenselines"
+        f"&strength={STRENGTH}"
         "&csv=y"
     )
     return pd.read_csv(url)
@@ -123,7 +137,6 @@ if run_button:
         st.stop()
 
     team_to_game = map_latest_game_per_team(games)
-
     st.success(f"Found recent games for {len(team_to_game)} teams")
 
     rows = []
@@ -133,45 +146,58 @@ if run_button:
     for idx, (team, game_id) in enumerate(team_to_game.items(), start=1):
         progress.progress(idx / total)
 
+        # -----------------------------
+        # FORWARD LINES
+        # -----------------------------
         try:
-            df = load_nst_game_lines_csv(game_id)
+            fwd = load_forward_lines(game_id)
+            fwd.columns = fwd.columns.str.lower().str.strip()
         except Exception:
-            continue
+            fwd = pd.DataFrame()
 
-        # Normalize column names
-        df.columns = df.columns.str.lower().str.strip()
+        if not fwd.empty and {"team", "f1", "f2", "f3"}.issubset(fwd.columns):
+            fwd_team = fwd[fwd["team"] == team]
 
-        if "team" not in df.columns:
-            continue
+            for _, r in fwd_team.iterrows():
+                line = " ".join([
+                    r["f1"].split()[-1].lower(),
+                    r["f2"].split()[-1].lower(),
+                    r["f3"].split()[-1].lower()
+                ])
 
-        # NST line columns are f1/f2/f3 (forwards) and d1/d2 (defense)
-        player_cols = [
-            c for c in df.columns
-            if c.startswith(("f", "d")) and df[c].dtype == object
-        ]
+                rows.append({
+                    "team": team,
+                    "unit_type": "F",
+                    "line_pairings": line,
+                    "toi": r.get("toi", 0),
+                    "source_game": game_id
+                })
 
-        if not player_cols:
-            continue
+        # -----------------------------
+        # DEFENSE PAIRS
+        # -----------------------------
+        try:
+            dfd = load_defense_lines(game_id)
+            dfd.columns = dfd.columns.str.lower().str.strip()
+        except Exception:
+            dfd = pd.DataFrame()
 
-        def build_line(row):
-            names = []
-            for c in player_cols:
-                val = row[c]
-                if pd.notna(val) and isinstance(val, str):
-                    names.append(val.split()[-1].lower())
-            return " ".join(names)
+        if not dfd.empty and {"team", "d1", "d2"}.issubset(dfd.columns):
+            dfd_team = dfd[dfd["team"] == team]
 
-        df["line pairings"] = df.apply(build_line, axis=1)
+            for _, r in dfd_team.iterrows():
+                pair = " ".join([
+                    r["d1"].split()[-1].lower(),
+                    r["d2"].split()[-1].lower()
+                ])
 
-        team_df = df[df["team"] == team]
-
-        for _, r in team_df.iterrows():
-            rows.append({
-                "team": team,
-                "line pairings": r["line pairings"],
-                "toi": r.get("toi", 0),
-                "source_game": game_id
-            })
+                rows.append({
+                    "team": team,
+                    "unit_type": "D",
+                    "line_pairings": pair,
+                    "toi": r.get("toi", 0),
+                    "source_game": game_id
+                })
 
     progress.empty()
 
@@ -186,12 +212,12 @@ if run_button:
     # ====================================================
     current_lines = (
         raw
-        .groupby(["team", "line pairings"], as_index=False)
+        .groupby(["team", "unit_type", "line_pairings"], as_index=False)
         .agg(
             games=("source_game", "nunique"),
             toi=("toi", "sum")
         )
-        .sort_values(["team", "toi"], ascending=[True, False])
+        .sort_values(["team", "unit_type", "toi"], ascending=[True, True, False])
     )
 
     current_lines.to_excel(OUTPUT_FILE, index=False)
@@ -219,6 +245,5 @@ if run_button:
 st.markdown("---")
 st.caption(
     "Current lines based on actual on-ice usage · "
-    "Natural Stat Trick GAME → LINES CSV · fully deterministic"
+    "Natural Stat Trick Forward Lines + Defense Lines reports · deterministic"
 )
-
